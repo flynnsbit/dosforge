@@ -1,0 +1,19 @@
+Begin3
+Title:          DEBUG
+Version:        2.51
+Entered-Date:   2025-06-17
+Description:    Program testing and editing tool
+Summary:        A program testing and editing tool
+Keywords:       32bit debugger, debug, debugger, DPMI debugger, kernel debugger
+Author:         Paul Vojta <vojta@math.berkeley.edu>
+Maintained-By:  Andreas "Japheth" Grech <mail -at- japheth.de>
+Primary-Site:   https://github.com/Baron-von-Riedesel/DOS-debug
+Original-Site:  http://www.japheth.de/Download/
+Platforms:      DOS (assemble with NASM), FreeDOS
+Copying-Policy: MIT License
+Modified-Date:  2025-06-21.0
+Changes:        * updated to v2.51; included Debug Boot|* NLS: English typo
+                corrections and Swedish translation update|* removed CI/CD for
+                project|* Metadata updated for modified-date and LFN
+                requirements|* improved repository INDEX.md
+End

@@ -1,0 +1,17 @@
+FreeDOS TREE programnn beni oku dosyas, tr, cp857
+
+Bir src veya yolun dizin yapsn grafik olarak g”rntler.
+
+Kullanm:  TREE [/A] [/F] [YOL]
+  /A    ASCII ‡izgi ‡izme karakterleri kullan
+  /F    Dizinlerdeki dosyalar g”rntler (yalnzca dizinleri g”rntlemek yerine)
+  YOL   Dizin a§acnn nereden baŸlayarak g”rntlenece§ini belirtir,
+        ”ntanml de§er ge‡erli dizindir.
+
+Bu program yerelleŸtirmeyi "Cats ktphanesini kullanarak destekler
+(DOS i‡in catopen/catgets uygulamas).  "Cats" Ÿu adresten indirilebilir:
+http://www.freedos.org/jhall/cats
+
+TREE GNU GPL kapsamnda yaynlanmŸtr. Detaylar i‡in COPYING dosyasna
+bakn.
+

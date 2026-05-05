@@ -1,0 +1,245 @@
+Install wcd on DOS, Windows, and OS/2.
+
+For installation on Unix/Linux/Cygwin see UNIX.txt.
+
+
+Contents
+========
+
+   Basic installation
+ 1 Installation on DOS and Windows 9x/ME
+   - DOS 16 bit
+   - DOS 32 bit
+   - DOS Bourne Again Shell (bash)
+ 2 Installation on Windows (XP and later)
+   - Windows Command Prompt (cmd.exe)
+   - Windows VISTA/7
+   - Windows PowerShell
+   - WinZsh (zsh) and MSYS (bash)
+   - Native MSYS (bash)
+   - UNC support
+ 3 Installation on OS/2
+
+
+Basic installation
+==================
+
+
+Unpack the zip file in a directory of your choice which we will call PREFIX.
+
+You will get the following directories:
+
+bin/          Program and run-time libraries.
+share/        Documentation and language files.
+
+Add directory 'bin' to your PATH environment variable:
+
+  set PATH=%PATH%;PREFIX\bin
+
+Replace PREFIX with the directory path where you unpacked the zip file.
+
+
+======================================================================
+= 1 Installation on DOS and Windows 9x/ME                            =
+======================================================================
+
+- DOS 16 bit version:
+
+ Make sure that wcd.exe is in your path.
+
+......................................................................
+
+- DOS 32 bit version:
+
+ Make sure that wcd.exe and cwsdpmi.exe are in your path.
+
+......................................................................
+
+- DOS Bourne Again Shell (bash):
+
+
+ Add the following function to your ~/_bashrc
+ file. Notice that under Windows 95/NT the ~/.bashrc
+ file overrides the ~/_bashrc file. In that case place
+ the function in ~/.bashrc
+
+function wcd
+{
+   PREFIX/bin/wcdbash.exe $*
+   . ${WCDHOME:-${HOME:-"c:"}}/wcd.go
+}
+
+Replace PREFIX with the prefix used during package installation.
+Start a new bash
+
+...
+
+If HOME is set, DJGPP bash will read '_bashrc' from %HOME%.
+Your wcd function could now look like:
+
+function wcd
+{
+   PREFIX/bin/wcd.exe $*
+   . ${WCDHOME:-${HOME}}/wcd.go
+}
+
+If the environment variable WCDHOME is set wcd will use
+WCDHOME instead of HOME.
+
+
+======================================================================
+= 2 Installation on Windows (XP and later)                           =
+======================================================================
+
+- Windows Command Prompt (cmd.exe)
+
+Add the 'bin' folder to PATH.
+
+In Windows Command Prompt a Windows program cannot change the current work
+directory, but a .bat file can.
+
+The batch scrip "wcd.bat" runs the wcd program which generates a new batch
+script "wcdgo.bat". Then wcd.bat runs wcdgo.bat which actually changes the
+directory.
+
+- Console2
+
+If you use the Console2 Windows console (https://sourceforge.net/projects/console/)
+and wcd has an "ncurses" interface, you need to set the NCURSES_CONSOLE2 environment
+variable to 1.
+
+set NCURSES_CONSOLE2=1
+
+......................................................................
+- Windows VISTA/7
+
+In a Windows VISTA/7 Command Prompt you may have limited access to directories.
+To get access to more directories you need adminstrator rights. You can get
+a Command Prompt with administrator rights if you right click on the Command
+Prompt icon and select `Run as administrator'.
+
+......................................................................
+- Windows PowerShell
+
+See https://en.wikipedia.org/wiki/Windows_PowerShell
+
+It  is  required that environment variable HOME or WCDHOME is set.  A function
+in your PowerShell user profile must be defined. The location of this profile
+is stored in the $profile variable.
+
+function wcd
+{
+  PREFIX\bin\wcdwin32psh.exe $args
+  & $env:HOME\wcdgo.ps1
+}
+
+Replace PREFIX with the prefix used during package installation.
+Start a new PowerShell
+
+
+......................................................................
+- WinZsh (zsh) and MSYS (bash)
+
+A native Windows port of Z shell has been made by Amol Deshpande.
+See https://waterlan.home.xs4all.nl/#ZSH
+An updated version is available at:
+http://zsh-nt.sourceforge.net/
+
+MSYS, a contraction of "Minimal SYStem", is a Bourne Shell command line
+interpreter system. Offered as an alternative to Microsoft's cmd.exe, this
+provides a general purpose command line environment, which is particularly
+suited to use with MinGW, for porting of many Open Source applications to the
+MS-Windows platform. See also https://osdn.net/projects/mingw/ and
+https://mingw.osdn.io/
+
+
+It  is  required that environment variable HOME or WCDHOME is set.  A function
+must be defined like this:
+
+function wcd
+{
+   PREFIX/bin/wcdwin32zsh.exe $*
+   . ${WCDHOME:-${HOME}}/wcd.go
+}
+
+MSYS bash: put this function e.g. in $HOME/.bashrc
+Z Shell  : put this function e.g. in $HOME/.zshenv
+
+Replace PREFIX with the prefix used during package installation.
+
+
+You have to start MSYS like this: msys.bat --norxvt , because the default rxvt
+terminal doesn't accept standard input from native Windows programs. See also
+https://sourceforge.net/p/mingw/mailman/mingw-users/thread/20080911113208.c7imlwsuksbcws8g%40mail.progw.org/#msg20318652
+You need a recent version of msys.bat that supports option --norxvt.
+
+......................................................................
+- Native MSYS (bash)
+
+The native MSYS version of wcd is linked against the MSYS runtime DLL.
+This version uses MSYS style directory paths: E.g. in MSYS the path
+"C:\Program Files" maps to "/c/Program Files"
+
+Define a function like this:
+
+function wcd
+{
+   PREFIX/bin/wcdmsys.exe $*
+   . ${WCDHOME:-${HOME}}/bin/wcd.go
+}
+
+The native MSYS version behaves exactly as the Unix version of wcd:
+
+o) regards case by default.
+   - Use option -i to ignore case.
+o) does not use drive letters.
+o) Uses the same filenames for treedata files etc.
+
+......................................................................
+
+- UNC support
+
+UNC stands for Universal Naming Convention.
+It is a Windows 9x/NT way of accessing network drives without
+using a drive letter.
+It's from Windows SMB LAN manager networking.
+A UNC path looks like: \\servername\sharename
+
+In Windows networking, you can map a drive letter to a UNC:
+  net use G: \\gui_fileserv\apps
+
+The Windows Command Prompt version of wcd supports UNC paths since version 3.1.0.
+To change to the UNC path wcd makes use of the 'pushd' command in the
+wcdgo.bat script.
+
+Quote from John Savill's Windows NT/2000 FAQ (http://www.windows2000faq.com):
+
+"The 'pushd' command automatically maps a drive and navigates to it. If you
+run the 'net use' command after you run pushd, you'll see a new drive mapping.
+After you're done working in the UNC location, use the 'popd' command to
+navigate back to your original network location before you ran 'pushd'."
+
+Options -S, -A and -E can also work on servernames. For instance:
+
+  wcd -S \\servername
+
+will search for shared directories on the server and scan them all.
+
+
+The Windows PowerShell and MSYS/ZSH version of wcd have full support of UNC paths.
+One can change directly to UNC paths, without mapping to a drive letter.
+
+======================================================================
+= 3 Installation on OS/2                                             =
+======================================================================
+
+- OS/2 Command Prompt (cmd.exe)
+
+Add the 'bin' folder to PATH.
+
+In OS/2 Command Prompt an OS/2 program cannot change the current work
+directory, but a .cmd file can.
+
+The command scrip "wcd.cmd" runs the wcd program which generates a new command
+script "wcdgo.cmd". Then wcd.cmd runs wcdgo.cmd which actually changes the
+directory.

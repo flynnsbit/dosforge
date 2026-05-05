@@ -1,0 +1,20 @@
+Begin3
+Title:                 attrib
+Version:               2.1a
+Entered-Date:          2003-07-01
+Description:           Display and set file attributes
+Keywords:              freedos, attrib
+Author:                pbrutsch@creighton.edu (Phil Brutsche)
+Maintained-By:         reifsnyderb@mindspring.com (Brian E. Reifsnyder)
+Platforms:             dos
+Copying-Policy:        GNU General Public License, Version 2
+Wiki-Site:             http://wiki.freedos.org/wiki/index.php/Attrib
+Defunct-Original-Site: http://tux.creighton.edu/~pbrutsch/
+Defunct-Primary-Site:  http://www.23cc.com/programs/
+Summary:               Display and set file attributes.
+Modified-Date:         2025-04-09.8
+Changes:               * NLS: English typo corrections and Swedish translation
+                       update|* removed CI/CD for project|* Metadata updated for
+                       modified-date and LFN requirements|* improved repository
+                       INDEX.md
+End

@@ -1,0 +1,59 @@
+
+hhstndrd.zip
+============
+
+Diese Datei enthÑlt die gesammelten htm Dokumente
+die fÅr die Verwendung unter help.exe (htmlhelp)
+gedacht sind.
+
+Sie MUSS NICHT ENTPACKT werden - help.exe kann die
+htm Dateien von innerhalb der hhstndrd.zip lesen.
+
+(Vielleicht wollen Sie die htm-Dateien entpacken,
+damit sie mit irgendeinem anderen Browser gelesen
+werden kînnen oder editiert werden kînnen.
+Die Zip-Datei wird Åblicherweise den unkomprimierten
+Dateien vorgezogen; wenn Sie wollen, da· help eine
+bearbeitete, unkomprimierte Version einer Datei lesen
+soll, ersetzen Sie bitte entweder die ursprÅngliche
+Datei innerhalb der hhstndrd.zip oder lîschen Sie
+die gezippte Version.
+
+CODEPAGE SUPPORT:
+
+Die verschiedenen Sprachen der Hilfe erfordern unterschiedliche
+Codepages. Wenn die Zeichen nicht wie erwartet angezeigt werden,
+ist nicht die richtige Codepage eingestellt.
+(Anmerkung: Die deutsche Hilfe verwendet derzeit statt der Umlaute
+"Ñ,î,Å,·" "ae,oe,ue,ss". 
+
+FDCONFIG.SYS / CONFIG.SYS - Beispiele, wie die Codepages installiert
+werden:
+
+country=001,437,c:\fdos\bin\country.sys   (US Einstellung)
+country=033,858,c:\fdos\bin\country.sys   (Franzîsische Einstellung)
+country=034,858,c:\fdos\bin\country.sys   (Spanische Einstellung)
+country=049,858,c:\fdos\bin\country.sys   (Deutsche Einstellung)
+
+Den LÑndercode und die Codepages finden Sie in der Hilfe im Bereich
+"externe Befehle - country.sys" und im Bereich 
+"Verschiedenes - kpdos"
+
+Dazu korresponiderend, sollten FDAUTO.BAT /AUTOEXEC.BAT wie folgt
+aussehen:
+
+set LANG=EN
+lh display con=(EGA,437,1)
+mode con cp prep=((437) %DOSDIR%\CPI\EGA.CPX)
+mode con cop sel=437
+mode con cp refresh
+
+AbhÑngig von ihrer Landessprache sollte "LANG" auf EN/FR/ES/DE usw.
+gesetzt sein.
+Bitte prÅfen Sie, dass in dem Ordner "NLS" eine htmlhelp.en/fr/es/de usw.
+existiert, andernfalls kann die help.exe hÑngen. Falls nicht, erstellen
+Sie bitte eine, ggfs. indem Sie eine der anderen umbenennen.
+Bitte ersetzen Sie "437" durch Ihre Codepage, siehe oben.
+Im Bereich "Verschiedenes - cpidos" kînnen Sie herausfinden, welche
+der EGAx.CPX-Dateien mit Ihrer Codepage korrespondiert. (Es existieren
+EGA.cpx bis EGA18.cpx!)

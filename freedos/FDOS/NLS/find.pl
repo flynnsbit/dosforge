@@ -1,0 +1,11 @@
+0.0:Wy˜wietla wszystkie wiersze pliku zawieraj¥ce podany ci¥g znak¢w
+0.1:Zlicza wiersze zawieraj¥ce ci¥g znak¢w
+0.2:Ignoruj wielko˜† liter
+0.3:Numeruj wy˜wietlane wiersze, zaczynaj¥c od 1
+0.4:Wy˜wietla wiersze, kt¢re nie zawieraj¥ podanego ci¥gu znak¢w
+1.0:plik
+1.1:ci¥g_znak¢w
+2.0:Nie mo¾na otworzy† pliku
+2.1:Nie ma takiego pliku
+2.2:Nie mo¾na zmieni† katalogu
+polish, pl, cp852

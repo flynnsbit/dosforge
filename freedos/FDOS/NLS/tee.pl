@@ -1,0 +1,12 @@
+0.0:Zapisuje kopi© wej˜cia do pliku i wy˜wietla j¥ na ekranie.
+0.1:U¾ycie
+0.3:PLIK(I)
+0.4:Doˆ¥cz do podanych plik¢w
+0.5:Ignoruj przerwania u¾ytkownika
+0.6:Wy˜wietl ten komunikat pomocy
+1.0:Nieznana opcja
+1.1:Bˆ¥d podczas alokacji miejsca na uchwyty plik¢w
+1.2:Bˆ¥d otwierania pliku wyj˜ciowego
+1.3:Bˆ¥d zapisu do pliku
+1.4:Bˆ¥d zamykania pliku
+polish, pl, cp852

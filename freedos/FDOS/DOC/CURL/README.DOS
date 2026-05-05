@@ -1,0 +1,15 @@
+The executable file curl.exe is able to work on a FPU-less machine using just
+4 MB of extended memory. It is linked against OpenSSL, libssh2, Watt-32, zlib,
+libemu from DJGPP and does support TLS 1.3. See also the output of
+`curl.exe -V' for details.
+
+The executable file curllite.exe should be used only as a last resort, for
+instance, if curl.exe suffers from a lack of memory. This binary is linked
+against mbedTLS instead of OpenSSL, as a result, TLS 1.3 is not supported.
+
+The detailed information about the SSH features is available in the libssh2
+directory. In order to use SCP/SFTP a random number driver must be installed,
+one such driver, that provides the RANDOM$ device, is available on
+http://www.rahul.net/dkaufman/index.html.
+
+ -- Michael Kostylev <michael.kostylev@gmail.com>  Thu, 07 May 2020 08:25:10 +0300

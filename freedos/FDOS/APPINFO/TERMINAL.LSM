@@ -1,0 +1,17 @@
+Begin3
+Title:          terminal
+Version:        3.2a
+Entered-Date:   2015-05-16
+Description:    A tiny VT100/ANSI terminal
+Summary:        A tiny VT100/ANSI terminal
+Keywords:       terminal, rs-232, vt100
+Author:         Eric Auer
+Maintained-By:  Eric Auer
+Primary-Site:   http://ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.2/repos/pkg-html/terminal.html
+Platforms:      DOS (nasm)
+Copying-Policy: GNU General Public License, Version 2
+Modified-Date:  2025-04-10.1
+Changes:        * NLS: English typo corrections and Swedish translation
+                update|* Metadata updated for modified-date and LFN
+                requirements|* improved repository INDEX.md
+End

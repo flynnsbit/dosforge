@@ -1,0 +1,59 @@
+TO DO
+=====
+
+* Translate the program messages.
+
+  Translation of the messages for wcd is going via the Translation Project (TP).
+  See https://translationproject.org/domain/wcd.html
+
+
+* Translate the manual.
+
+  Translation of the manual for wcd is going via the Translation Project (TP).
+  See https://translationproject.org/domain/wcd-man.html
+
+
+* Improve interface for East Asian double width CJK fonts (Chinese, Japanese, Korean)
+  in a Windows console. This depends on PDCurses/ncurses development.
+
+* Support scripts that write from right to left like Arabic, Persian or Hebrew.
+
+
+
+I always kept this in mind while developing wcd:
+* keep it simple.
+  Usable without knowing all the options.
+* wcd is a directory changer.
+  The main goal is to change directory with a minimal amount of keystrokes.
+  Don't change wcd into a directory/file manager.
+* low requirements.
+  A minimal wcd version can be build with just an ansi-C compiler.
+  The graphical tree can be drawn with ascii characters and colours
+  are not required. This way wcd runs also on very old systems.
+* portable
+  So I can use wcd everywhere.
+* backwards compatible
+  Don't bother users.
+  In a multi-user environment, old and new versions can be used together.
+
+
+NOT TO DO
+=========
+
+Things I deliberately not implemented. (This may change in the future.)
+
+* Extended regular expressions support.
+
+  Full regular expressions are too powerful for file and directory name
+  matching. All normal shell commands like `ls' and `cp' use glob style
+  matching and that is what users are used to. Full regular expressions
+  are not really needed.
+
+
+* Approximate (fuzzy) matching.
+
+  I have made in the past a wcd version with full regular expressions and fuzzy
+  matching support. My experience was that when the number of directories is
+  very large the fuzzy matching often causes unexpected behaviour. That is why
+  I removed it again. I used the TRE regexp matching library, made by Ville
+  Laurikari. See https://www.laurikari.net/tre/

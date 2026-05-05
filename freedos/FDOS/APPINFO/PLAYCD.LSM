@@ -1,0 +1,17 @@
+Begin3
+Title:          PlayCD
+Version:        2022-10-07
+Entered-Date:   2023-02-20
+Description:    Command line Audio CD Player
+Keywords:       music, audio, cd
+Author:         Andreas "Japheth" Grech
+Maintained-By:  Andreas "Japheth" Grech
+Primary-Site:   https://github.com/Baron-von-Riedesel/PlayCD
+Platforms:      DOS
+Copying-Policy: Public Domain
+Modified-Date:  2025-04-10.0
+Changes:        * NLS: English typo corrections and Swedish translation
+                update|* removed CI/CD for project|* Metadata updated for
+                modified-date and LFN requirements|* improved repository
+                INDEX.md
+End

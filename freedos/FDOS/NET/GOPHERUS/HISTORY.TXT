@@ -1,0 +1,76 @@
+
+Gopherus changelog
+
+
+Gopherus v1.2.2 [12 Nov 2022]:
+ - [new] F4 key loads the main menu of the current server
+ - [new] key bindings can be reconfigured through a configuration file
+ - [new] 0-byte answers are interpreted as a "selector does not exist" error
+ - [fix] fixed a minor buffer overflow
+ - [mnt] optimizations to decrease memory footprint
+ - [mnt] Windows version is cross-compiled with mingw64 and requires x86_64
+ - [mnt] DOS version: supports pages up to 65000 bytes long (was: 32000 bytes)
+ - [mnt] DOS version: increased max amount of lines in a menu from 128 to 512
+ - [mnt] dropped support for the DOS 32-bit (DJGPP) version
+ - [mnt] dropped the SDL2 target
+
+Gopherus v1.2.1 [22 Jan 2020]:
+ - [fix] fixed crashes in the DOS 16 bit build (patching WATT-32)
+ - [mnt] removed hardcoded links in the main menu
+ - [mnt] simplified code using snprintf() instead of arrays manipulations
+
+Gopherus v1.2 [19 Jan 2020]:
+ - [new] bookmarks ("b" key)
+ - [new] UTF-8 support
+ - [new] IPv6 support (except on the DOS target)
+ - [new] full terminal width used now (no longer limited to 80 columns)
+ - [new] all files from current folder can be downloaded by pressing F10
+ - [new] SDL versions have a resizeable (scalable) window
+ - [new] SDL versions react to keypad arrows as well as normal arrows
+ - [new] user may abort a connection during its 'connecting...' phase
+ - [new] home page shortcut key (F2)
+ - [fix] fixed buffer overflow within menu lines parser
+ - [fix] SDL UI does not enforce software rendering any more
+ - [fix] improved pgup/pgdown keys logic in menus
+ - [fix] wordwrapped menu entries are displayed in parent's colors
+ - [fix] Windows sockets are properly closed (patch by Gisle Vanem)
+ - [fix] function keys react properly when used with the CURSES interface
+ - [fix] telnet links are recognized now (but unsupported)
+ - [mnt] Windows build no longer distributed (do it yourself)
+ - [mnt] DOS 32-bit build no longer distributed (use the 16-bit version)
+
+Gopherus v1.1 [26 Feb 2019]:
+ - [new] two DOS builds are available: 16 bit (real-mode) and 32 bit (386+)
+ - [fix] better checking for content overflows
+ - [fix] fixed crashes in the SDL output module
+ - [fix] lots of minor memory/speed optimizations
+ - [fix] improved up/down keys logic in menus
+ - [mnt] small adjustments so Gopherus compiles fine on OpenBSD
+ - [mnt] relicensed to the '2-clause' BSD license
+
+Gopherus v1.0c [23 Apr 2016]:
+ - [new] Linux port uses the curses interface by default instead of SDL
+ - [fix] Gopherus accepts URLs with only a hostname followed by a slash
+ - [fix] fixed gopherus freezes when trying to display some '0' items
+ - [mnt] DOS port is UPXed without LZMA to speed up launching on 386 machines
+ - [mnt] DOS port is compiled using DJGPP v2.05 instead of v2.04
+
+Gopherus v1.0b [29 Jul 2015]:
+ - [new] support for scripted downloading (-o=xxx)
+ - [new] migrated SDL ports to SDL2 (Linux, Windows)
+ - [fix] the 'downloading' status bar counter is refreshed once per second
+         instead of being redrawn at every received packet
+ - [fix] Recompiled the DOS version linking against an 80386-friendly watt32
+ - [fix] DOS exe linked with a 387 emu lib so gopherus can run on a 386SX
+
+Gopherus v1.0a [30 Mar 2013]:
+ - [fix] when refreshing a location, the display properties (position of the
+         file on screen) are reset now. This prevents corrupt rendering if the
+         file changes between refreshes
+ - [fix] fixed a bug leading to random crashes when the URL inside a menu was
+         longer than 128 bytes
+ - [new] F9 (save) works from within text content (not only from menus)
+ - [new] configurable color schemes, via the GOPHERUSCOLOR env variable
+
+Gopherus v1.0 [10 Mar 2013]:
+ - first public release

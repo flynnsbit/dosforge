@@ -1,0 +1,2 @@
+[console_scripts]
+vhdmaker = vhdmaker.cli:main

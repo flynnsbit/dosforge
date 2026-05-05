@@ -1,0 +1,19 @@
+Begin3
+Title:                sort
+Version:              1.5.1a
+Entered-Date:         2016-11-13
+Description:          Sort the contents of a text file
+Summary:              Sort the contents of a text file, optionally using the NLS
+                      collate table
+Keywords:             sort, text, file
+Author:               k4gvo -at- qsl.net (James Lynch)
+Maintained-By:        Eric Auer <eric -at- coli.uni-sb.de>
+Platforms:            DOS (e.g. Borland Turbo C), includes own KITTEN library
+                      version, FreeDOS
+Copying-Policy:       GNU General Public License, Version 2
+Wiki-Site:            http://wiki.freedos.org/wiki/index.php/Sort
+Defunct-Primary-Site: http://www.coli.uni-saarland.de/~eric/stuff/soft/
+Modified-Date:        2026-03-09.3
+Changes:              * updated AI translations|* NLS: English typo corrections and
+                      Swedish translation update
+End

@@ -1,0 +1,22 @@
+Begin3
+Title:          which
+Version:        2.1a
+Entered-Date:   2002-03-20
+Description:    Find executables located in the PATH directory list
+Keywords:       DOS, extension, file, utility, find, locate, PATH
+Author:         trane@tranefrancks.com (Trane Francks)
+Maintained-By:  trane@tranefrancks.com (Trane Francks)
+Primary-Site:   https://tranefrancks.com/Tranes_World__Reinvented/Programming.html
+Original-Site:  http://www2.gol.com/users/trane/programming/programming.html
+Platforms:      DOS, Compiler: Borland Turbo Pascal 7.0
+Copying-Policy: GNU General Public License, Version 2
+Summary:        Enables users to find executable files in directories listed in
+                the PATH environment variable. Full wildcard support, relative
+                pathnames, optional file details (size, date). User-definable
+                program extensions, codepage-correct time/date formatting. New
+                DOS switchar support.
+Modified-Date:  2025-04-10.1
+Changes:        * NLS: English typo corrections and Swedish translation
+                update|* Metadata update for modified-time and LFN
+                requirements|* improved repository INDEX.md
+End

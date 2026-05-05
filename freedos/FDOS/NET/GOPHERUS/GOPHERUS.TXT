@@ -1,0 +1,153 @@
+
+            Gopherus v1.2.2 Copyright (C) 2013-2022 Mateusz Viste
+                       http://gopherus.sourceforge.net
+
+
+Gopherus is a free, multiplatform, console-mode gopher client that provides a
+classic text interface to the gopherspace.
+This program is released under the terms of the '2-clause' BSD license.
+
+
+### KEY BINDINGS #############################################################
+
+Gopherus is a console-mode gopher client entirely keyboard-driven. Its default
+key bindings are listed below:
+
+TAB       - Switch to/from URL bar edition
+ESC       - Quit Gopherus (requires a confirmation)
+UP/DOWN   - Scroll the screen's content up/down by one line
+PGUP/PGDW - Scroll the screen's content up/down by one page
+HOME/END  - Jump to the top/bottom of the current document
+BACKSPACE - Go back to the previous location
+B         - Bookmark current location
+DEL       - Delete bookmark (main screen only)
+F1        - Show help (this file)
+F2        - Go to program's main screen
+F4        - Go to current server's main menu
+F5        - Refresh current location
+F9        - Download location to disk
+F10       - Download all files in current menu to disk
+
+Key bindings can be reconfigured through the Gopherus configuration file by
+assigning key scancodes to following configuration variables:
+
+key.home     = 327
+key.end      = 335
+key.enter    =  13
+key.backspc  =   8
+key.del      = 339
+key.esc      =  27
+key.tab      =   9
+key.bookmark =  98
+key.up       = 328
+key.down     = 336
+key.left     = 331
+key.right    = 333
+key.pgup     = 329
+key.pgdown   = 337
+key.help     = 315
+key.jmp_home = 316
+key.jmp_main = 318
+key.refresh  = 319
+key.save_as  = 323
+key.down_all = 324
+
+Learn the scancode of your keyboard's keys by running "gopherus -keycodes".
+
+
+### CUSTOM COLOR SCHEMES #####################################################
+
+The Gopherus color scheme can be customized using a "colors" variable in the
+configuration file. This variable must contain exactly 6 color attributes,
+each describing the foreground and background color of a given UI element. An
+attribute is composed of two hex digits: BF, where B is the background color,
+and F is the foreground color. Colors indexes follow the classic CGA palette:
+
+0 = black
+1 = low blue
+2 = low green
+3 = low cyan
+4 = low red
+5 = low magenta
+6 = low brown
+7 = light gray
+8 = dark gray
+9 = high blue
+A = high green
+B = high cyan
+C = high red
+D = high magenta
+E = yellow
+F = high intensity white
+
+colors = aabbccddeeffgghhii
+          | | | | | | | | |
+          | | | | | | | | |
+          | | | | | | | | +- Selected item in menu
+          | | | | | | | +--- Selectable items in menu
+          | | | | | | +----- Error item in menu
+          | | | | | +------- Itemtype column in menus
+          | | | | +--------- URL bar side decorations
+          | | | +----------- URL bar
+          | | +------------- Status bar (warning)
+          | +--------------- Status bar (information)
+          +----------------- Normal text (text files or 'i' items)
+
+Examples:
+
+Default Gopherus palette....:  colors = 177047707818141220
+Black & white...............:  colors = 077070707808070770
+Missing green, 1980 CRTs?...:  colors = 022020202002020220
+
+
+### CONFIGURATION FILE LOCATION ##############################################
+
+The location of the Gopherus config file depends on your platform.
+Run "gopherus --help" to learn it.
+
+
+### REQUIREMENTS #############################################################
+
+Gopherus has been designed with ancient hardware in mind, hence it doesn't
+need much to run. The 16-bit DOS version requires at least:
+ - an MDA video card
+ - some kind of CPU (8086+)
+ - 400K of available RAM
+ - an ethernet card with a working packet driver
+
+
+### UTF-8 SUPPORT ############################################################
+
+Gopherus decodes all displayable content as UTF-8 and outputs wide characters
+to the terminal whenever possible (relying on ncursesw). On the DOS platform
+it limits output to characters in the ASCII range 32..255 and assumes a system
+codepage set to Latin I.
+
+
+### LICENSE ##################################################################
+
+Copyright (C) 2020-2022 Mateusz Viste
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+###################################################################### EOF ###

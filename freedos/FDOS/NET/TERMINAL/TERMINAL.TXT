@@ -1,0 +1,142 @@
+Terminal(x)		                              Terminal(x)
+
+NAME
+	Terminal - a tiny terminal for every PC
+
+SYNOPSIS
+	terminal [0..7][A..D][?]...
+
+DESCRIPTION
+	This software implements a tiny and effective terminal
+	that should work on every PC. Should be pretty obvious
+	what to do with it :-)
+
+	Key features: Terminal has an integrated parser for the
+	most used ANSI and VT100 type escape sequences and, to
+	gain decent speed on 8086 PCs, support for IRQ-driven
+	serial input (output uses polling for now). Many options
+	to adjust communications can be reached by the F1..F10
+	keys. Some may be a bit weird.
+
+OPTIONS
+	If you give a number on the command line, it will select
+	the initial speed, else the default is 9600 baud. A "?"
+	on the command line will show a help screen.
+	The numbers to encode the initial speed are:
+	1   1200  2   2400  3   4800  4   9600
+	5  19200  6  38400  7  57600  8 115200
+
+	If you give a letter on the command line, it will select
+	the initial serial port, A for COM1, B for COM2, C for
+	COM3, D for COM4. Else, the default will be to use the
+	port with the highest number that can be found. Given
+	several versions for any option, the one at the end of
+	the line will be used, unless one of the previous values
+	is invalid.
+
+	This terminal can also be compiled along with ETHERBOOT:
+	It will detect this by testing if CS: begins with int 20
+	(then it assumes to be run from DOS). If run from ROM,
+	the user will be prompted for the setup and no command
+	line parsing will be done.
+
+USER INTERFACE
+	The user interface handles several F-keys. As a bonus,
+	pressing both the left and the right shift key at the
+	same time will also count as a request to exit.
+
+	F1  - cycle through the 3 possible status lines:
+	      the help line (default), the setup status, and the
+	      serial port status including a small send history.
+	F2  - cycle through the 8 possible speeds given above.
+	F3  - toggle sending of a break.
+	F4  - send an ETX (^C) char. Useful if int 0x23 or 0x1b
+	      would kill us if we use the real ^C on some PCs.
+	F5  - cycle the way the ENTER key is sent: CR LF, LF CR,
+	      CR or LF.
+	F6  - toggle the way CR and LF are displayed: As is or
+	      expanding any of them to a full CR LF combination.
+	F7  - cycle the four ways of waiting for handshake:
+	      use none, CTS, DSR, both.
+	F8  - exit the program (to DOS or ROM).
+	F9  - toggle dynamic transmission/handling of RTS.
+	F10 - toggle transmission of DTR.
+
+	The TTY engine does handle CR and LF as well as TAB, but
+	it does not support dynamic tabstops or S0/S1 (14/15)
+	yet. There is also support for BS (may not wrap between
+	lines), and BEL is just shown and does not beep :-).
+	Depending on the F6 setting, the cursor is supposed to
+	stick at the right margin rather than wrapping around.
+
+	One of the best features (to my opinion) is the VT100
+	parser, which can currently handle the following strings
+	(n in ESC [ sequences is an optional value from 0..255):
+
+	ESC c - reset terminal         ESC E - treated as ESC [ B
+	ESC 7 - save state             ESC 8 - restore state
+	ESC H - yet missing feature of "set dynamic tabstop here"
+
+	ESC [ n A - cursor up (by N)   ESC [ n B - cursor down...
+	ESC [ n C - cursor right...    ESC [ n D - cursor left...
+	ESC [ s - save cursor position ESC [ u - restore position
+	ESC [ n J - clear screen (*1)  ESC [ n K - clear line (*2)
+	ESC [ n q - set LED (*3)       ESC n g - clear tab (*4)
+	ESC [ n;n r - define scroll area (in terms of rows).
+	ESC [ n;n H - set cursor position (alias: ESC [ n;n f).
+	ESC [ n... m - set colors and other attributes (*5).
+	
+	(*1) The argument is supposed to select one of three
+	  clear screen modes, but as ANSI.sys, we ignore it.
+	  (2 would be all, 1 start to cursor, 0 cursor to end)
+	(*2) The argument selects what part is cleared, default
+	  0: cursor to end (1: start to cursor, 2: whole line).
+	(*3) I know this is useless, but for your info: 0 clears
+	  all LEDs, 1..4 sets one LED (look at the status line).
+	(*4) This is not yet implemented, but it is supposed to
+	  clear a dynamic tabstop at the current position, and
+	  argument of 3 would cause all of them to be cleared.
+	(*5) No arguments reset this, else up to 4 arguments in:
+          40..47 set background color, 30..37 set foreground
+	  color, 8 "invisible" (darker/grey), 7 "inverted",
+	  5 blinking, (4, underline is ignored!), 1 bright/bold,
+	  (2, pale/thin is ignored), 0 resets values.
+
+	Not supported are the ESC[c "who are you", ESC[...p
+	redefine keyboard, ANSI ESC[nh set video mode, the query
+	state and cursor position sequences, and of course the
+	extensions of NANSI and VT220 and similar.
+	The ESC[?nl and ESC[?nh VT100 setup interface and
+	similar ESC#..., ESC(..., ESC)..., ESC?... stuff is
+	also ignored (doh).
+
+LICENSE
+	This software comes for free and with source code
+	supplied, or to put it in another way: The license is
+	the GPL 2 and this is GNU software. So there is no
+	warranty whatsoever but a honest intention to write
+	useful software. You can use the software in your own
+	projects and do any modifications you like, but please
+	give me proper credit and do only call TINY and 8086 PC
+	compatible versions "Terminal"...
+
+REPORTING BUGS
+	Report bugs to <eric@coli.uni-sb.de>.
+	Improvements and suggestions are also welcome!
+
+	Missing features include the handling of the dynamic
+	tabstop setting, sending cursor keys as ESC sequences,
+	and most setup sequences (starting with ESC # ( ) or ?).
+	Not even the ESC = and ESC > setup on how to send the
+	numeric keypad keys is handled... ESC [ n y (loopback
+	testing) shares the same fate.
+	I think for the non-ROM version, "paste from file" and
+	"log to file" would also make a nice gimmick. Comments?
+
+SEE ALSO
+	Some versions of this may be compiled using ETHERBOOT
+	to fit into a boot EPROM, some may be compressed using
+	UPX (http://upx.sourceforge.net/ ) to achieve file sizes
+	of typically below 4096 bytes. Greetings to the
+	http://www.assembly.org/ 4k intro contest, hehe :-).
+

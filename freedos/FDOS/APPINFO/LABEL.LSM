@@ -1,0 +1,17 @@
+Begin3
+Title:          LABEL
+Version:        1.5
+Entered-Date:   2021-11-19
+Description:    Set or change the disk volume label
+Keywords:       label, disk volume
+Author:         Joe Cosentino <onehardmarine -at- attbi.com>
+Maintained-By:  andrewbird and PerditionC
+Primary-Site:   http://github.com/FDOS/label
+Mirror-Site:    http://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/dos/label/
+Defunct-Site:   http://www.geocities.com/xsaintx69/freedos/
+Platforms:      DOS, FreeDOS
+Copying-Policy: GNU General Public License, Version 2
+Wiki-Site:      http://wiki.freedos.org/wiki/index.php/Label
+Modified-Date:  2026-01-14.3
+Changes:        * updated translations
+End

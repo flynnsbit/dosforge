@@ -1,0 +1,20 @@
+Begin3
+Title:          Format
+Version:        0.92a (pre-release)
+Entered-Date:   2024-08-07
+Description:    Disk formatting program
+Summary:        Disk formatting program that creates FAT file systems and
+                low-level formats floppy disks
+Keywords:       freedos, format, fat12, fat16, fat32, floppy, harddisk, mirror,
+                unformat
+Author:         Brian E. Reifsnyder <reifsnyderb (#) mindspring.com>
+Primary-Site:   https://github.com/FDOS/format
+Defunct-Site:   http://www.23cc.com/programs/
+Platforms:      DOS
+Copying-Policy: GNU GPL
+Modified-Date:  2025-04-09.9
+Changes:        * NLS: English typo corrections and Swedish translation
+                update|* removed CI/CD for project|* Metadata updated for
+                modified-date and LFN requirements|* improved repository
+                INDEX.md
+End

@@ -1,0 +1,13 @@
+0.0:Czeka, a¾ u¾ytkownik naci˜nie klawisz z listy wybor¢w
+0.1:wybory
+0.2:tekst
+0.3:Okre˜la dozwolone klawisze. Domy˜lnie:
+0.4:Nie wy˜wietlaj wybor¢w na koäcu monitu
+0.5:Rozr¢¾niaj wielko˜† liter
+0.6:Automatycznie wybierz klawisz c po nn sekundach
+0.7:Tekst wy˜wietlany jako monit
+0.8:Wyemituj sygnaˆ d«wi©kowy (beep) przy monicie
+0.9:Nieprawidˆowa skˆadnia limitu czasu. Oczekiwany format: Tc,nn lub T:c,nn
+0.10:Domy˜lny wyb¢r limitu czasu nie znajduje si© w okre˜lonych (lub domy˜lnych) wyborach
+3.0:tn
+polish, pl, cp852

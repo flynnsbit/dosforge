@@ -1,0 +1,16 @@
+Begin3
+Title:          fc
+Version:        3.03a
+Entered-Date:   2005-01-10
+Description:    File compare utility
+Keywords:       freedos, file, compare, fc
+Author:         coldfusion1@geocities.com
+Maintained-By:  Maurizio Spagni <flurmy@freemail.it>
+Platforms:      dos (C) *** uses FreeDOS kitten
+Copying-Policy: GNU General Public License, Version 2
+Wiki-Site:      http://wiki.freedos.org/wiki/index.php/Fc
+Defunct-Site:   http://irevolution.ncsdi.net/data/freedos.html
+Modified-Date:  2026-03-13.7
+Changes:        * updated AI translations|* NLS: English typo corrections and
+                Swedish translation update
+End

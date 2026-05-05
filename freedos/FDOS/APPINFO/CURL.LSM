@@ -1,0 +1,22 @@
+Begin3
+Title:          cURL
+Version:        8.5.0
+Entered-Date:   2024-11-04
+Description:    Command line tool for transferring data
+Summary:        Curl is a command line tool for transferring data specified
+                with URL syntax.
+Keywords:       freedos, curl
+Author:         Curl team
+Maintained-By:  Michael Kostylev
+Primary-Site:   https://github.com/curl/
+Original-Site:  http://curl.haxx.se http://curl.se
+Alternate-Site: http://mik.dyndns.pro/dos-stuff/
+Platforms:      FreeDOS
+Copying-Policy: Open source
+Packager:       Eric Auer
+Modified-Date:  2025-04-09.8
+Changes:        * NLS: English typo corrections and Swedish translation
+                update|* removed CI/CD for project|* Metadata updated for
+                modified-date and LFN requirements|* improved repository
+                INDEX.md
+End

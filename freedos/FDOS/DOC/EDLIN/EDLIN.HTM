@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<title>How to use edlin</title>
+
+	<style>
+body {
+	font-family: Helvetica, Arial, sans-serif;
+	line-height: 1.5;
+	margin: 1em auto;
+	max-width: 700px;
+}
+h1 {
+	text-align: center;
+}
+h2 {
+	border-bottom: 1px solid dimgray;
+}
+h3 {
+	font-size: 1em;
+}
+i {
+	color: midnightblue;
+}
+samp {
+	color: blue;
+	font-family: monospace;
+	font-weight: normal;
+}
+pre, code {
+	background-color: whitesmoke;
+}
+code {
+	font-family: monospace;
+	font-weight: bold;
+	padding: 0 .5em;
+}
+pre {
+	border: 1px solid gainsboro;
+	line-height: 1.1;
+	margin: 1em;
+	padding: .5em;
+}
+	pre > code {
+		padding: 0;
+	}
+ul {
+	padding-left: 2em;
+}
+	ul > li {
+		margin: 1em 0;
+	}
+dl {
+	margin-left: 2em;
+}
+	dl > dt {
+		font-weight: bold;
+		margin-top: 1em;
+	}
+	dl > dd {
+		margin-left: 0;
+	}
+	</style>
+</head>
+<body>
+
+<h1>How to use edlin</h1>
+
+<p>The FreeDOS edlin program is a small line editor as a functional equivalent of MS-DOS edlin. It differs from MS-DOS edlin in that <em>it's free software</em> and <em>the user interface is slightly different in a few places</em>. The reason for the difference is so that the user does not have to type in control characters mandated by MS-DOS edlin's syntax.</p>
+
+<h2>Invoking edlin</h2>
+
+<p>The edlin program is invoked either by itself:</p>
+
+<pre><code>edlin</code></pre>
+
+<p>or with a filename that's initially read in if it exists or if it is not, treated as a new file:</p>
+
+<pre><code>edlin file</code></pre>
+
+<h2>Editor commands</h2>
+
+<p>In the following command lists:</p>
+
+<ul>
+	<li>The <samp>[</samp> and <samp>]</samp> brackets represent optional values.</li>
+
+	<li>The <samp>#</samp> symbol indicates a line number, which can be one of several possible values:
+		<ul>
+			<li>A string of digits as <i>a literal line number</i>, such as <code>12</code> for line 12.</li>
+
+			<li><code>.</code> ("period") as <i>the current line in the file</i>.</li>
+
+			<li><code>$</code> ("dollar") as <i>the last line in the file</i>.</li>
+
+			<li><code>#</code> ("number") as <i>the line number just after the last line in the file</i>.</li>
+
+			<li><code>+<samp>n</samp></code> or <code>-<samp>n</samp></code> as <i>a count added or subtracted from a line number</i>. This is useful for relative line addressing, such as <code>.+1</code> for the line after the current line.</li>
+		</ul>
+	</li>
+
+	<li>The <samp>$</samp> symbol represents a string of characters. Strings may be enclosed in either single or double quotes, and may contain the following escape sequences:
+		<dl>
+			<dt><code>\a</code></dt>
+			<dd>Alert character</dd>
+
+			<dt><code>\b</code></dt>
+			<dd>Backspace character</dd>
+
+			<dt><code>\e</code></dt>
+			<dd>Escape</dd>
+
+			<dt><code>\f</code></dt>
+			<dd>Form feed</dd>
+
+			<dt><code>\t</code></dt>
+			<dd>Horizontal tab</dd>
+
+			<dt><code>\v</code></dt>
+			<dd>Vertical tab</dd>
+
+			<dt><code>\"</code></dt>
+			<dd>Double quote</dd>
+
+			<dt><code>\'</code></dt>
+			<dd>Single quote</dd>
+
+			<dt><code>\.</code></dt>
+			<dd>Period</dd>
+
+			<dt><code>\\</code></dt>
+			<dd>Backslash</dd>
+
+			<dt><code>\x<samp>XX</samp></code></dt>
+			<dd>Hexadecimal value, where each <samp>X</samp> is a hexadecimal digit (<code>0</code> to <code>F</code>, uppercase or lowercase)</dd>
+
+			<dt><code>\d<samp>NNN</samp></code></dt>
+			<dd>Decimal value, where each <samp>N</samp> is a decimal digit (<code>0</code> to <code>9</code>)</dd>
+
+			<dt><code>\<samp>OOO</samp></code></dt>
+			<dd>Octal value, where each <samp>O</samp> is an octal digit (<code>0</code> to <code>7</code>)</dd>
+
+			<dt><code>\^<samp>C</samp></code></dt>
+			<dd>Control character, such as <code>\^J</code> for the literal "control J" (linefeed) character.</dd>
+		</dl>
+	</li>
+</ul>
+
+<p>The edlin program supports the following editor commands:</p>
+
+<h3><code>#</code>
+&middot; Edit a single line</h3>
+
+<p>The edlin program outputs the single line indicated by the number, and the next inputted line replaces the outputted line in the file.</p>
+
+<h3><code>a</code>
+&middot; Append to the file</h3>
+
+<p>This command is equivalent to <code>$+1i</code>
+
+<h3><code><samp>[#]</samp>,<samp>[#]</samp>,<samp>#</samp>,<samp>[#]</samp>c</code>
+&middot; Copy a range of lines</h3>
+
+<p>Copy a range of consecutive lines to another location in the buffer. The parameters are, in order:</p>
+
+<ol>
+	<li>The first line you want to copy (default is the current line)</li>
+
+	<li>The last line you want to copy (default is the current line)</li>
+
+	<li>The line before which you want to <em>insert</em> the block of lines</li>
+
+	<li>The number of times you want to copy the block (default is 1)</li>
+</ol>
+
+<p>After copying lines, use the <code>l</code> (list) command to see the new line numbers.</p>
+
+<h3><code><samp>[#][</samp>,<samp>#]</samp>d</code>
+&middot; Delete a range of lines</h3>
+
+<p>Delete a block of consecutive lines from the buffer. The parameters are the first and last line of the block to be deleted.</p>
+
+<p>If you omit the first parameter, delete the block from the current line <em>to the line specified in the second parameter</em> (be sure to include the comma).</p>
+
+<p>If you omit the second parameter, delete <em>only</em> the line specified in the first parameter.</p>
+
+<p>Omitting both parameters deletes the current line.</p>
+
+<h3><code>e <samp>filename</samp></code>
+&middot; Save and exit</h3>
+
+<p>This command is equivalent to <code>w <samp>filename</samp></code> followed by <code>q</code>
+
+<p>This verifies whether the user actually wants to quit before doing so. To quit, answer the "Abort edit (Y/N)?" prompt with "yes."</p>
+
+<h3><code><samp>[#]</samp>i</code>
+&middot; Insert lines</h3>
+
+<p>Enter insert mode. Its parameter is the line number <em>before</em> which you want to insert lines.</p>
+
+<p>While entering text, you can use the escape sequences from above.</p>
+
+<p>To exit insert mode, type <code>.</code> (period) on a line by itself. (If you need a line with just a period, you need to enter it as <code>\.</code>)</p>
+
+<p>After exiting insert mode, the line <em>after</em> the inserted text becomes the current line&mdash;unless the insertion was appended to the end of the buffer, in which case the last line in the buffer becomes the new current line.</p>
+
+<h3><code><samp>[#][</samp>,<samp>#]</samp>l</code>
+&middot; List lines</h3>
+
+<p>List the lines of text to the screen. If you omit the first parameter, start showing text starting at 11 lines before the current line.</p>
+
+<p>If you omit the second parameter, shows a screen of text beginning with the line specified in the first parameter.</p>
+
+<p>If you omit both parameters, show a screen of text starting at 11 lines before the current line.</p>
+
+<p>If the number of lines to show is longer than the number of lines on the screen, edlin will prompt after each screen.</p>
+
+<h3><code><samp>[#]</samp>,<samp>[#]</samp>,<samp>#</samp>m</code>
+&middot; Move lines</h3>
+
+<p>Move a block of text to the line before the number specified in the third parameter. It is similar to copying then deleting the original block.</p>
+
+<h3><code><samp>[#][</samp>,<samp>#]</samp>p</code>
+&middot; Print lines</h3>
+
+<p>Similar to the <code>l</code> (list) command except that the default parameters starts at the current line instead of 11 lines before it.</p>
+
+<h3><code>q</code>
+&middot; Quit</h3>
+
+<p>Quit the program. <p>This verifies whether the user actually wants to quit before doing so. To quit, answer the "Abort edit (Y/N)?" prompt with "yes."</p>
+
+<h3><code><samp>[#][</samp>,<samp>#][</samp>?<samp>]</samp>r<samp>$</samp>,<samp>$</samp></code>
+&middot; Replace string</h3>
+
+<p>Replace all occurrences of the first string with the second between the two lines specified.</p>
+
+<p>If you omit the first parameter, start replacing at the line <em>after</em> the current line.</p>
+
+<p>If you omit the  second parameter, stops replacing text at the last line of the buffer.</p>
+
+<p>If you include the <code>?</code> (question mark), edlin will print a confirmation message before replacing text.</p>
+
+<h3><code><samp>[#][</samp>,<samp>#][</samp>?<samp>]</samp>s<samp>$</samp></code>
+&middot; Search for a substring</h3>
+
+<p>Search for the first line containing the specified substring.</p>
+
+<p>If you omit the first parameter, start searching from the current line.</p>
+
+<p>If you omit the second parameter, stop the search at the end of the buffer.</p>
+
+<p>If you include the <code>?</code> (question mark), edlin will print a confirmation message. Responding "no" to the confirmation message continues the search; "yes" ends the search.</p>
+
+<p>If the search found the substring, the current line will be set to the line where the search ended.</p>
+
+<h3><code><samp>[#]</samp>t <samp>filename</samp></code>
+&middot; Transfer a file</h3>
+
+<p>Insert the contents of a file before the specified line number.</p>
+
+<p>If you omit the line number, insert before the current line.</p>
+
+<h3><code><samp>[#]</samp>w <samp>filename</samp></code>
+&middot; Write the file</h3>
+
+<p>Write the first <samp>#</samp> lines in the buffer to the specified file.</p>
+
+<p>If you omit the number parameter, write all the lines in the buffer to the file.</p>
+
+</body>
+</html>
+

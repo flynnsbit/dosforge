@@ -1,0 +1,16 @@
+Begin3
+Title:          HEAD
+Version:        1.0a
+Entered-Date:   2003-03-18
+Description:    Displays a part of a file
+Keywords:       head
+Author:         Wolf Bergenheim
+Maintained-By:  Wolf Bergenheim
+Platforms:      DOS, FreeDOS
+Copying-Policy: GNU General Public License, Version 2
+Summary:        Displays a part of a file from the beginning.
+Modified-Date:  2025-04-09.9
+Changes:        * NLS: English typo corrections and Swedish translation
+                update|* Metadata update for modified-time and LFN
+                requirements|* improved repository INDEX.md
+End

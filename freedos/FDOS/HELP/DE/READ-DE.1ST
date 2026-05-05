@@ -1,0 +1,69 @@
+Wichtige Information:
+
+htmlhelp unterstützt ab Version 1.1.0 UTF-8 (Unicode); daher
+wurde der gesamte Text im UTF-8-Format erstellt, was die Bearbeitung
+der Texte unter modernen Betriebssystemen erheblich erleichtert.
+
+Damit die htmlhilfe UTF-8 richtig anzeigen kann, muß natürlich die
+richtige DOS-Codepage eingestellt sein. Siehe unten!
+
+
+
+
+hhstndrd.zip
+============
+
+Diese Datei enthält die gesammelten htm Dokumente
+die für die Verwendung unter help.exe (htmlhelp)
+gedacht sind.
+
+Sie MUSS NICHT ENTPACKT werden - htmlhelp kann die
+htm Dateien von innerhalb der hhstndrd.zip lesen.
+
+(Vielleicht wollen Sie die htm-Dateien entpacken,
+damit sie mit irgendeinem anderen Browser gelesen
+werden können oder editiert werden können.
+Die Zip-Datei wird üblicherweise den unkomprimierten
+Dateien vorgezogen; wenn Sie wollen, dass help eine
+bearbeitete, unkomprimierte Version einer Datei lesen
+soll, ersetzen Sie bitte entweder die ursprüngliche
+Datei innerhalb der hhstndrd.zip oder löschen Sie
+die gezippte Version.
+
+CODEPAGE SUPPORT:
+
+Die verschiedenen Sprachen der Hilfe erfordern unterschiedliche
+Codepages. Wenn die Zeichen nicht wie erwartet angezeigt werden,
+ist nicht die richtige Codepage eingestellt.
+
+FDCONFIG.SYS / CONFIG.SYS - Beispiele, wie die Codepages installiert
+werden:
+
+country=001,437,c:\freedos\bin\country.sys   (US Einstellung)
+country=033,858,c:\freedos\bin\country.sys   (Französische Einstellung)
+country=034,858,c:\freedos\bin\country.sys   (Spanische Einstellung)
+country=049,858,c:\freedos\bin\country.sys   (Deutsche Einstellung)
+
+Den Ländercode und die Codepages finden Sie in der Hilfe im Bereich
+"externe Befehle - country.sys" und im Bereich 
+"Verschiedenes - kpdos"
+
+Dazu korrespondierend, sollten FDAUTO.BAT /AUTOEXEC.BAT wie folgt
+aussehen (deutsch):
+
+set LANG=DE
+lh display con=(EGA,858,1)
+mode con cp prep=((858) %DOSDIR%\CPI\EGA.CPX)
+mode con cp sel=858 (evtl. andere Codepages)
+mode con cp refresh
+
+Abhängig von ihrer Landessprache sollte "LANG" auf EN/FR/ES/DE usw.
+gesetzt sein.
+Bitte prüfen Sie, dass in dem Ordner "NLS" eine htmlhelp.en/fr/es/de usw.
+existiert, andernfalls zeigt die htmlhelp.exe die englische Version
+an. Falls nicht, erstellen Sie eine "NLS-Datei", z. B. durch
+Kopieren einer anderen Sprache, z. B. help.fr / help.es oder help.de.
+Bitte ersetzen Sie "858" durch Ihre Codepage, siehe oben.
+Im Bereich "Verschiedenes - cpidos" können Sie herausfinden, welche
+der EGAx.CPX-Dateien mit Ihrer Codepage korrespondiert. (Es existieren
+EGA.cpx bis EGA18.cpx!)

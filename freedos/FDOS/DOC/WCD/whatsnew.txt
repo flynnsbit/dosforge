@@ -1,0 +1,776 @@
+﻿6.0.5 2023-04-23
+  - New Romanian translation of the UI and the manual.
+    Thanks to Remus-Gabriel Chelu.
+  - New Swedish translation of the UI and the manual.
+    Thanks to Josef Andersson.
+  - Updated Friulian translation of the UI. Thanks to Fabio Tomat.
+
+6.0.4 2021-10-31
+  - New Serbian translation of the manual.
+    Thanks to Мирослав Николић.
+  - Updated French translations of messages and manual.
+    Thanks to Grégoire Scano.
+  - Updated Esperanto translation. Thanks to Felipe Castro.
+  - Updated information about building wcd with DJGPP on Windows 8.1
+    and higher.
+  - Windows version: Upgrade to PDCurses 3.9.
+
+6.0.3 2019-08-14
+  - New French translations of the messages and the manual.
+    Thanks to Grégoire Scano.
+  - Support resizing in ConEmu and Windows 10 command console.
+    If it doesn't work in a Windows 10 console make sure the console is not
+    in legacy mode (see properties). The screen may not refresh when the
+    console Layout property "Wrap text output on resize" is disabled.
+    The screen can be refreshed manually by pressing the F5 key.
+  - Upgrade to PDCurses 3.8. Required for console resize support on Windows.
+  - Code cleanup.
+
+6.0.2 2018-05-10
+  - New Friulian translation of the messages. Thanks to Fabio Tomat.
+  - Updated Spanish translation. Thanks to Francisco Javier Serrador.
+  - Makefile: Fix: Add RPM_LD_FLAGS instead of RPM_OPT_FLAGS to LDFLAGS.
+  - Code cleanup.
+
+6.0.1 2017-08-28
+  - wcd.c: Fix. DOS, OS2, and Windows versions. When user gives drive
+    plus directory name (e.g. wcd d:games), wcd did not find the directory.
+    This was broken since wcd 5.3.3. Thanks to Martin for reporting this issue.
+    https://sourceforge.net/p/wcd/feature-requests/14/
+  - GCC_DOS.txt: Document problems and solutions for building wcd with DJGPP
+    on Windows Vista and higher.
+  - src/Makefile: Build all text and html manual files when ENABLE_NLS=1.
+  - Minor cleanup of the manual.
+  - New Brazilian Portuguese translation of the messages. Thanks to Rafael Fontenelle.
+  - New Brazilian Portuguese translation of the manual. Thanks to Rafael Fontenelle.
+
+6.0.0 2017-02-21
+  - Faster disk scanning on Windows and Unix and on OS/2 with Watcom C
+    built version.
+    This was achieved by removing the DOSDIR directory interface
+    layer and replacing it with system specific functions.
+    Disk scanning speed depends on external factors, like disk
+    caching and other processes accessing the disk at the same time.
+    The speed increasement you experience may vary.
+  - Fixed -rmtree for unicode file names on Windows.
+  - Support EMX symbolic links on OS/2.
+  - Support bash on OS/2.
+  - New Danish translation of the messages. Thanks to Joe Hansen.
+
+5.3.4 2017-01-03
+  - New Serbian translation. Thanks to Мирослав Николић.
+  - src/Makefile: Fixed for compilation on OS/2.
+  - Code cleanup.
+
+5.3.3 2016-10-15
+  - Support Unicode aliases on Windows.
+    Wcd for Windows with Unicode support stores the aliases now in UTF-8
+    format (like the paths). Old aliases with non-ASCII characters are
+    not compatible anymore. You need to create new aliases.
+  - New option -ls: List the aliases. Thanks to Erik Rijshouwer.
+  - Code cleanup.
+  - Fixed makefiles for DJGPP, targets install and dist.
+
+5.3.2 2016-02-18
+  - Fixed printing of East-Asian text on Windows with an East-Asian regional
+    setting.
+  - src/Makefile:
+    * Split DEBUG=1 into DEBUG=1 and DEBUGMSG=1. DEBUG=1 will add option -g
+      to CFLAGS for debugging with gdb. DEBUGMSG=1 makes wcd print extra
+      messages about accessing the file system.
+    * Use GNU standard variables INSTALL_PROGRAM and INSTALL_DATA for
+      installation.
+    * Update for msys1/2 to avoid need for msys specifc makefiles.
+    * Don't install international man pages when ENABLE_NLS is empty.
+  - msys/Makefile: Deleted.
+  - msys2/Makefile: Deleted.
+  - win64*/Makefile: Use normal 'gcc' instead of cross-compiler
+    (x86_64-w64-mingw32-gcc).
+  - man/*/man1/dos2unix.po: Moved all manual .po file to directory
+    po-man/. The .po files now have their original name.
+  - Makefile, man/man1/Makefile: Build international manuals from
+    the .po files in folder po-man/.
+
+2015-12-21
+  - Moved wcd source repository from Subversion to Git. To clone type:
+    git clone git://git.code.sf.net/p/wcd/wcd
+
+5.3.1 2015-12-02
+  - src/po/zh_CN.po: New simplified Chinese translation of the messages.
+    Thanks to Mingcong Bai (Jeff) and Mingye Wang (Arthur).
+  - src/Makefile, */vc/Makefile, */watcom/Makefile: Unicode support is by
+    default enabled for Windows and Unix.
+  - src/Makefile, src/chk_logc.sh: Automatically detect if we are in MSYS
+    1 or 2, and disable Unicode for MSYS 1.
+
+5.3.0 2015-09-23
+  - Faster loading of the graphical tree, in about one third less time.
+  - Fix reading UTF-16 treedata files.
+  - Fix: Check for file I/O errors while reading files. These can happen
+    after a file was opened without problems.
+
+5.2.7 2015-04-19
+  - c3po/structur.h: Fix compilation error: unknown type name wchar_t.
+    Happens on some systems when wcd is compiled with Unicode support.
+  - Makefile, man/man1/Makefile: add option --no-wrap to xgettext and
+    msgmerge. Translation Project standard is not to wrap.
+
+5.2.6 2015-01-18
+  - graphics.c,display.c: Use wclear again on Windows iso werase (werase was
+    introduced in wcd 5.2.4), because wclear gives a cleaner screen in a
+    Windows Command Prompt in an East Asian locale with double width font. E.g.
+    Chinese locale CP936 with raster or Simsun font. wclear gives some screen
+    flickering when used with ncurses on Windows.
+  - New keys in match list and graphical tree mode: F5 or CRTL-l
+    to redraw the screen.
+  - win*/Makefile:
+    * Add libiconv-2.dll when compiled with Unicode normalization.
+    * Add libwinpthread-1.dll when compiled with ncurses.
+    * Replaced libuninstring-0.dll with libunistring-2.dll.
+  - msys2/Makefile: New makefile for building for native msys2.
+  - wcd.c, Makefile: Updated for msys2.
+  - Bugfix: etc/profile.d/wcd.sh: wcd function was overwriting shell's
+    $go variable. Thanks to Andreas Schwab.
+  - Bugfix: wcddir.c: Fix in replacing volume manager path with $HOME for other
+    users. Introduced in version 5.1.0.
+
+5.2.5 2014-06-10
+  - Translations of UI messages:
+    * Updated Dutch translation. Thanks to Benno Schulenberg.
+    * Updated Finnish translation. Thanks to Jorma Karvonen.
+    * New Esperanto translation. Thanks to Benno Schulenberg.
+    * New Ukrainian translation. Thanks to Yuri Chornoivan.
+    * New Vietnamese translation. Thanks to Trần Ngọc Quân.
+  - Translations of the manual:
+    * New Dutch translation.
+    * New German translation. Thanks to Mario Blättermann.
+    * New Ukrainian translation. Thanks to Yuri Chornoivan.
+  - Use po4a to create international man pages.
+    See https://po4a.org/
+  - Wcd is member of Translation Project for translation of
+    messages and manual. See
+    https://translationproject.org/domain/wcd.html
+    https://translationproject.org/domain/wcd-man.html
+  - Makefile: Include generated manuals in the source package.  Adding man
+    files to the source package, which have been generated with a high version
+    of perl/pod2man, is a favour to users, because newer perl/pod2man versions
+    produce better output (also for old systems).  Tip from pod2man maintainer
+    Russ Allbery.  When you want to generate man pages yourself just run first
+    'make maintainer-clean'.
+  - Switch to MinGW-w64 compiler for Windows 32 bit.
+  - Makefile: Wcd compiles in MSYS2/MinGW-w64 environment.
+    See https://www.msys2.org/
+  - New makefiles for Microsoft Visual C++ (MS VC) 64 bit.
+  - New makefiles for Zsh/MSYS 64 bit (win64zsh).
+  - Watcom and VC makefiles support DEBUG=1.
+  - dosdir.h, dosdir.c: Fixed disk scanning when built with MS VC 64 bit.
+  - display.c, graphics.c: Don't use newterm() on Windows when ncurses
+    is used. Newterm() in old ncurses versions (<5.9.20120922)
+    is not working on Windows.
+  - wcd.c: Fixed a dangerous string usage. Thanks to David Binderman.
+  - wcd.c, display.c: Fixed compilation for stdio interface (no curses).
+  - Split help text in small pieces to make it easier for translators, and
+    cleanup messages. Thanks to Benno Schulenberg.
+  - Switch back to DJGPP gcc 4.5.3. Binaries built with DJGPP gcc >= 4.6
+    crash in DOSEMU and DosBOX.
+
+5.2.4 2013-08-28
+  - Support user names with a space in the name in cmd.exe.
+    Thanks to anonymous.
+  - Show an "A" when alternative navigation mode is on.
+  - Improved printing of surrogate pairs on border.
+  - New option -Td, --cjk-width. Support double width line drawing symbols
+    and ambiguous characters when double-width CJK (Chinese, Japanese,
+    and Korean) font is used. Analog to xterm -cjk_width.
+  - Added a test treedata file.
+  - Print system error when writing to disk fails.
+  - Makefile:
+    * CC can be overridden by environment.
+    * CFLAGS optimization flags can be overridden by environment.
+    * Separate LIBS from LDFLAGS.
+    Thanks to Justin Lecher <jlec@gentoo.org>
+  - Makefile: NCURSES_DEBUG=1 enables linking with the ncurses libraries
+    with debug information. The ncurses *_g libraries.
+  - In verbose mode environment variables HOME, WCDHOME, WCDSCAN,
+    and go-script are printed.
+  - Wcd prints debug information when compiled with DEBUG=1.
+  - Windows versions don't follow symbolic links while scanning
+    disks (like Unix versions). Thanks to Eli Zaretskii.
+  - Fix: Option --just-go did not work. --no-ignore-diacritics did set
+    just go mode.
+  - Fix: Compilation on OS X/FreeBSD. Thanks to Misty De Meo <mistydemeo@gmail.com>.
+  - New option -y, --assume-yes: Assume yes on all queries. Handy in
+    combination with -rmtree.
+  - Preparing to use Ncurses instead of PDcurses for wcd on Windows.
+    PDcurses has no new version since Sep 2008. Many thanks to Ncurses
+    maintainer Thomas Dickey.
+    * Reduced flicker in graphical tree interface by using werase() i.s.o.
+      wclear(). Flicker was mainly noticeable in Windows port of ncurses.
+    * Unset environment variable TERM on Windows when ncurses is used. A
+      wrong value makes ncurses exit right away.
+    * Ncurses MinGW port fixes by Thomas Dickey:
+      - Failing newterm() fixed (ncurses 5.9.20120922)
+      - Correct display of double width characters (ncurses 5.9.20121215).
+      - Freezes on input fixed (ncurses 5.9.20130302).
+    * Pending issues:
+      - Ncurses does not work in Console2.
+      - Misalignment at highlighted directory in tree with true type CJK
+        font, e.g. the Chinese Simsun font. (PDCurses has same problem.)
+
+5.2.3 2012-10-29
+  - New compact tree mode. By default the 'graphical' tree is drawn the same
+    way as the original NCD did it. On DOS a directory path could only be 66
+    characters in total. With the deep directory structures of today the tree
+    can become very wide. To overcome this wcd can draw the tree in a compact
+    way, similar to most GUI file managers, with only one folder per line.
+    Use the new option -Tc or switch on-the-fly with the 'm' key.
+  - Alternative navigation in compact tree mode works the same as in GUI
+    file explorers such as Windows Explorer and KDE Konqueror.
+  - Removed option -ga. Instead add the new option -Ta to your wcd alias,
+    function or batch file if you prefer alternative navigation by default.
+    Use shift-A in the tree to switch on-the-fly.
+  - Removed option -gc. Instead add the new option -TC to your wcd alias,
+    function or batch file if you prefer centered view by default.
+  - Wcd compiles with Microsoft Visual C++.
+  - Makefile uses $(sysconfdir) i.s.o. hardcoded /etc.
+  - Added several GNU standard long command-line options.
+    Thanks to Jari Aalto.
+  - RPM spec file complies to Fedora packaging standards. Moved spec
+    file to folder misc.
+  - Fix: PowerShell version created files named "null". The problem
+    was introduced in version 5.2.0.
+  - Fix: Stdio mode on Windows prints Unicode characters correctly.
+  - Fix: Match c with cedilla when ignoring diacritics (CP1252, CP28591,
+    ISO-8859-1, and Unicode).
+
+5.2.2 2012-09-01
+  - Turn off wildcard globbing for DJGPP (DOS32) and MinGW (Windows).
+    This fixes some unexpected behaviour when a wcd argument matches a file
+    in the current directory. In Unix shells you still need to quote the
+    arguments to disable expansion.
+  - Better error reporting when lines in treedata files are too long.
+  - wcd.c: Support UTF-16 surrogate pairs when a Unix version reads
+    UTF-16 tree files.
+  - Cleanup for Watcom C:
+    * Fixed compilation for Windows.
+    * Single makefile for each system.
+    * Common parts in central makefile.
+    * Support compilation for Windows PowerShell.
+    * Support compilation for Unicode version on Windows.
+    * Support compilation for OS/2. Thanks to Elbert Pol.
+    * Makefiles can do installation and create zip packages.
+  - Cleanup macros:
+    * Use only C99 compliant predefined macros.
+    * Makefiles for Windows and OS/2 don't need to define MSDOS anymore.
+    * Use __MSDOS__ macro only when it's real for MS-DOS.
+    * UNIX does not get defined with OS/2 EMX anymore.
+  - src/Makefile:
+    * Target 'clean' renamed to 'mostlyclean', because it preserves the built
+      manual files. New target 'clean' that removes all files that were not
+      present in the original source package. Thanks to Jari Aalto.
+    * New variable HTMLEXT to override the default 'htm' extension for the
+      manual in HTML format. Thanks to Jari Aalto.
+    * Support CFLAGS_USER, LDFLAGS_USER, and DEFS_USER for Debian Linux.
+      Thanks to Jari Aalto.
+
+5.2.1 2012-02-28
+  - Windows Command Prompt: wcd.bat defines WCDHOME when HOME and WCDHOME both
+    are not defined, because users can't write files in the root of the system
+    partition on Windows Vista and up.
+  - Simplified installation instructions for Windows Command Prompt.
+    Thanks to Laurence Errington.
+  - Makefile: Print value of UNINORM.
+  - Makefile: Support DEBUG=1
+  - Makefile: Better test for ncurses curses.h include file.
+  - Man page: Update sections UNICODE and ENVIRONMENT VARIABLES.
+  - win32/lcc: Removed. Drop support for Windows LCC compiler.
+  - querycp.c/matchl.c : Fix Code Page number for ISO-8859-1 and ISO-8859-2.
+    ISO-88592-1 = CP28591, ISO-8859-2 = CP28592
+  - querycp.c: Support WatcomC for DOS32.
+
+5.2.0 2011-11-12
+  - URL home page changed to https://waterlan.home.xs4all.nl/
+  - New option -I: Ignore  diacritics.
+    Ignore diacritics for Latin-based scripts.
+    Letters with diacritical marks match their base letter without
+    diacritical mark. See also https://en.wikipedia.org/wiki/Diacritic
+    The following Latin encodings are supported:
+    CP437, CP850, CP852, CP1250, CP1252, ISO-8859-1,
+    ISO-8859-2, and Unicode Latin-1, Latin Extended-A, and Latin Extended-B.
+  - New option +I: Regard diacritics (default).
+  - Matching with Unicode normalisation (compatible equivalence).
+    Compile with UNINORM=1.
+    See also https://en.wikipedia.org/wiki/Unicode_normalization
+    Requires libunistring. https://www.gnu.org/s/libunistring/
+  - Unicode support in Windows Command Prompt (cmd.exe). Requires Windows 7.
+  - All Windows versions of Wcd write their output in the console in Unicode format.
+    This gives consistent output, independent of the active code page.
+  - Wcd for Windows with Unicode writes tree-data file with BOM (Byte Order Mark).
+    The file is now readable by notepad.
+    See https://en.wikipedia.org/wiki/Byte_order_mark
+  - Wcd can read UTF-8 and UTF-16 encoded tree-data files with BOM.
+  - Makefile use RPM_OPT_FLAGS.
+  - Enable Large File Support.
+  - Code cleanup for -Wextra -Wconversion.
+  - Drop support for Borland C compiler, because it's hard to get
+    now and not developed any more since a long time. Default to
+    OpenWatcom for DOS 16 bit.
+  - Removed Imakefile, because imake is deprecated.
+  - Removed old makefiles for native HP-UX and Solaris C compiler.
+    I'm not able to test these compilers.
+
+5.1.5 2011-06-06
+  - Default scan directory is $HOME, even when WCDHOME is defined.
+    WCDHOME is only to change location of wcd's files.
+  - Environment variable WCDSCAN can be used to overrule the default scan
+    directory.
+  - Option -u tries to read /home/USER/TREEFILE, and /home/USER/.wcd/TREEFILE.
+  - Automatically create directory for tree-file and go-script.
+  - New key in graphical mode: 'T' toggle between line drawing and ASCII
+    characters.
+  - Improved error reporting.
+  - Installation of PDF and PostScript manual is optional.
+  - Default installation prefix for Unix is '/usr' i.s.o. '/usr/local'.
+  - Removed directory 'cygwin'. Install on Cygwin from directory 'src'.
+  - Added shell functions for /etc/profile.d to define the wcd function
+    or alias. Type 'make install-profile' to install. See also UNIX.txt.
+    (thanks to Jari Aalto)
+  - Smarter wcd function for Unix.
+  - Enable Unicode by default on Cygwin.
+
+5.1.4 2010-11-19
+  - Use line drawing characters for graphical tree.
+  - New option -T. Draw tree with ASCII characters.
+  - Option -gd in combination with a search pattern will dump
+    the tree of matches.
+  - Minor updates translations.
+  - Minor updates man page.
+  - Version number is only defined in version.mk. (also thanks to Jari Aalto)
+  - LCC-WIN32 makefiles replaced by GNUmakefile, because lcc make
+    doesn't support the 'include' directive.
+  - Don't include generated documentation files in Unix source package.
+
+5.1.3 2010-08-29
+  - Added German language file (thanks to Philipp Thomas)
+  - Match window supports terminal resize (on systems that support it).
+  - New command-line option -gc: Graphical mode with centered view
+    (like it was in wcd 3.2.1 and before).
+  - New key in graphical mode: 't' switch centered mode on/off.
+  - Fix: List separators for WCDFILTER, WCDBAN, and WCDEXCLUDE back to
+    semicolon ';' (like in wcd 5.0.4 and before) for DOS-bash and WinZsh.
+    These shells use Windows style paths with colons like c:/windows.
+  - Don't ship po/*.mo files in source package.
+  - Port for native MSYS. See also https://osdn.net/projects/mingw/
+  - Windows 64 bit port.
+
+5.1.2 2010-05-23
+  - Cleanup Makefiles
+  - Fix compiler warnings "format not a string literal and no format arguments".
+  - Fixed compilation on Darwin OS.
+  - Support compilation in DOSBox (8.3 filenames where needed).
+  - Dos32 version by default without Native Language Support.
+  - Renamed Dos32 BASH version to wcdbash.exe.
+  - Win32 binary packages use patched MinGW's libintl, with builtin
+    relocation support. See https://waterlan.home.xs4all.nl/libintl.html
+
+5.1.1 2010-01-07
+  - Alternate stack file support with environment variable WCDSTACKFILE (thanks to anonymous).
+  - Minor documentation updates.
+  - Standard GNU make target 'dist' in all makefiles for distribution package creation.
+    Replaces 'tgzpackage' and 'zippackage'.
+  - Version date in ISO 8601 format (thanks to Jari Aalto).
+
+5.1.0 Oct 22 2009
+  - UTF-16 Unicode support for Windows PowerShell.
+  - Added Finnish language file (thanks to Jari Aalto).
+  - Update manual, section Unicode.
+  - Unix: Replace volume manager path of HOME dir by "$HOME" (thanks to Jari Aalto).
+  - Fix compilation on Solaris (gcc) (thanks to Jari Aalto).
+  - Fix compilation on HP-UX (cc and curses).
+  - Fix compilation with Open Watcom C Compiler.
+  - Updated makefiles. (thanks to Jari Aalto).
+  - Updated installation documentation. (thanks to Jari Aalto).
+  - Code cleanup (thanks to Jari Aalto).
+  - Fix: Graphics mode, non-Unicode version: key q did "select" instead of "quit".
+  - Man page generation from Perl POD file instead of ROFF. (thanks to Jari Aalto).
+  - Man page in HTML format.
+  - Reformat README file (thanks to Jari Aalto).
+  - List separators for WCDFILTER, WCDBAN, and WCDEXCLUDE depend on shell type, not on DOS vs Unix.
+  - Conditional text in manual. DOS or Unix specific text can be stripped out. (thanks to Jari Aalto).
+
+5.0.4 Jul 21 2009
+  - Added Spanish language file (thanks to Julio Augusto Freyre-Gonzalez).
+  - Improved display of match list for different languages.
+  - Changed makefile variable WCD_UTF8 to UCS (Universal Character Set).
+  - Option -V prints the actual used character encoding.
+  - Update manual. New section WINDOWS CODE PAGES.
+  - Use Keith Marshall's nl_langinfo() implementation in
+    Wcd for DOS/Windows/OS2 with native language support.
+    Taken from package mingw-catgets.
+
+5.0.3 Jul 4 2009
+  - Fixed wcd_isdir() (UNIX/DOS/Cygwin/OS2 version). Possible false positive
+    test on non-existing path. Win32 version is not affected.
+
+5.0.2  Jun 8 2009
+  - Improved horizontal scrolling with Unicode combining and
+    double width characters in match list and graphical tree.
+  - Update manual, section LOCALIZATION.
+  - Man page uses ASCII quotes (grave accent, apostrophe quote) for
+    readability on old systems.
+  - src/Makefile supports DESTDIR variable.
+  - dos16/GNUmakefile: New gnu makefile for dos16 installation and zip
+    package creation. Replaces misc/Makefile.dist.
+
+5.0.1  May 2 2009
+  - Fix RPM spec file.
+  - Update manual w.r.t. MSYS.
+  - Check environment for UTF-8 character encoding.
+  - problems.txt: Document problem during `gmake install' on Windows.
+
+5.0.0 Mar 28 2009
+  - UTF-8 Unicode support for Unix/Linux.
+  - Resolved a few signedness issues.
+  - Update manual page.
+  - Option -l takes alias directly: wcd -l <alias> (thanks to Jari Aalto)
+  - Swapped command line options -v and -V. (thanks to Jari Aalto)
+    Option -v is now verbose and -V is verion info. This is more
+    common practice in GNU programs.
+  - Added GNU standard long command line options --help, --version and --verbose.
+  - Changed option for quiet operation from -Q to -q (GNU common practice).
+  - In match list key 'z' does page down (like less) (thanks to Jari Aalto).
+  - Improvements manual page (thanks to Jari Aalto)
+    o) The URLs are too long for nroff. Those are now fixed with correct formatting code
+    o) The /path/names are best not to be hyphenated. Those are now fixed with
+       correct formatting code
+    o) The order of sections is changed to follow de facto section order
+       https://www.opengroup.org/onlinepubs/009695399/utilities/xcu_chap01.html#tag_01_11
+    o) The quotes `` '' are escaped to make clean output.
+    o) The top-level INSTALL sections are not made subsections for more clearer layout.
+
+4.1.0 Nov 4 2008
+  - Wcd version for Windows PowerShell, with full UNC paths support.
+  - win32: Use GnuWin32 port of gettext. This version detects language
+    automatically and can find the locale directory if it is relocated.
+  - Sorting with locale support.
+  - Less screen movement when navigating in graphical mode.
+  - Cleanup documentation.
+  - New make target `uninstall' for deinstallation.
+  - Renamed Win32 ZSH version to wcdwin32zsh.exe.
+  - Renamed DOS source directories.
+
+4.0.0 Sep 6 2008
+  - Enabled native language support, using GNU gettext.
+  - Added Dutch language.
+  - One source package for DOS, Windows and Unix.
+  - Shell script to compile wcd for QNX 4.25 systems. (Thanks to Roland Messier)
+  - Cleanup documentation.
+  - Port to OS/2 Warp (Thanks to Elbert Pol)
+  - Optional colours in graphical mode (option -K) (Thanks to Billy Chen)
+  - Less screen movement when navigating in graphical mode. (Thanks to Billy Chen)
+
+3.2.1 Apr 5 2006
+  - Fix : initialise first line in graphical interface to prevent
+    occasional error message 'line too long'.
+  - Suport Watcom C compiler.
+  - Horizontal scrolling added to conio interface.
+  - Some source code cleanup.
+
+3.2.0 Dec 1 2005
+  - Support 8 bit characters (non-ASCII characters). (Thanks to Richard Boss)
+  - Reorganised source zip package.
+  - Bugfix Curses interface: uninitialised data was written to screen.
+    This problem showed up with wcd with PDCurses interface on some
+    Windows 2000/XP systems by printing a lot of garbage in the console
+    (many small rectangles) when environment variable PDC_RESTORE_SCREEN was
+    set. (Thanks to Scott D Friedemann)
+  - Don't set variable PDC_RESTORE_SCREEN automatically.
+  - Curses interface: Print match list at bottom of console. (Thanks to Richard Boss)
+  - Use reverse colours to highlight.
+  - Bugfix PDCurses 1144353 : When PDC_RESTORE_SCREEN was set and the console
+    buffer was too big wcd scrolled away.  (thanks to Mark Hessling )
+  - DOS and Windows version can use option -u.
+  - Set base directory for users home directories with environment variable
+    WCDUSERSHOME.
+
+3.1.6 Sep 29 2005
+  - Support UNC paths in Cygwin version, including scanning
+    of servers (wcd -S //servername).
+  - Cygwin and Win32 ZSH version: Select correct directory
+    in graphical tree mode if current working directory is a UNC path.
+  - Try to create directory for go-script when it doesn't exist
+
+3.1.5 Aug 27 2005
+  - win32 console with PDCurses: use original colours
+    (thanks to Gabor Grothendieck and Mark Hessling )
+  - wcd with PDCurses: restore screen by default, no need to set enviroment
+    variable PDC_RESTORE_SCREEN.(thanks to Gabor Grothendieck)
+  - New option -ga : Alternative way of navigating in graphics mode. Don't
+    jump to unrelated directories (thanks to Ken Zinnato).
+  - New option -od : dump matches to stdout.(Thanks to Richard Boss)
+  - Updated makefiles for windows compilers. Added makefile for Borland C
+    with PDCurses.
+  - Fix for disk scanning problem for Borland CPP 5.x.
+
+3.1.4 Jun 29 2004
+  - Don't print "-> <dirname>" when can't change to directory.
+  - Update man page.
+
+3.1.3 Oct 23 2003
+  - bugfix: fixed bufferoverflow, introduced in wcd 3.1.2 when environment
+    variable WCDBAN or WCDEXCLUDE was used.
+
+3.1.2 Oct 19 2003
+  - Specify filters with environment variable WCDFILTER.
+    All directories that don't match the filter(s) are ignored.
+    (thanks to Val Vakar).
+  - Add bans with environment variable WCDBAN
+  - Add excludes with environment variable WCDEXCLUDE
+  - New option: -V  Verbose operation.
+  - Removed option -q
+  - Removed duplicate wcd.c file for DJGPP.
+
+
+3.1.1 May 20 2003
+  - patch for compile problems w.r.t. gcc and <stdbool.h> (thanks Kevin M. Rosenberg)
+    See INSTALL.
+  - fix compile problems on Mac OS X/Darwin (thanks Zoltan Varady).
+  - default makefile for DOS 16 bit (compact memory model) works again
+    (thanks to Eric Auer).
+  - smaller 16 bit DOS binaries (stripped).
+
+3.1.0 Nov 13 2002
+  - Windows console version supports Windows LAN UNC paths.
+  - Option -gd will dump all treefiles that are read.
+
+
+3.0.7 Oct 17 2002
+  - minor updates in documentation: manpage, wcd.txt and INSTALL
+  - fixed a memory leak which could cause unix versions of wcd to
+    generate incorrect treedata files during disk scan with paths
+    excluded.
+
+3.0.6 Sep 4 2002
+  - bugfix option -x when used multiple times.
+  - minor updates manpage
+  - support longer paths on unix (1024 chars)
+
+3.0.5 Jul 8 2002
+  - bugfix: compile errors
+
+3.0.4 Jul 6 2002
+   - Graphical tree mode: Terminal resize (on systems that support it).
+   - Update manpage.
+   - wildcards support in banfile
+   - Exclude paths from scanning: options -x and -xf
+   - Compiles now with LCC windows C compiler.
+   - Improved sideways scrolling of matchlist (curses).
+   - Arrow keys work in matchlist in win32 version (curses).
+   - Option -k : Keep paths in treedata when wcd cannot change to them.
+
+3.0.3 Nov 25 2001
+   - Zoom, fold and condense in graphical tree mode.
+
+3.0.2 Oct 17 2001
+     - bugfix: path quoting in go-script:
+       win32: paths with ampersand (&) or percent (%)
+       unix, dos bash, win zsh: paths with grave accent (`)
+       unix: path with backslash (\)
+     - update manpage section DESCRIPTION
+
+3.0.1 Jul 6 2001
+     - update to compile 16 bit dos version with PDCurses.
+     - minor update manpage
+     - makefile for SunOS curses
+     - rpm .spec file update for Redhat 7.1
+
+3.0.0 Apr 12 2001
+  -g   Curses version only:
+       Full screen interactive directory browser.
+       `Graphical' match list.
+       Vi(m) like tree navigation and search,
+       with wildcard and subdir support
+  -gd  Curses verion only:
+       dump tree to stdout
+  -j   justgo mode
+  -G   set path for go-script
+  -GN  Don't create go-script
+
+2.3.3 Oct 15 2000
+     - fall back from curses to stdout
+     - new option: -N  use numbers instead of letters
+     - new option: -o  use stdout instead of curses or conio
+     - scroll back stack for conio version
+
+2.3.2 Jun 10  2000
+     - update for curses and PDCurses
+
+2.3.1 May 28 2000
+     - bug fix in ncurses interface (array bounds read/write)
+     - update manpage
+     - minor changes
+
+2.3.0 Apr 27 2000
+     - Optional ncurses based interface for unix versions.
+
+2.2.9 Jan 16 2000
+     - new option -w: Wild matching only.
+     - made wcd compile with MINGW32 compiler.
+     - win32 version for Amol Deshpande's Win32 port
+       of zsh (ftp://ftp.blarg.net/users/amol/zsh).
+     - bug fix: read long paths from stack file (dos 32 bit)
+
+2.2.8 Nov 19 1999
+     - option -i now also for dos versions
+     - new option: +i  regard case
+     - minor update interface dos versions
+     - win32 console port
+
+2.2.7 Sep 30 1999
+     - environment variable WCDHOME overrides HOME.
+     - improved choosing from list (DOS versions).
+     - improved manpage
+     - mode bits for new directory created with -m option
+       are now only defined by umask.
+
+2.2.6 May 12 1999
+     new options:
+     -aa   Add current and all parent paths to treedata
+     -ee   add current and all parent paths to Extra treedata
+
+2.2.5 Apr 15 1999
+     - bug fix path fixing
+
+2.2.4 Apr 14 1999
+     -DOS versions can use environment variable HOME
+     -path fixing
+     -options -S, +S, -A, -E, -m, -M, -r, and -rmtree can be repeated.
+
+2.2.3 Mar 21 1999
+     -All versions can read DOS and UNIX text files.
+     -INSTALLATION section in manpage
+
+2.2.2 Feb 24 1999
+     bug fix on automounted directories (Unix).
+
+2.2.1 Jan 29 1999
+     bug fix +S,-n,+n options on directory /
+
+2.2.0 Jan 29 1999
+      - changed name to Wherever Change Directory
+      - automaticly remove directories from treedata to which cannot be changed.
+      - links support (unix only)
+      - restore text screen after list (dos only)
+      new options:
+       -m       make directory and add to treedata file
+       -M       make directory and add to extra treedata file
+       -r       remove directory and remove from treedata
+       -rmtree  remove directory recursive and remove from treedata
+       -n  +n   use relative treefile
+       +S       make relative treefile
+       -t       don't skip mount string before /home (unix only)
+      changed options: -u, +u, -f, +f
+      - some minor changes.
+
+2.1.7  Sep 2 1998
+  - bug fix: give warning if cannot change to directory
+    that is in database.
+
+2.1.6  Jul 22 1998
+  - removed "dangerous" gets() function.
+     (In the way gets() was used in wcd it was
+    not dangerous. gets() has been removed to
+    avoid warnings some compilers or systems give
+    (e.g. gcc or FreeBSD).)
+
+
+2.1.5 Jul 15 1998
+   - Sort match lists
+
+2.1.4   - quiet option default ON (Unix)
+
+2.1.3   - Bug fix: command line parsing (DOS 32 bit)
+
+2.1.2   - Bug fix: backspace in long match list (DOS)
+
+
+2.1.1 Jun 29 1998
+   - Bug fix: alias, ban and stack could not deal with
+     paths with spaces.
+
+2.1.0   Jun 18 1998
+   - Directory stack
+   - Data structures with dynamic memory allocation
+   - ignore case option (unix)
+   - go $HOME when no directory is given
+   - man page
+
+2.0.5 - Bug solved. Endless loop on 64 bit Unix system (SGI IRIX64)
+
+2.0.4   Mar 12 1998
+      - More scanning options: -S <dir>, -A <dir>, -E <dir>
+      - check for double matches
+      - source Ansi C compliant
+      - ending '/' allowed in database
+
+2.0.0     Mar 9 1998
+     - Changed distribution conditions to GNU General
+       Public License.
+
+V1.8.3    Feb 26 1998
+     - Bug fix. Dos version crashed on read-only drive if
+       TEMP environment variable was not set.
+
+V1.8.0    Feb 9 1998
+     - Change drive and dir in one go (Dos).
+     - Ban paths
+     - Alias directories
+
+V1.7e     Dec 9 1997
+     - Add directories without scanning.
+     - Improved choosing from a list.
+     - quiet option default ON in DOS versions.
+     - changed MAX_LIST and MAX_WILD_LIST to 22
+     - no drive in treedata (DOS)
+     - direct CD mode
+
+V1.6      Nov 11 1997
+     Added Unix bash support
+     Added a DOS bash version
+
+V1.5a     Nov 10 1997
+          Bug fix dos32 bit version long dir names support
+     in Windows 95 dos-box
+
+V1.5      Oct 28 1997
+          More options: -Q -f -u
+     Dos versions can work on read-only drives if
+     TEMP environment variable is set.
+     C shell support.
+
+V1.4b     Sep 12 1997
+     Small bug fix perfect match list.
+     Quiet option added.
+
+V1.4      Aug 18 1997
+     Added 32 bit DOS version. Changed source code
+     for DJGPP compiler.
+     This version is faster but needs a 80386 CPU
+     or higher.
+
+V1.4      Jun 18 1997
+          Search with subdirectory definition
+          (E.g. wcd adir1/adir2).
+
+V1.3a     May 2 1997
+          The Unix version can now also deal with
+          directory names with spaces, dollars,
+          backslashes, single quotes and double quotes.
+
+V1.2c     Feb 11 1997.
+          Many bugs have been solved.
+
+V1.0      Nov 14 1996. Always let the user choose
+          in case of multiple match.
+
+V1.0 beta Oct-1996  Original version.

@@ -1,0 +1,19 @@
+Begin3
+Title:          FreeDOS Edit
+Version:        0.9b
+Entered-Date:   2008-04-09
+Description:    The FreeDOS text editor
+Summary:        The FreeDOS text editor.
+Keywords:       Edit Editor
+Author:         Shaun Raven <shaun@cmlmicro.co.uk>
+Maintained-By:  Aitor Santamaria-Merino <aitor.sm (#) gmail.com>
+Platforms:      DOS (Borland C)
+Copying-Policy: GNU General Public License, Version 2
+Wiki-Site:      http://wiki.freedos.org/wiki/index.php/Edit
+Defunct-Site:   http://freespace.virgin.net/shaun.raven/
+Modified-Date:  2025-04-09.8
+Changes:        * NLS: English typo corrections and Swedish translation
+                update|* removed CI/CD for project|* Metadata updated for
+                modified-date and LFN requirements|* improved repository
+                INDEX.md
+End

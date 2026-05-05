@@ -1,0 +1,42 @@
+#### Help, tr, cp857        ####
+1.0:˜ki dosya veya dosya b”lmlerini karŸlaŸtrr ve aralarndaki ayrmlar g”rntler
+1.1:FC [se‡enekler] [src1:][yol1]dosyaad1 [src2][yol2]dosyaad2 [se‡enekler]
+1.2: /A    De§iŸikliklerin b”lmleri i‡in yalnzca ilk ile son satrlarn g”rntler
+1.3: /B    Bir ikili karŸlaŸtrma yapar
+1.4: /C    BšYšK/k‡k harf duyarl de§il
+1.5: /L    Dosyalar ASCII metin olarak karŸlaŸtrr
+1.6: /Mn   En ‡ok ikili karŸlaŸtrmada olan farklar n bayt kadar belirtir
+1.7:       (varsaylan = %d, 0 = snr yok, /M = /M0)
+1.8: /N    Bir metin karŸlaŸtrmasnda satr numaralarn g”rntler
+1.9: /S    Aramay alt dizinlerde olan dosyalarda geniŸletir
+1.10: /T    Sekmeleri boŸluklara geniŸletmez
+1.11: /W    Metin karŸlaŸtrma i‡in boŸ alanlar (sekmeler ile boŸluklar) sarar
+1.12: /X    Metin karŸlaŸtrmada ba§lam satrlarn g”rntlemez
+1.13: /LBn  En ‡ok ardŸk farkl ASCII satrlarn n says kadar belirtir
+1.14: /nnn  KarŸlaŸtrma eŸzamanlamas i‡in en az ardŸk eŸleŸen satrlar
+1.15:       nnn says kadar belirtir
+1.16: /R    Son bir ksa bilgi g”rntler (her zaman /S kullanlrsa etkin olur)
+1.17: /Q    Farkllklarn listesini g”rntlemez
+1.18: /U    Dosya adlarn dosyalarn bir eŸi olmadan g”rntler
+#### Messages    ####
+2.0:Ge‡ersiz se‡enek: %s
+2.1:€ok fazla dosya belirtimi
+2.2:Ge‡ersiz dosya ad
+2.3:Hi‡bir dosya belirtilmedi
+2.4:Uyar: Dosyalar farkl boyutlarda!
+2.5:%d hatadan sonra karŸlaŸtrma durdu
+2.6:Fark yok
+2.7:Uyar: %d satr sonra karŸlaŸtrma kesildi
+2.8:Yetersiz bellek
+2.9:%s dosyas a‡lmasnda hata
+2.10:%s ile %s karŸlaŸtrlmas
+2.11:Dosya veya dizin de§il
+2.12:Yeniden eŸzamanlama baŸarsz oldu: Dosyalar ‡ok farkl
+2.13:Dosyalar farkl boyutlarda
+2.14:Dosyalar farkl
+2.15:%s dosyas (%s) eŸine sahip de§il
+#### Report text ####
+3.0:%d dosya karŸlaŸtrld
+3.1: %d dizinde
+3.2:%d dosya karŸlaŸtrld, %d dosya farkl
+3.3:%d dosyas hi‡bir eŸe sahip de§il

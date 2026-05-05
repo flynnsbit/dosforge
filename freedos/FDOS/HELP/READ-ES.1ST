@@ -1,0 +1,66 @@
+Información importante:
+
+A partir de la versión 1.1.0, htmlhelp es compatible con UTF-8 (Unicode);
+por lo tanto, todo el texto se ha creado en formato UTF-8, lo que
+ simplifica considerablemente la edición en sistemas operativos modernos.
+
+Para que htmlhelp muestre UTF-8 correctamente, se debe configurar la
+página de códigos DOS correcta. ¡Vea más abajo!
+
+
+hhstndrd.zip
+============
+
+Este archivo contiene el grueso de los documentos html
+que se utilizan con help.exe (htmlhelp).
+
+NO SE NECESITA QUE SE DESCOMPRIMA - help.exe puede
+leer les archivos que estan en hhstndrd.zip.
+
+(Es posible que desee descomprimir los archivos HTML
+para que se puedan leer con otro navegador, o para 
+editarlos. Los archivos Zip normalmente tienen 
+prioridad sobre los archivos descomprimidos; si usted
+esta seguro que quiere leer y editar la ayuda,
+descomprima la versión del archivo y remplazar o borrar
+la versión original HHSTNDRD.ZIP)
+
+Traducido por Lorenzo del Toro Saravia en 2018.
+
+
+SOPORTE DE PÁGINA DE CÓDIGO:
+
+Los diferentes idiomas de la ayuda requieren diferentes
+páginas de códigos. Si los caracteres no se muestran
+como esperaba, el La página de códigos será incorrecta.
+
+Ejemplos de FDCONFIG.SYS / CONFIG.SYS sobre cómo instalar
+páginas de códigos:
+
+country=001,437,c:\fdos\bin\country.sys   (US settings)
+country=033,858,c:\fdos\bin\country.sys   (French settings)
+country=034,858,c:\fdos\bin\country.sys   (Configuración española)
+country=049,858,c:\fdos\bin\country.sys   (German settings)
+
+Puede encontrar su código de país y las páginas de códigos en
+la sección "comandos externos - country.sys" y en la sección
+"Varios - kpdos".
+
+
+En correspondencia, FDAUTO.BAT /AUTOEXEC.BAT debería verse así:
+
+set LANG=ES
+lh display con=(EGA,858,1)
+mode con cp prep=((858) %DOSDIR%\CPI\EGA.CPX)
+mode con cop sel=858
+mode con cp refresh
+
+Dependiendo de su país, su idioma ("LANG"uage) debe estar configurado
+en EN / FR / ES / DE etc.
+Asegúrese de que exista un "htmlhelp.en / fr / es / de", etc.
+en el "NLS" carpeta, de lo contrario help.exe se bloqueará! Si
+no es así, cree uno, p. Ej. por copiando otro idioma.
+Reemplace "437" por su página de códigos, consulte más arriba.
+En la sección "Varios - cpidos" encontrará el archivo EGAx.CPX
+que corresponde con su número de página de códigos. (Existe
+EGA.cpx hasta EGA18.cpx!)

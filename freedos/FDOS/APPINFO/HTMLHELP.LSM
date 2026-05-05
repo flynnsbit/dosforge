@@ -1,0 +1,19 @@
+Begin3
+Title:                 FreeDOS Help (HTML)
+Version:               1.1.1a
+Entered-Date:          2025-12-03
+Description:           FreeDOS help files in HTML format
+Summary:               FreeDOS help files in HTML format
+Keywords:              help, html
+Author:                Joe Cosentino (creator of the viewer)
+Maintained-By:         W. Spiegl <fritz.mueller _AT_ mail.com> Bernd Boeckmann
+                       <bernd-freedos _AT_ boeckmann.io>
+Primary-Site:          http://home.mnet-online.de/willybilly/
+Alternate-Site:        https://gitlab.com/FreeDOS/base/htmlhelp
+Defunct-Original-Site: http://www.geocities.com/xsaintx69/freedos/
+Platforms:             DOS, Open Watcom C; Html
+Copying-Policy:        Express+GNU Free Documentation License
+Modified-Date:         2025-12-03.4
+Changes:               * update help files to version 1.1.1a|* update HTMLHELP to
+                       v5.3.8 and update help files
+End

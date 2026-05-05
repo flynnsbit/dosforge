@@ -1,0 +1,65 @@
+
+sh/bash/zsh/csh:
+
+Q: I have installed wcd. It looks like it works, but the
+   directory is actually not changed.
+
+A: The directory can only be changed by the shell builtin cd
+   command. You need to define a wcd function or alias.
+   See the manual or the installation documentation.
+
+bash:
+
+Q: I have wcd.exe installed and defined the function
+   in ~/.bashrc but the shell returns: "command not found".
+
+A: The problem is that ~/.bashrc is not executed because
+   the bash is started as an interactive login shell.
+   The bash only executes the commands in ~/.bashrc if it
+   is started as an interactive shell that is not a login
+   shell.
+   If the bash is started as an interactive login shell it
+   first reads and executes commands from the file
+   /etc/profile, if that file  exists. After  reading  that
+   file, it looks for ~/.bash_profile, ~/.bash_login, and
+   ~/.profile, in that order, and reads and executes commands
+   from the first one that exists and is readable.
+   The solution is to define the wcd function in one of these
+   files.
+
+Windows
+
+Q: How do I automatically start the explorer after wcd?
+
+A: If you use the DOS 32 bit version on windows 95/98/ME this batch script will work:
+
+   @echo off
+   wcd.exe %1 %2 %3 %4 %5 %6
+   explorer.exe .
+
+   If you use the win32 console version add an extra line to your wcd.bat
+   script (on windows NT/2000/XP/Vista/7).
+
+   @echo off
+   wcdwin32.exe %*
+   echo explorer.exe . >> c:\wcdgo.bat
+   c:\wcdgo.bat
+
+Windows NT/2000/XP/Vista/7
+
+Q: The system administrator has set environment variable HOME,
+   but I want the behaviour of wcd as if HOME and WCDHOME were
+   not set (as I was used to on DOS/Windows 9x).
+
+A: In the wcd.bat file you have to copy HOME into another
+   variable, unset HOME, run wcd, and copy HOME back to its original
+   value.  An example follows:
+
+   @echo off
+   set HOMETEMP=%HOME%
+   set HOME=
+   wcdwin32.exe %*
+   set HOME=%HOMETEMP%
+   c:\wcdgo.bat
+
+   You may need to rescan your drives after this.

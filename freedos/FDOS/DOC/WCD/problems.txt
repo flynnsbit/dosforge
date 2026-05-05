@@ -1,0 +1,48 @@
+Known problems
+==============
+
+1 Unix shells (bash, ksh, sh, csh):
+  Strange behaviour when the argument has a wildcard and matches a
+  file or directory in the current directory.
+
+  This is the result of the filename expansion of the shell.
+  The work-around is to 'single quote' the argument.
+
+2 Option -rmtree doesn't remove directories.
+  This only happens with Windows versions
+  when wcd has been build with Borland 5.x. The problem is not
+  there when wcd has been build with any other compiler.
+
+3 Garbage printed on screen after exit.
+  Occurs in Windows NT/2000/XP console with large buffer
+  with wcd for win32 when PDC_RESTORE_SCREEN is set.
+  Windows only allows a relatively small buffer size to save.
+
+4 `gmake install' may fail on Windows or OS/2.
+
+  When you build wcd on Windows without the MSYS environment you may run into
+  problems during `make install', because the GnuWin32 ports of `mkdir' and
+  `install' of the coreutils package have problems. See
+  https://sourceforge.net/tracker/?func=detail&aid=2115584&group_id=23617&atid=379173
+  Better use the MSYS environment.
+
+ This problem is also seen on OS/2. Try an older version of coreutils package.
+
+5 A DOS 32 bit version built with OpenWatcom C stops scanning the disk when it
+  encounters on a Windows drive a path longer than 66 characters. The problem is that
+  after chdir() fails to change to a path longer than 66 characters, getcwd() returns
+  a wrong path, namely the path chdir() could not change to chopped at 66 characters. I
+  think this is a bug in OpenWatcom. getcwd() should return the path of the last
+  successful chdir(). This was seen on Windows Vista 32 bit.
+
+
+......................................................................
+
+If you think you found a bug do the following.
+First check that you have the latest version of WCD. The bug
+may already have been solved. If it has not been solved than
+send me an e-mail <waterlan@xs4all.nl>. Describe the bug and
+tell me what version of WCD you use and under what operating
+system.
+
+Also ideas to improve wcd are welcome.

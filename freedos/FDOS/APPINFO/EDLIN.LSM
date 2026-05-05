@@ -1,0 +1,21 @@
+Begin3
+Title:          EDLIN
+Version:        2.24
+Entered-Date:   2024-05-16
+Description:    The FreeDOS standard line editor
+Summary:        The edlin program is the FreeDOS standard line editor. (UPX
+                Compressed)
+Keywords:       edit, editor, line editor
+Author:         Gregory Pietsch <gpietsch -at- comcast.net>
+Maintained-By:  Gregory Pietsch <gpietsch -at- users.sourceforge.net>
+Primary-Site:   http://sourceforge.net/projects/freedos-edlin
+Alternate-Site: http://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/dos/edlin
+Original-Site:  http://sourceforge.net/projects/freedos-edlin
+Platforms:      DOS (Microsoft Visual C++ in C mode, Borland C++), FreeDOS,
+                OpenWatcom, Linux (gcc)
+Copying-Policy: GNU General Public License, Version 2
+Wiki-Site:      http://wiki.freedos.org/wiki/index.php/Edlin
+Modified-Date:  2026-04-11.4
+Changes:        * AI NLS Update|* removed empty/broken JA translation|* NLS:
+                English typo corrections and Swedish translation update
+End
