@@ -46,7 +46,7 @@ Linting: there is currently no dedicated lint command/tool configured in this re
   - `BootAssetResolver` resolves boot assets per boot mode (FreeDOS/MS-DOS 7.1/IBM DOS/PC-DOS/Compaq) from either directories or install images.
   - Resolved/extracted assets are cached under `~/.local/state/vhdmaker/cache/boot-assets`.
   - `BootInstaller` writes MBR/VBR boot code with `dd`, stages DOS system files via `mcopy`, and sets system/hidden attributes with `mattrib`.
-  - DOS 3.3 IMG system-format from install media uses `DISK01.IMG` as base media when possible (preserves original geometry/layout).
+  - DOS 3.3 IMG system-format uses installer-derived boot assets and stages only core system files; floppy geometry is aligned to source install media size.
 
 - **State and paths (`src/vhdmaker/state.py`, `src/vhdmaker/paths.py`)**
   - Persistent state file: `~/.local/state/vhdmaker/state.json`

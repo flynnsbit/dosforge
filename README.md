@@ -148,7 +148,7 @@ Supports `minimal` and `full` install profiles.
 - `dos33` max 32 MiB
 - `dos50` max ~504 MiB
 - Assets can be direct files or floppy images
-- DOS 3.3 IMG system-format from install images uses `DISK01.IMG` as the base media (source geometry + boot layout)
+- DOS 3.3 IMG system-format auto-aligns to install-media geometry and stages only core system files
 
 ### PC-DOS / Compaq DOS 3.31
 

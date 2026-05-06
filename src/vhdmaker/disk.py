@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import struct
 import time
 from dataclasses import dataclass
@@ -13,7 +12,7 @@ from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
-from .boot import BootAssetResolver, BootAssets, BootInstaller
+from .boot import BootAssetResolver, BootInstaller
 from .commands import CommandRunner
 from .dependencies import BOOT_COMMANDS, REQUIRED_COMMANDS, assert_dependencies, find_missing
 from .errors import ValidationError
@@ -396,12 +395,6 @@ class DiskManager:
         if request.img_system_format and request.boot_mode is not BootMode.NONE:
             assets = self.boot_resolver.resolve(request)
             self._align_legacy_dos33_floppy_type(request, assets.source_image_size_bytes)
-            if self._should_clone_legacy_dos33_source_image(request=request, assets=assets):
-                self._create_floppy_from_source_image(
-                    target_path=target_path,
-                    source_image=assets.source_image_path,
-                )
-                return
 
         self._create_fixed_img(target_path, request.floppy_type)
         self._format_floppy_img(target_path, label=normalize_label(request.label))
@@ -435,26 +428,6 @@ class DiskManager:
             return
         request.floppy_type = source_floppy
         request.size_bytes = source_floppy.size_bytes
-
-    def _should_clone_legacy_dos33_source_image(self, *, request: CreateRequest, assets: BootAssets) -> bool:
-        if (
-            request.media_type is not MediaType.IMG
-            or not request.img_system_format
-            or request.boot_mode is not BootMode.IBM8088
-            or request.ibm_dos_version is not IBMDOSVersion.DOS33
-            or assets.source_image_path is None
-            or assets.source_image_size_bytes is None
-        ):
-            return False
-        return assets.source_image_size_bytes == request.floppy_type.size_bytes
-
-    def _create_floppy_from_source_image(self, *, target_path: Path, source_image: Path | None) -> None:
-        if source_image is None:
-            raise ValidationError("Missing DOS 3.3 source image for IMG clone.")
-        source = source_image.expanduser().resolve()
-        if not source.exists() or not source.is_file():
-            raise ValidationError(f"DOS 3.3 source image does not exist: {source}")
-        shutil.copyfile(source, target_path)
 
     def _floppy_type_for_size(self, size_bytes: int) -> FloppyType | None:
         for floppy_type in FloppyType:

@@ -281,7 +281,6 @@ class BootAssets:
     payload_target_dir: str = "FDOS"
     mbr_boot_code_template: Path | None = None
     source_image_size_bytes: int | None = None
-    source_image_path: Path | None = None
 
 
 class BootAssetResolver:
@@ -781,20 +780,17 @@ class BootAssetResolver:
                 template.write_bytes(boot_sector)
 
         source_image_size_bytes: int | None = None
-        source_image_path: Path | None = None
         for image in install_images:
             try:
                 source_image_size_bytes = image.stat().st_size
             except OSError:
                 continue
-            source_image_path = image
             break
 
         return BootAssets(
             system_files=files,
             boot_sector_template=template,
             source_image_size_bytes=source_image_size_bytes,
-            source_image_path=source_image_path,
         )
 
     def _collect_legacy_system_files_from_directory(self, directory: Path) -> dict[str, Path] | None:
@@ -1842,6 +1838,9 @@ class BootInstaller:
             ["dd", f"if={template}", f"of={partition_device}", "bs=1", "count=3", "conv=notrunc"],
             sudo=True,
         )
+        if disk_format is DiskFormat.FAT16 and code_offset == 54:
+            # Legacy DOS 3.x style sectors expect OEM/extended header bytes from the source template.
+            self._copy_legacy_fat12_16_header(template=template, destination=partition_device)
         self.runner.run(
             [
                 "dd",
@@ -1871,6 +1870,9 @@ class BootInstaller:
             ["dd", f"if={template}", f"of={str(image_path)}", "bs=1", "count=3", "conv=notrunc"],
             sudo=True,
         )
+        if code_offset == 54:
+            # Legacy DOS 3.x style sectors expect OEM/extended header bytes from the source template.
+            self._copy_legacy_fat12_16_header(template=template, destination=str(image_path))
         self.runner.run(
             [
                 "dd",
@@ -1900,6 +1902,34 @@ class BootInstaller:
 
     def _fat12_16_boot_code_offset(self, sector: bytes) -> int:
         return 62 if sector[54:62] in (b"FAT12   ", b"FAT16   ") else 54
+
+    def _copy_legacy_fat12_16_header(self, *, template: Path, destination: str) -> None:
+        self.runner.run(
+            [
+                "dd",
+                f"if={template}",
+                f"of={destination}",
+                "bs=1",
+                "skip=3",
+                "seek=3",
+                "count=8",
+                "conv=notrunc",
+            ],
+            sudo=True,
+        )
+        self.runner.run(
+            [
+                "dd",
+                f"if={template}",
+                f"of={destination}",
+                "bs=1",
+                "skip=38",
+                "seek=38",
+                "count=16",
+                "conv=notrunc",
+            ],
+            sudo=True,
+        )
 
     def _patch_fat16_bpb_geometry(self, *, partition_device: str, bios_chs: tuple[int, int]) -> None:
         sectors_per_track, heads = bios_chs

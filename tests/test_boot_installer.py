@@ -394,6 +394,24 @@ def test_make_floppy_bootable_uses_legacy_dos33_code_offset(tmp_path: Path) -> N
         and sudo
         for command, sudo in runner.calls
     )
+    assert any(
+        command[0] == "dd"
+        and command[2] == f"of={str(image_path)}"
+        and "skip=3" in command
+        and "seek=3" in command
+        and "count=8" in command
+        and sudo
+        for command, sudo in runner.calls
+    )
+    assert any(
+        command[0] == "dd"
+        and command[2] == f"of={str(image_path)}"
+        and "skip=38" in command
+        and "seek=38" in command
+        and "count=16" in command
+        and sudo
+        for command, sudo in runner.calls
+    )
 
 
 def test_make_partition_bootable_uses_legacy_dos33_code_offset(tmp_path: Path) -> None:
@@ -436,6 +454,24 @@ def test_make_partition_bootable_uses_legacy_dos33_code_offset(tmp_path: Path) -
         and "skip=54" in command
         and "seek=54" in command
         and "count=456" in command
+        and sudo
+        for command, sudo in runner.calls
+    )
+    assert any(
+        command[0] == "dd"
+        and command[2] == "of=/dev/nbd0p1"
+        and "skip=3" in command
+        and "seek=3" in command
+        and "count=8" in command
+        and sudo
+        for command, sudo in runner.calls
+    )
+    assert any(
+        command[0] == "dd"
+        and command[2] == "of=/dev/nbd0p1"
+        and "skip=38" in command
+        and "seek=38" in command
+        and "count=16" in command
         and sudo
         for command, sudo in runner.calls
     )

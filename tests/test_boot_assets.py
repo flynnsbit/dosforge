@@ -488,7 +488,6 @@ def test_resolve_ibm8088_from_install_images_dos33_floppy_boot_sector(tmp_path: 
     assert template == boot_sector
     assert b"IO      SYS" in template
     assert assets.source_image_size_bytes == FloppyType.F360K.size_bytes
-    assert assets.source_image_path == disk1
 
 
 def test_resolve_ibm8088_dos33_prefers_install_image_boot_sector_over_sys_com(
