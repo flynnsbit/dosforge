@@ -12,7 +12,15 @@ from vhdmaker.boot import (
 )
 from vhdmaker.commands import CommandRunner
 from vhdmaker.errors import ValidationError
-from vhdmaker.models import BootMode, CreateRequest, DiskFormat, FreeDOSSource, IBMDOSVersion, MSDOSInstallProfile
+from vhdmaker.models import (
+    BootMode,
+    CreateRequest,
+    DiskFormat,
+    FloppyType,
+    FreeDOSSource,
+    IBMDOSVersion,
+    MSDOSInstallProfile,
+)
 
 
 def _touch(path: Path, payload: bytes = b"x") -> None:
@@ -436,7 +444,7 @@ def test_resolve_ibm8088_from_install_images_dos33_floppy_boot_sector(tmp_path: 
     assets_dir.mkdir(parents=True)
     disk1 = assets_dir / "DISK01.IMG"
     boot_sector = _msdos33_boot_sector_bytes()
-    disk1.write_bytes(boot_sector + (b"\0" * 1024))
+    disk1.write_bytes(boot_sector + (b"\0" * (FloppyType.F360K.size_bytes - 512)))
 
     resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
     request = CreateRequest(
@@ -479,6 +487,61 @@ def test_resolve_ibm8088_from_install_images_dos33_floppy_boot_sector(tmp_path: 
     assert len(template) == 512
     assert template == boot_sector
     assert b"IO      SYS" in template
+    assert assets.source_image_size_bytes == FloppyType.F360K.size_bytes
+    assert assets.source_image_path == disk1
+
+
+def test_resolve_ibm8088_dos33_prefers_install_image_boot_sector_over_sys_com(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets_dir = tmp_path / "ibm"
+    assets_dir.mkdir(parents=True)
+    disk1 = assets_dir / "DISK01.IMG"
+    boot_sector_from_image = _msdos33_boot_sector_bytes()
+    disk1.write_bytes(boot_sector_from_image + (b"\0" * 1024))
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    request = CreateRequest(
+        path=tmp_path / "disk.img",
+        size_bytes=1440 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        boot_assets_path=assets_dir,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+    )
+    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
+
+    fat16_sector_from_sys = _msdos_fat16_boot_sector_bytes()
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [disk1]
+        payload_map = {
+            "IO.SYS": b"io",
+            "MSDOS.SYS": b"msdos",
+            "COMMAND.COM": b"command",
+            "SYS.COM": b"\x90" * 32 + fat16_sector_from_sys + b"\x90" * 32,
+        }
+        payload = payload_map.get(dos_name.upper())
+        if payload is None:
+            if required:
+                raise ValidationError(f"missing {dos_name}")
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+    assets = resolver.resolve(request)
+
+    template = assets.boot_sector_template.read_bytes()
+    assert len(template) == 512
+    assert template == boot_sector_from_image
 
 
 def test_resolve_pcdos_direct_directory_with_ibmbio_set(tmp_path: Path) -> None:

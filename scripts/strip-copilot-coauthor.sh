@@ -4,6 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
+  strip-copilot-coauthor.sh --commit-msg-file <path>
   strip-copilot-coauthor.sh --from-pre-push
   strip-copilot-coauthor.sh --range <git-range> [--apply] [--dry-run]
 
@@ -51,6 +52,7 @@ pre_push_mode=0
 apply_mode=0
 dry_run=0
 range=""
+commit_msg_file=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -58,6 +60,14 @@ while [[ $# -gt 0 ]]; do
       pre_push_mode=1
       apply_mode=1
       shift
+      ;;
+    --commit-msg-file)
+      commit_msg_file="${2:-}"
+      if [[ -z "$commit_msg_file" ]]; then
+        usage
+        exit 2
+      fi
+      shift 2
       ;;
     --range)
       range="${2:-}"
@@ -87,6 +97,15 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "$commit_msg_file" ]]; then
+  if [[ ! -f "$commit_msg_file" ]]; then
+    echo "Commit message file not found: $commit_msg_file" >&2
+    exit 2
+  fi
+  sed -E -i "/$trailer_regex/d" "$commit_msg_file"
+  exit 0
+fi
 
 if [[ $pre_push_mode -eq 1 ]]; then
   rewritten=0

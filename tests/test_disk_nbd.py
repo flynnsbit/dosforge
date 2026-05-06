@@ -11,7 +11,7 @@ from vhdmaker.boot import BootAssetResolver, BootAssets, BootInstaller
 from vhdmaker.commands import RunResult
 from vhdmaker.disk import DiskManager
 from vhdmaker.errors import ValidationError
-from vhdmaker.models import BootMode, CreateRequest, DiskFormat, FloppyType, MediaType
+from vhdmaker.models import BootMode, CreateRequest, DiskFormat, FloppyType, IBMDOSVersion, MediaType
 from vhdmaker.state import StateStore
 
 
@@ -386,6 +386,134 @@ def test_create_img_system_format_invokes_floppy_boot_installer(tmp_path: Path, 
     assert resolver.calls == 1
     assert installer.calls
     assert installer.calls[0]["image_path"] == request.path
+
+
+def test_create_img_system_format_aligns_ibm_dos33_with_install_image_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class StubResolver:
+        def __init__(self, template: Path) -> None:
+            self.template = template
+
+        def resolve(self, request: CreateRequest) -> BootAssets:
+            del request
+            return BootAssets(
+                system_files={},
+                boot_sector_template=self.template,
+                fdos_payload_dir=None,
+                source_image_size_bytes=FloppyType.F360K.size_bytes,
+            )
+
+    class StubInstaller:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def make_floppy_bootable(self, **kwargs: object) -> None:
+            self.calls.append(kwargs)
+
+    boot_template = tmp_path / "BOOTSECT_FAT16.BIN"
+    boot_template.write_bytes(b"\0" * 512)
+    resolver = StubResolver(boot_template)
+    installer = StubInstaller()
+    runner = FakeRunner()
+    manager = DiskManager(
+        runner=runner,
+        state_store=StateStore(tmp_path / "state.json"),
+        boot_resolver=resolver,  # type: ignore[arg-type]
+        boot_installer=installer,  # type: ignore[arg-type]
+        mount_root=tmp_path / "mounts",
+        nbd_sys_block_root=tmp_path / "sys-class-block",
+        nbd_dev_root=tmp_path / "dev",
+        nbd_discovery_timeout=0.2,
+    )
+    monkeypatch.setattr(manager, "preflight", lambda request=None, media_type=None: None)
+
+    request = CreateRequest(
+        path=tmp_path / "dos33.img",
+        size_bytes=FloppyType.F1440K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.IMG,
+        floppy_type=FloppyType.F1440K,
+        img_system_format=True,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+    )
+    manager.create_and_prepare(request)
+
+    assert request.path.exists()
+    assert request.path.stat().st_size == FloppyType.F360K.size_bytes
+    assert request.floppy_type is FloppyType.F360K
+    assert request.size_bytes == FloppyType.F360K.size_bytes
+    assert any(command[:3] == ("mkfs.fat", "-F", "12") and sudo for command, sudo in runner.calls)
+    assert installer.calls
+    assert installer.calls[0]["image_path"] == request.path
+
+
+def test_create_img_system_format_clones_ibm_dos33_source_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class StubResolver:
+        def __init__(self, template: Path, source_image: Path) -> None:
+            self.template = template
+            self.source_image = source_image
+
+        def resolve(self, request: CreateRequest) -> BootAssets:
+            del request
+            return BootAssets(
+                system_files={},
+                boot_sector_template=self.template,
+                fdos_payload_dir=None,
+                source_image_size_bytes=self.source_image.stat().st_size,
+                source_image_path=self.source_image,
+            )
+
+    class StubInstaller:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def make_floppy_bootable(self, **kwargs: object) -> None:
+            self.calls.append(kwargs)
+
+    source_image = tmp_path / "DISK01.IMG"
+    source_payload = (b"MSDOS33SOURCE" * ((FloppyType.F360K.size_bytes // len(b"MSDOS33SOURCE")) + 1))[
+        : FloppyType.F360K.size_bytes
+    ]
+    source_image.write_bytes(source_payload)
+    boot_template = tmp_path / "BOOTSECT_FAT16.BIN"
+    boot_template.write_bytes(b"\0" * 512)
+    resolver = StubResolver(boot_template, source_image)
+    installer = StubInstaller()
+    runner = FakeRunner()
+    manager = DiskManager(
+        runner=runner,
+        state_store=StateStore(tmp_path / "state.json"),
+        boot_resolver=resolver,  # type: ignore[arg-type]
+        boot_installer=installer,  # type: ignore[arg-type]
+        mount_root=tmp_path / "mounts",
+        nbd_sys_block_root=tmp_path / "sys-class-block",
+        nbd_dev_root=tmp_path / "dev",
+        nbd_discovery_timeout=0.2,
+    )
+    monkeypatch.setattr(manager, "preflight", lambda request=None, media_type=None: None)
+
+    request = CreateRequest(
+        path=tmp_path / "dos33.img",
+        size_bytes=FloppyType.F1440K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.IMG,
+        floppy_type=FloppyType.F1440K,
+        img_system_format=True,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+    )
+    manager.create_and_prepare(request)
+
+    assert request.path.exists()
+    assert request.path.read_bytes() == source_payload
+    assert request.floppy_type is FloppyType.F360K
+    assert request.size_bytes == FloppyType.F360K.size_bytes
+    assert not any(command[:3] == ("mkfs.fat", "-F", "12") for command, _ in runner.calls)
+    assert installer.calls == []
 
 
 def test_mount_img_uses_loop_mount_and_skips_nbd_disconnect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

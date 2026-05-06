@@ -9,7 +9,7 @@ if [[ ! -d "$hook_path" ]]; then
   exit 1
 fi
 
-chmod +x "$repo_root/.githooks/pre-push" "$repo_root/scripts/strip-copilot-coauthor.sh"
+chmod +x "$repo_root/.githooks/commit-msg" "$repo_root/.githooks/pre-push" "$repo_root/scripts/strip-copilot-coauthor.sh"
 git -C "$repo_root" config core.hooksPath .githooks
 echo "Configured core.hooksPath=.githooks"
-echo "Pre-push hook is now active."
+echo "commit-msg and pre-push hooks are now active."

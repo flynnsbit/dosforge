@@ -245,6 +245,22 @@ def test_selecting_img_sets_media_type_and_floppy(monkeypatch, tmp_path) -> None
     asyncio.run(run())
 
 
+def test_selecting_directory_sets_boot_assets_when_picker_is_visible(tmp_path) -> None:
+    async def run() -> None:
+        app = VhdMakerApp()
+        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
+        assets_dir = tmp_path / "dos33"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+
+        async with app.run_test():
+            app.query_one("#boot-mode", Select).value = BootMode.IBM8088.value
+            app._sync_create_form_visibility()
+            app.on_directory_tree_directory_selected(SimpleNamespace(path=str(assets_dir)))
+            assert app.query_one("#boot-assets", Input).value == str(assets_dir.resolve())
+
+    asyncio.run(run())
+
+
 def test_browser_starts_in_current_working_directory(monkeypatch, tmp_path) -> None:
     async def run() -> None:
         monkeypatch.chdir(tmp_path)

@@ -280,6 +280,8 @@ class BootAssets:
     fdos_payload_dir: Path | None = None
     payload_target_dir: str = "FDOS"
     mbr_boot_code_template: Path | None = None
+    source_image_size_bytes: int | None = None
+    source_image_path: Path | None = None
 
 
 class BootAssetResolver:
@@ -641,6 +643,7 @@ class BootAssetResolver:
             profile_label=f"IBM 8088/V20 {version_label}",
             version_subdir_name=version_dir_name,
             cache_tag=f"ibm8088-{request.ibm_dos_version.value}",
+            prefer_install_image_boot_sector=request.ibm_dos_version is IBMDOSVersion.DOS33,
         )
 
     def _resolve_pcdos(self, request: CreateRequest) -> BootAssets:
@@ -649,6 +652,7 @@ class BootAssetResolver:
             profile_label="PC-DOS",
             version_subdir_name="pcdos",
             cache_tag="pcdos",
+            prefer_install_image_boot_sector=False,
         )
 
     def _resolve_compaq331(self, request: CreateRequest) -> BootAssets:
@@ -657,6 +661,7 @@ class BootAssetResolver:
             profile_label="Compaq DOS 3.31",
             version_subdir_name="compaq331",
             cache_tag="compaq331",
+            prefer_install_image_boot_sector=False,
         )
 
     def _resolve_legacy_dos(
@@ -666,6 +671,7 @@ class BootAssetResolver:
         profile_label: str,
         version_subdir_name: str | None,
         cache_tag: str,
+        prefer_install_image_boot_sector: bool,
     ) -> BootAssets:
         if request.disk_format is not DiskFormat.FAT16:
             raise ValidationError(f"{profile_label} boot mode requires FAT16 format.")
@@ -689,6 +695,7 @@ class BootAssetResolver:
             image_assets = self._try_resolve_legacy_dos_from_install_images(
                 candidate,
                 cache_tag=cache_tag,
+                prefer_install_image_boot_sector=prefer_install_image_boot_sector,
             )
             if image_assets is not None:
                 return image_assets
@@ -718,6 +725,7 @@ class BootAssetResolver:
         directory: Path,
         *,
         cache_tag: str,
+        prefer_install_image_boot_sector: bool,
     ) -> BootAssets | None:
         install_images = self._collect_msdos71_install_images(directory)
         if not install_images:
@@ -746,7 +754,20 @@ class BootAssetResolver:
         if template is None:
             template = extraction_root / "BOOTSECT_FAT16.BIN"
             source_candidates = tuple(extraction_root / name for name in _IBM_DOS_BOOTSECTOR_SOURCES)
-            if any(path.exists() for path in source_candidates):
+            if prefer_install_image_boot_sector:
+                boot_sector = self._extract_msdos_fat16_boot_sector_from_images(install_images)
+                if boot_sector is not None:
+                    template.write_bytes(boot_sector)
+                elif any(path.exists() for path in source_candidates):
+                    self._write_msdos_boot_template(
+                        template,
+                        disk_format=DiskFormat.FAT16,
+                        source_candidates=source_candidates,
+                        source_label="legacy DOS install media",
+                    )
+                else:
+                    return None
+            elif any(path.exists() for path in source_candidates):
                 self._write_msdos_boot_template(
                     template,
                     disk_format=DiskFormat.FAT16,
@@ -759,7 +780,22 @@ class BootAssetResolver:
                     return None
                 template.write_bytes(boot_sector)
 
-        return BootAssets(system_files=files, boot_sector_template=template)
+        source_image_size_bytes: int | None = None
+        source_image_path: Path | None = None
+        for image in install_images:
+            try:
+                source_image_size_bytes = image.stat().st_size
+            except OSError:
+                continue
+            source_image_path = image
+            break
+
+        return BootAssets(
+            system_files=files,
+            boot_sector_template=template,
+            source_image_size_bytes=source_image_size_bytes,
+            source_image_path=source_image_path,
+        )
 
     def _collect_legacy_system_files_from_directory(self, directory: Path) -> dict[str, Path] | None:
         for required_set in _LEGACY_DOS_SYSTEM_FILE_SETS:
@@ -1800,6 +1836,8 @@ class BootInstaller:
             raise ValidationError(f"Boot template must be at least 512 bytes: {template}")
 
         code_offset = disk_format.boot_code_offset
+        if disk_format is DiskFormat.FAT16:
+            code_offset = self._fat12_16_boot_code_offset(data)
         self.runner.run(
             ["dd", f"if={template}", f"of={partition_device}", "bs=1", "count=3", "conv=notrunc"],
             sudo=True,
@@ -1828,6 +1866,7 @@ class BootInstaller:
         data = template.read_bytes()
         if len(data) < 512:
             raise ValidationError(f"Boot template must be at least 512 bytes: {template}")
+        code_offset = self._fat12_16_boot_code_offset(data)
         self.runner.run(
             ["dd", f"if={template}", f"of={str(image_path)}", "bs=1", "count=3", "conv=notrunc"],
             sudo=True,
@@ -1838,9 +1877,9 @@ class BootInstaller:
                 f"if={template}",
                 f"of={str(image_path)}",
                 "bs=1",
-                "skip=62",
-                "seek=62",
-                "count=448",
+                f"skip={code_offset}",
+                f"seek={code_offset}",
+                f"count={510 - code_offset}",
                 "conv=notrunc",
             ],
             sudo=True,
@@ -1858,6 +1897,9 @@ class BootInstaller:
             ],
             sudo=True,
         )
+
+    def _fat12_16_boot_code_offset(self, sector: bytes) -> int:
+        return 62 if sector[54:62] in (b"FAT12   ", b"FAT16   ") else 54
 
     def _patch_fat16_bpb_geometry(self, *, partition_device: str, bios_chs: tuple[int, int]) -> None:
         sectors_per_track, heads = bios_chs

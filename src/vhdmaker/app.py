@@ -92,7 +92,7 @@ class VhdMakerApp(App[None]):
         yield Header()
         with Horizontal(id="layout"):
             with Vertical(id="left-pane"):
-                yield Label("Browse .vhd/.img/.ima files")
+                yield Label("Browse images and asset folders")
                 yield DirectoryTree(str(Path.cwd()), id="vhd-tree")
                 yield Static("Selected image: (none)", id="selected-vhd")
                 yield Button("Mount selected image", id="mount-btn", variant="primary")
@@ -187,6 +187,14 @@ class VhdMakerApp(App[None]):
         self._sync_create_form_visibility()
         self._set_status(f"Selected {selected}")
 
+    def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
+        selected = Path(event.path).expanduser().resolve()
+        if self._is_boot_assets_picker_active():
+            self.query_one("#boot-assets", Input).value = str(selected)
+            self._set_status(f"Boot assets path set: {selected}")
+            return
+        self._set_status(f"Selected directory: {selected}")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
         if button_id == "create-btn":
@@ -203,6 +211,8 @@ class VhdMakerApp(App[None]):
             self._handle_privilege_diagnostics()
 
     def on_select_changed(self, event: Select.Changed) -> None:
+        if len(self.query("#create-path")) == 0:
+            return
         if event.select.id == "media-type":
             media_type = MediaType(str(event.value))
             if media_type is MediaType.IMG:
@@ -233,12 +243,16 @@ class VhdMakerApp(App[None]):
             self._sync_create_form_visibility()
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if len(self.query("#create-path")) == 0:
+            return
         if event.checkbox.id == "img-system-format":
             if not event.value:
                 self.query_one("#boot-mode", Select).value = BootMode.NONE.value
             self._sync_create_form_visibility()
 
     def _sync_create_form_visibility(self) -> None:
+        if len(self.query("#create-path")) == 0:
+            return
         media_type = MediaType(cast(str, self.query_one("#media-type", Select).value))
         boot_mode = BootMode(cast(str, self.query_one("#boot-mode", Select).value))
         freedos_source = FreeDOSSource(cast(str, self.query_one("#freedos-source", Select).value))
@@ -476,3 +490,8 @@ class VhdMakerApp(App[None]):
             if floppy_type.size_bytes == size_bytes:
                 return floppy_type
         return None
+
+    def _is_boot_assets_picker_active(self) -> bool:
+        if len(self.query("#boot-assets")) == 0:
+            return False
+        return bool(self.query_one("#boot-assets", Input).display)

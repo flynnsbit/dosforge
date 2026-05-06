@@ -148,6 +148,7 @@ Supports `minimal` and `full` install profiles.
 - `dos33` max 32 MiB
 - `dos50` max ~504 MiB
 - Assets can be direct files or floppy images
+- DOS 3.3 IMG system-format from install images uses `DISK01.IMG` as the base media (source geometry + boot layout)
 
 ### PC-DOS / Compaq DOS 3.31
 
@@ -189,9 +190,9 @@ Run tests:
 pytest -q
 ```
 
-### Optional pre-push trailer cleanup hook
+### Optional commit/push trailer cleanup hooks
 
-If you want a local pre-push hook that strips the Copilot co-author trailer from **HEAD** before push:
+If you want local hooks that strip the Copilot co-author trailer on commit (`commit-msg`) and also enforce cleanup before push:
 
 ```bash
 ./scripts/install-githooks.sh

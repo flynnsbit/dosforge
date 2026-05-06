@@ -351,3 +351,91 @@ def test_make_floppy_bootable_writes_boot_sector_and_system_files(tmp_path: Path
         command == ("mattrib", "-i", str(image_path), "+s", "+h", "::IBMBIO.COM") and sudo
         for command, sudo in runner.calls
     )
+
+
+def test_make_floppy_bootable_uses_legacy_dos33_code_offset(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    boot_template = tmp_path / "BOOTSECT.BIN"
+    sector = bytearray(512)
+    sector[:3] = b"\xeb\x3c\x90"
+    sector[11:13] = (512).to_bytes(2, "little")
+    sector[13] = 2
+    sector[14:16] = (1).to_bytes(2, "little")
+    sector[16] = 2
+    sector[17:19] = (112).to_bytes(2, "little")
+    sector[21] = 0xFD
+    sector[22:24] = (2).to_bytes(2, "little")
+    sector[24:26] = (9).to_bytes(2, "little")
+    sector[26:28] = (2).to_bytes(2, "little")
+    # Legacy DOS 3.x style templates don't include FAT12/FAT16 text at 54.
+    sector[54:62] = b"\xFA\x33\xC0\x8E\xD0\xBC\x00\x7C"
+    sector[510:512] = b"\x55\xaa"
+    _touch(boot_template, bytes(sector))
+    image_path = tmp_path / "disk.img"
+    image_path.write_bytes(b"\0" * (1440 * 1024))
+
+    installer = BootInstaller(
+        runner,
+        mount_root=tmp_path / "mount-root",
+        mbr_boot_candidates=(tmp_path / "missing-mbr.bin",),
+    )
+    assets = BootAssets(system_files={}, boot_sector_template=boot_template, fdos_payload_dir=None)
+    installer.make_floppy_bootable(
+        image_path=image_path,
+        assets=assets,
+        boot_mode=BootMode.IBM8088,
+    )
+
+    assert any(
+        command[0] == "dd"
+        and "skip=54" in command
+        and "seek=54" in command
+        and "count=456" in command
+        and sudo
+        for command, sudo in runner.calls
+    )
+
+
+def test_make_partition_bootable_uses_legacy_dos33_code_offset(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    mbr = tmp_path / "mbr.bin"
+    _touch(mbr, b"\0" * 440)
+    boot_template = tmp_path / "BOOTSECT_FAT16.BIN"
+    sector = bytearray(512)
+    sector[:3] = b"\xeb\x3c\x90"
+    sector[11:13] = (512).to_bytes(2, "little")
+    sector[13] = 2
+    sector[14:16] = (1).to_bytes(2, "little")
+    sector[16] = 2
+    sector[17:19] = (112).to_bytes(2, "little")
+    sector[21] = 0xFD
+    sector[22:24] = (2).to_bytes(2, "little")
+    sector[24:26] = (9).to_bytes(2, "little")
+    sector[26:28] = (2).to_bytes(2, "little")
+    sector[54:62] = b"\xFA\x33\xC0\x8E\xD0\xBC\x00\x7C"
+    sector[510:512] = b"\x55\xaa"
+    _touch(boot_template, bytes(sector))
+
+    installer = BootInstaller(
+        runner,
+        mount_root=tmp_path / "mount-root",
+        mbr_boot_candidates=(mbr,),
+    )
+    assets = BootAssets(system_files={}, boot_sector_template=boot_template, fdos_payload_dir=None)
+    installer.make_partition_bootable(
+        disk_device="/dev/nbd0",
+        partition_device="/dev/nbd0p1",
+        disk_format=DiskFormat.FAT16,
+        assets=assets,
+        boot_mode=BootMode.IBM8088,
+    )
+
+    assert any(
+        command[0] == "dd"
+        and command[2] == "of=/dev/nbd0p1"
+        and "skip=54" in command
+        and "seek=54" in command
+        and "count=456" in command
+        and sudo
+        for command, sudo in runner.calls
+    )
