@@ -12,7 +12,7 @@ from vhdmaker.boot import (
 )
 from vhdmaker.commands import CommandRunner
 from vhdmaker.errors import ValidationError
-from vhdmaker.models import BootMode, CreateRequest, DiskFormat, FreeDOSSource, MSDOSInstallProfile
+from vhdmaker.models import BootMode, CreateRequest, DiskFormat, FreeDOSSource, IBMDOSVersion, MSDOSInstallProfile
 
 
 def _touch(path: Path, payload: bytes = b"x") -> None:
@@ -121,6 +121,27 @@ def _msdos_fat16_boot_sector_bytes() -> bytes:
     pbs[43:54] = b"NO NAME    "
     pbs[54:62] = b"FAT16   "
     pbs[90:101] = b"IO      SYS"
+    pbs[510:512] = b"\x55\xaa"
+    return bytes(pbs)
+
+
+def _msdos33_boot_sector_bytes() -> bytes:
+    pbs = bytearray(512)
+    pbs[:3] = b"\xeb\x3c\x90"
+    pbs[3:11] = b"MSDOS3.3"
+    pbs[11:13] = struct.pack("<H", 512)
+    pbs[13] = 2
+    pbs[14:16] = struct.pack("<H", 1)
+    pbs[16] = 2
+    pbs[17:19] = struct.pack("<H", 112)
+    pbs[19:21] = struct.pack("<H", 720)
+    pbs[21] = 0xFD
+    pbs[22:24] = struct.pack("<H", 2)
+    pbs[24:26] = struct.pack("<H", 9)
+    pbs[26:28] = struct.pack("<H", 2)
+    # DOS 3.3 boot sectors typically do not include the FAT12/FAT16 text label at offset 54.
+    pbs[54:62] = b"\xFA\x33\xC0\x8E\xD0\xBC\x00\x7C"
+    pbs[80:91] = b"IO      SYS"
     pbs[510:512] = b"\x55\xaa"
     return bytes(pbs)
 
@@ -309,6 +330,245 @@ def test_resolve_freedos_local_missing_template_fails(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError):
         resolver.resolve(request)
+
+
+def test_resolve_ibm8088_direct_directory(tmp_path: Path) -> None:
+    assets_dir = tmp_path / "ibm"
+    _touch(assets_dir / "IO.SYS", b"io")
+    _touch(assets_dir / "MSDOS.SYS", b"msdos")
+    _touch(assets_dir / "COMMAND.COM", b"command")
+    _touch(assets_dir / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
+    _touch(assets_dir / "CONFIG.SYS", b"FILES=20\r\n")
+
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        boot_assets_path=assets_dir,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+
+    assert sorted(assets.system_files) == ["COMMAND.COM", "CONFIG.SYS", "IO.SYS", "MSDOS.SYS"]
+    assert assets.boot_sector_template == assets_dir / "BOOTSECT_FAT16.BIN"
+
+
+def test_resolve_ibm8088_uses_version_subdir(tmp_path: Path) -> None:
+    assets_root = tmp_path / "ibm-assets"
+    dos50 = assets_root / "dos50"
+    _touch(dos50 / "IO.SYS", b"io")
+    _touch(dos50 / "MSDOS.SYS", b"msdos")
+    _touch(dos50 / "COMMAND.COM", b"command")
+    _touch(dos50 / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
+
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=64 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        boot_assets_path=assets_root,
+        ibm_dos_version=IBMDOSVersion.DOS50,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+    assert assets.boot_sector_template == dos50 / "BOOTSECT_FAT16.BIN"
+
+
+def test_resolve_ibm8088_from_install_images(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assets_dir = tmp_path / "ibm"
+    assets_dir.mkdir(parents=True)
+    disk1 = assets_dir / "disk01.img"
+    disk1.write_bytes(b"disk")
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=64 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        boot_assets_path=assets_dir,
+        ibm_dos_version=IBMDOSVersion.DOS50,
+    )
+
+    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
+
+    boot_sector = _msdos_fat16_boot_sector_bytes()
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [disk1]
+        payload_map = {
+            "IO.SYS": b"io",
+            "MSDOS.SYS": b"msdos",
+            "COMMAND.COM": b"command",
+            "SYS.COM": b"\x90" * 32 + boot_sector + b"\x90" * 32,
+        }
+        payload = payload_map.get(dos_name.upper())
+        if payload is None:
+            if required:
+                raise ValidationError(f"missing {dos_name}")
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+
+    assets = resolver.resolve(request)
+    assert assets.system_files["IO.SYS"].read_bytes() == b"io"
+    assert assets.system_files["MSDOS.SYS"].read_bytes() == b"msdos"
+    assert assets.system_files["COMMAND.COM"].read_bytes() == b"command"
+    template = assets.boot_sector_template.read_bytes()
+    assert len(template) == 512
+    assert template[54:62] in (b"FAT16   ", b"FAT12   ")
+    assert b"IO      SYS" in template
+
+
+def test_resolve_ibm8088_from_install_images_dos33_floppy_boot_sector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assets_dir = tmp_path / "ibm"
+    assets_dir.mkdir(parents=True)
+    disk1 = assets_dir / "DISK01.IMG"
+    boot_sector = _msdos33_boot_sector_bytes()
+    disk1.write_bytes(boot_sector + (b"\0" * 1024))
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        boot_assets_path=assets_dir,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+    )
+
+    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [disk1]
+        payload_map = {
+            "IO.SYS": b"io",
+            "MSDOS.SYS": b"msdos",
+            "COMMAND.COM": b"command",
+        }
+        payload = payload_map.get(dos_name.upper())
+        if payload is None:
+            if required:
+                raise ValidationError(f"missing {dos_name}")
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+
+    assets = resolver.resolve(request)
+    template = assets.boot_sector_template.read_bytes()
+    assert len(template) == 512
+    assert template == boot_sector
+    assert b"IO      SYS" in template
+
+
+def test_resolve_pcdos_direct_directory_with_ibmbio_set(tmp_path: Path) -> None:
+    assets_dir = tmp_path / "pcdos"
+    _touch(assets_dir / "IBMBIO.COM", b"bios")
+    _touch(assets_dir / "IBMDOS.COM", b"dos")
+    _touch(assets_dir / "COMMAND.COM", b"command")
+    _touch(assets_dir / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
+
+    request = CreateRequest(
+        path=tmp_path / "disk.img",
+        size_bytes=1440 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.PCDOS,
+        boot_assets_path=assets_dir,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+
+    assert sorted(assets.system_files) == ["COMMAND.COM", "IBMBIO.COM", "IBMDOS.COM"]
+    assert assets.boot_sector_template == assets_dir / "BOOTSECT_FAT16.BIN"
+
+
+def test_resolve_compaq331_uses_named_subdirectory(tmp_path: Path) -> None:
+    assets_root = tmp_path / "dos-assets"
+    compaq = assets_root / "compaq331"
+    _touch(compaq / "IO.SYS", b"io")
+    _touch(compaq / "MSDOS.SYS", b"msdos")
+    _touch(compaq / "COMMAND.COM", b"command")
+    _touch(compaq / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
+
+    request = CreateRequest(
+        path=tmp_path / "disk.img",
+        size_bytes=1440 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.COMPAQ331,
+        boot_assets_path=assets_root,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+
+    assert assets.boot_sector_template == compaq / "BOOTSECT_FAT16.BIN"
+    assert "IO.SYS" in assets.system_files
+
+
+def test_resolve_pcdos_from_install_images_uses_ibmbio_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets_dir = tmp_path / "pcdos"
+    assets_dir.mkdir(parents=True)
+    disk1 = assets_dir / "disk01.img"
+    disk1.write_bytes(_msdos_fat16_boot_sector_bytes() + (b"\0" * 1024))
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    request = CreateRequest(
+        path=tmp_path / "disk.img",
+        size_bytes=1440 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.PCDOS,
+        boot_assets_path=assets_dir,
+    )
+    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [disk1]
+        payload_map = {
+            "IBMBIO.COM": b"bios",
+            "IBMDOS.COM": b"dos",
+            "COMMAND.COM": b"command",
+        }
+        payload = payload_map.get(dos_name.upper())
+        if payload is None:
+            if required:
+                raise ValidationError(f"missing {dos_name}")
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+    assets = resolver.resolve(request)
+
+    assert assets.system_files["IBMBIO.COM"].read_bytes() == b"bios"
+    assert assets.system_files["IBMDOS.COM"].read_bytes() == b"dos"
 
 
 def test_resolve_msdos71_direct_directory(tmp_path: Path) -> None:

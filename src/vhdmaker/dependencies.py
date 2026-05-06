@@ -6,19 +6,23 @@ import shutil
 from collections.abc import Iterable
 
 from .errors import DependencyError
-from .models import BootMode, FreeDOSSource
+from .models import BootMode, FreeDOSSource, MediaType
 
-REQUIRED_COMMANDS: tuple[str, ...] = (
-    "qemu-img",
-    "qemu-nbd",
-    "parted",
-    "partprobe",
+REQUIRED_COMMANDS_BASE: tuple[str, ...] = (
     "mkfs.fat",
     "mount",
     "umount",
     "sudo",
     "xdg-open",
 )
+
+REQUIRED_COMMANDS_VHD: tuple[str, ...] = (
+    "qemu-img",
+    "qemu-nbd",
+    "parted",
+    "partprobe",
+)
+REQUIRED_COMMANDS: tuple[str, ...] = (*REQUIRED_COMMANDS_BASE, *REQUIRED_COMMANDS_VHD)
 
 BOOT_COMMANDS: tuple[str, ...] = (
     "dd",
@@ -33,10 +37,13 @@ def find_missing(commands: Iterable[str]) -> list[str]:
 
 def assert_dependencies(
     *,
+    media_type: MediaType = MediaType.VHD,
     boot_mode: BootMode = BootMode.NONE,
     freedos_source: FreeDOSSource = FreeDOSSource.LOCAL,
 ) -> None:
-    missing = find_missing(REQUIRED_COMMANDS)
+    missing = find_missing(REQUIRED_COMMANDS_BASE)
+    if media_type is MediaType.VHD:
+        missing.extend(find_missing(REQUIRED_COMMANDS_VHD))
     if boot_mode is not BootMode.NONE:
         missing.extend(find_missing(BOOT_COMMANDS))
     if boot_mode is BootMode.FREEDOS and freedos_source is FreeDOSSource.AUTO:

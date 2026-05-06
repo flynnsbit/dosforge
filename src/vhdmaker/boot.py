@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from .commands import CommandRunner
 from .errors import ValidationError
-from .models import BootMode, CreateRequest, DiskFormat, FreeDOSSource, MSDOSInstallProfile
+from .models import BootMode, CreateRequest, DiskFormat, FreeDOSSource, IBMDOSVersion, MSDOSInstallProfile
 from .paths import app_cache_dir, app_mount_root
 
 FREEDOS_DEFAULT_IMAGE_URL = (
@@ -34,6 +34,11 @@ _OPTIONAL_FREEDOS_FILES = ("CONFIG.SYS", "AUTOEXEC.BAT", "FDCONFIG.SYS", "FDAUTO
 _REQUIRED_MSDOS_FILES = ("IO.SYS", "MSDOS.SYS", "COMMAND.COM")
 _REQUIRED_MSDOS_SUPPORT_FILES = ("HIMEM.SYS", "IFSHLP.SYS")
 _OPTIONAL_MSDOS_STARTUP_FILES = ("CONFIG.SYS", "AUTOEXEC.BAT")
+_IBM_DOS_BOOTSECTOR_SOURCES = ("SYS.COM", "FORMAT.COM")
+_LEGACY_DOS_SYSTEM_FILE_SETS = (
+    ("IO.SYS", "MSDOS.SYS", "COMMAND.COM"),
+    ("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+)
 _MSDOS71_INSTALL_PAK = "DOS71_1S.PAK"
 _MSDOS71_OPTIONAL_INSTALL_PAK = "DOS71_2S.PAK"
 _MSDOS71_PAK_PASSWORD = b":MSDOS"
@@ -119,6 +124,7 @@ _MSDOS_DOSLFN_TABLE_PATTERN = re.compile(
     r"(?P<prefix>\bDOSLFN(?:\.COM)?\s+/Z:)(?P<table>[^\s]+)",
     re.IGNORECASE,
 )
+_VALID_FAT_MEDIA_DESCRIPTORS = frozenset({0xF0, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF})
 _MSDOS_INSTALL_DIR_DRIVERS = frozenset(
     {
         "DBLBUFF.SYS",
@@ -287,7 +293,15 @@ class BootAssetResolver:
             raise ValidationError("Boot assets requested when boot mode is disabled.")
         if request.boot_mode is BootMode.FREEDOS:
             return self._resolve_freedos(request)
-        return self._resolve_msdos71(request)
+        if request.boot_mode is BootMode.MSDOS71:
+            return self._resolve_msdos71(request)
+        if request.boot_mode is BootMode.IBM8088:
+            return self._resolve_ibm8088(request)
+        if request.boot_mode is BootMode.PCDOS:
+            return self._resolve_pcdos(request)
+        if request.boot_mode is BootMode.COMPAQ331:
+            return self._resolve_compaq331(request)
+        raise ValidationError(f"Unsupported boot mode: {request.boot_mode.value}")
 
     def _resolve_freedos(self, request: CreateRequest) -> BootAssets:
         if request.freedos_source is FreeDOSSource.LOCAL:
@@ -619,6 +633,167 @@ class BootAssetResolver:
             install_profile=request.msdos_install_profile,
         )
 
+    def _resolve_ibm8088(self, request: CreateRequest) -> BootAssets:
+        version_dir_name = "dos33" if request.ibm_dos_version is IBMDOSVersion.DOS33 else "dos50"
+        version_label = "DOS 3.3" if request.ibm_dos_version is IBMDOSVersion.DOS33 else "DOS 5.0"
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label=f"IBM 8088/V20 {version_label}",
+            version_subdir_name=version_dir_name,
+            cache_tag=f"ibm8088-{request.ibm_dos_version.value}",
+        )
+
+    def _resolve_pcdos(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="PC-DOS",
+            version_subdir_name="pcdos",
+            cache_tag="pcdos",
+        )
+
+    def _resolve_compaq331(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="Compaq DOS 3.31",
+            version_subdir_name="compaq331",
+            cache_tag="compaq331",
+        )
+
+    def _resolve_legacy_dos(
+        self,
+        *,
+        request: CreateRequest,
+        profile_label: str,
+        version_subdir_name: str | None,
+        cache_tag: str,
+    ) -> BootAssets:
+        if request.disk_format is not DiskFormat.FAT16:
+            raise ValidationError(f"{profile_label} boot mode requires FAT16 format.")
+        if request.boot_assets_path is None:
+            raise ValidationError(f"{profile_label} mode requires a local boot assets path.")
+        directory = request.boot_assets_path.expanduser().resolve()
+        if not directory.is_dir():
+            raise ValidationError(f"{profile_label} asset path must be a directory: {directory}")
+
+        candidate_directories: list[Path] = [directory]
+        if version_subdir_name:
+            version_subdir = self._find_directory_case_insensitive(directory, version_subdir_name)
+            if version_subdir is not None and version_subdir not in candidate_directories:
+                candidate_directories.append(version_subdir)
+
+        for candidate in candidate_directories:
+            direct_assets = self._try_resolve_legacy_dos_from_directory(candidate)
+            if direct_assets is not None:
+                return direct_assets
+
+            image_assets = self._try_resolve_legacy_dos_from_install_images(
+                candidate,
+                cache_tag=cache_tag,
+            )
+            if image_assets is not None:
+                return image_assets
+
+        raise ValidationError(
+            f"{profile_label} assets were not found. Provide either direct files "
+            "(IO.SYS+MSDOS.SYS+COMMAND.COM or IBMBIO.COM+IBMDOS.COM+COMMAND.COM, plus BOOTSECT_FAT16.BIN/BOOTSECT.BIN) "
+            f"or floppy images (*.img/*.ima) under {directory}."
+        )
+
+    def _try_resolve_legacy_dos_from_directory(self, directory: Path) -> BootAssets | None:
+        files = self._collect_legacy_system_files_from_directory(directory)
+        if files is None:
+            return None
+        for name in _OPTIONAL_MSDOS_STARTUP_FILES:
+            located = self._find_file_case_insensitive(directory, name)
+            if located is not None:
+                files[name] = located
+        try:
+            template = self._resolve_boot_template(directory, DiskFormat.FAT16)
+        except ValidationError:
+            return None
+        return BootAssets(system_files=files, boot_sector_template=template)
+
+    def _try_resolve_legacy_dos_from_install_images(
+        self,
+        directory: Path,
+        *,
+        cache_tag: str,
+    ) -> BootAssets | None:
+        install_images = self._collect_msdos71_install_images(directory)
+        if not install_images:
+            return None
+
+        cache_key = f"{cache_tag}|{self._msdos71_cache_key(directory, install_images)}"
+        extraction_root = self.cache_root / f"{cache_tag}-{self._hash_value(cache_key)}"
+        extraction_root.mkdir(parents=True, exist_ok=True)
+
+        files = self._extract_legacy_system_files_from_images(install_images, extraction_root)
+        if files is None:
+            return None
+        for name in _OPTIONAL_MSDOS_STARTUP_FILES:
+            extracted = self._extract_file_from_images(install_images, extraction_root, name, required=False)
+            if extracted is not None:
+                files[name] = extracted
+        for name in _IBM_DOS_BOOTSECTOR_SOURCES:
+            self._extract_file_from_images(install_images, extraction_root, name, required=False)
+
+        template: Path | None = None
+        try:
+            template = self._resolve_boot_template(directory, DiskFormat.FAT16)
+        except ValidationError:
+            template = None
+
+        if template is None:
+            template = extraction_root / "BOOTSECT_FAT16.BIN"
+            source_candidates = tuple(extraction_root / name for name in _IBM_DOS_BOOTSECTOR_SOURCES)
+            if any(path.exists() for path in source_candidates):
+                self._write_msdos_boot_template(
+                    template,
+                    disk_format=DiskFormat.FAT16,
+                    source_candidates=source_candidates,
+                    source_label="legacy DOS install media",
+                )
+            else:
+                boot_sector = self._extract_msdos_fat16_boot_sector_from_images(install_images)
+                if boot_sector is None:
+                    return None
+                template.write_bytes(boot_sector)
+
+        return BootAssets(system_files=files, boot_sector_template=template)
+
+    def _collect_legacy_system_files_from_directory(self, directory: Path) -> dict[str, Path] | None:
+        for required_set in _LEGACY_DOS_SYSTEM_FILE_SETS:
+            files: dict[str, Path] = {}
+            for name in required_set:
+                located = self._find_file_case_insensitive(directory, name)
+                if located is None:
+                    break
+                files[name] = located
+            else:
+                return files
+        return None
+
+    def _extract_legacy_system_files_from_images(
+        self,
+        install_images: list[Path],
+        extraction_root: Path,
+    ) -> dict[str, Path] | None:
+        for required_set in _LEGACY_DOS_SYSTEM_FILE_SETS:
+            files: dict[str, Path] = {}
+            for name in required_set:
+                extracted = self._extract_file_from_images(
+                    install_images,
+                    extraction_root,
+                    name,
+                    required=False,
+                )
+                if extracted is None:
+                    break
+                files[name] = extracted
+            else:
+                return files
+        return None
+
     def _try_resolve_msdos71_from_directory(
         self,
         directory: Path,
@@ -944,12 +1119,13 @@ class BootAssetResolver:
         except (KeyError, OSError, NotImplementedError) as exc:
             raise ValidationError(f"Unable to extract {member_name} from {archive_name}.") from exc
 
-    def _write_msdos71_boot_template(
+    def _write_msdos_boot_template(
         self,
         destination: Path,
         *,
         disk_format: DiskFormat,
         source_candidates: tuple[Path, ...],
+        source_label: str,
     ) -> None:
         if destination.exists() and destination.stat().st_size >= 512:
             current = destination.read_bytes()[:512]
@@ -966,8 +1142,22 @@ class BootAssetResolver:
 
         format_label = "FAT16" if disk_format is DiskFormat.FAT16 else "FAT32"
         raise ValidationError(
-            f"Unable to derive BOOTSECT_{format_label}.BIN from DOS71 install media. "
+            f"Unable to derive BOOTSECT_{format_label}.BIN from {source_label}. "
             f"Provide BOOTSECT_{format_label}.BIN manually in the asset directory."
+        )
+
+    def _write_msdos71_boot_template(
+        self,
+        destination: Path,
+        *,
+        disk_format: DiskFormat,
+        source_candidates: tuple[Path, ...],
+    ) -> None:
+        self._write_msdos_boot_template(
+            destination,
+            disk_format=disk_format,
+            source_candidates=source_candidates,
+            source_label="DOS71 install media",
         )
 
     def _extract_msdos71_boot_sector_from_binary(self, path: Path, disk_format: DiskFormat) -> bytes | None:
@@ -999,13 +1189,43 @@ class BootAssetResolver:
             return False
         if sector[0] not in (0xEB, 0xE9):
             return False
-        if sector[54:62] not in (b"FAT16   ", b"FAT12   "):
+        has_type_label = sector[54:62] in (b"FAT16   ", b"FAT12   ")
+        if not has_type_label and not self._looks_like_legacy_fat12_16_bpb(sector):
             return False
         if sector[82:90] == b"FAT32   ":
             return False
-        if b"IO      SYS" not in sector:
+        if b"IO      SYS" not in sector and b"IBMBIO  COM" not in sector:
             return False
         if b"This is not a bootable disk" in sector:
+            return False
+        return True
+
+    def _looks_like_legacy_fat12_16_bpb(self, sector: bytes) -> bool:
+        bytes_per_sector = struct.unpack("<H", sector[11:13])[0]
+        sectors_per_cluster = sector[13]
+        reserved_sectors = struct.unpack("<H", sector[14:16])[0]
+        fats = sector[16]
+        root_entries = struct.unpack("<H", sector[17:19])[0]
+        media_descriptor = sector[21]
+        sectors_per_fat = struct.unpack("<H", sector[22:24])[0]
+        sectors_per_track = struct.unpack("<H", sector[24:26])[0]
+        heads = struct.unpack("<H", sector[26:28])[0]
+
+        if bytes_per_sector not in (512, 1024, 2048, 4096):
+            return False
+        if sectors_per_cluster == 0 or sectors_per_cluster & (sectors_per_cluster - 1):
+            return False
+        if reserved_sectors == 0:
+            return False
+        if fats not in (1, 2):
+            return False
+        if root_entries == 0:
+            return False
+        if media_descriptor not in _VALID_FAT_MEDIA_DESCRIPTORS:
+            return False
+        if sectors_per_fat == 0:
+            return False
+        if sectors_per_track == 0 or heads == 0:
             return False
         return True
 
@@ -1084,9 +1304,42 @@ class BootAssetResolver:
             return output_path
         if required:
             raise ValidationError(
-                f"Missing required FreeDOS file {dos_name} in image {image_path}. "
+                f"Missing required DOS file {dos_name} in image {image_path}. "
                 f"mcopy stderr: {result.stderr.strip()}"
             )
+        return None
+
+    def _extract_file_from_images(
+        self,
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        for image_path in image_paths:
+            extracted = self._extract_file_from_image(
+                image_path,
+                output_dir,
+                dos_name,
+                required=False,
+            )
+            if extracted is not None and extracted.exists():
+                return extracted
+        if required:
+            names = ", ".join(path.name for path in image_paths)
+            raise ValidationError(f"Missing required DOS file {dos_name} in provided install images: {names}")
+        return None
+
+    def _extract_msdos_fat16_boot_sector_from_images(self, image_paths: list[Path]) -> bytes | None:
+        for image_path in image_paths:
+            try:
+                with image_path.open("rb") as handle:
+                    sector = handle.read(512)
+            except OSError:
+                continue
+            if self._looks_like_msdos_fat16_boot_sector(sector):
+                return sector
         return None
 
     def _download_and_extract_freedos_userspace(self, destination: Path) -> None:
@@ -1325,6 +1578,7 @@ class BootInstaller:
         disk_format: DiskFormat,
         assets: BootAssets,
         bios_chs: tuple[int, int] | None = None,
+        boot_mode: BootMode = BootMode.FREEDOS,
     ) -> None:
         self._write_mbr_boot_code(
             disk_device=disk_device,
@@ -1341,6 +1595,23 @@ class BootInstaller:
             system_files=assets.system_files,
             fdos_payload_dir=assets.fdos_payload_dir,
             payload_target_dir=assets.payload_target_dir,
+            boot_mode=boot_mode,
+        )
+
+    def make_floppy_bootable(
+        self,
+        *,
+        image_path: Path,
+        assets: BootAssets,
+        boot_mode: BootMode,
+    ) -> None:
+        self._write_floppy_boot_sector(image_path=image_path, template=assets.boot_sector_template)
+        self._copy_system_files(
+            partition_device=str(image_path),
+            system_files=assets.system_files,
+            fdos_payload_dir=assets.fdos_payload_dir,
+            payload_target_dir=assets.payload_target_dir,
+            boot_mode=boot_mode,
         )
 
     def _copy_system_files(
@@ -1350,9 +1621,10 @@ class BootInstaller:
         system_files: dict[str, Path],
         fdos_payload_dir: Path | None,
         payload_target_dir: str,
+        boot_mode: BootMode,
     ) -> None:
         temp_files: list[Path] = []
-        system_order = ("IO.SYS", "MSDOS.SYS", "KERNEL.SYS", "COMMAND.COM")
+        system_order = ("IO.SYS", "MSDOS.SYS", "IBMBIO.COM", "IBMDOS.COM", "KERNEL.SYS", "COMMAND.COM")
         written: set[str] = set()
         try:
             for name in system_order:
@@ -1363,6 +1635,7 @@ class BootInstaller:
                     destination_name=name,
                     source_path=source,
                     temp_files=temp_files,
+                    boot_mode=boot_mode,
                 )
                 self._mcopy_file(
                     partition_device=partition_device,
@@ -1379,6 +1652,7 @@ class BootInstaller:
                     destination_name=destination_name,
                     source_path=source_path,
                     temp_files=temp_files,
+                    boot_mode=boot_mode,
                 )
                 self._mcopy_file(
                     partition_device=partition_device,
@@ -1418,14 +1692,19 @@ class BootInstaller:
         destination_name: str,
         source_path: Path,
         temp_files: list[Path],
+        boot_mode: BootMode = BootMode.FREEDOS,
     ) -> Path:
         destination_upper = destination_name.upper()
-        normalizers = {
-            "CONFIG.SYS": normalize_freedos_config_sys,
-            "FDCONFIG.SYS": normalize_freedos_config_sys,
-            "AUTOEXEC.BAT": normalize_freedos_autoexec_bat,
-            "FDAUTO.BAT": normalize_freedos_autoexec_bat,
-        }
+        normalizers = (
+            {
+                "CONFIG.SYS": normalize_freedos_config_sys,
+                "FDCONFIG.SYS": normalize_freedos_config_sys,
+                "AUTOEXEC.BAT": normalize_freedos_autoexec_bat,
+                "FDAUTO.BAT": normalize_freedos_autoexec_bat,
+            }
+            if boot_mode is BootMode.FREEDOS
+            else {}
+        )
         normalizer = normalizers.get(destination_upper)
         if normalizer is None:
             return source_path
@@ -1454,6 +1733,8 @@ class BootInstaller:
         mountpoint = self.mount_root / f"staging-{os.getpid()}-{uuid4().hex[:6]}"
         mountpoint.mkdir(parents=True, exist_ok=True)
         mount_options = f"uid={os.getuid()},gid={os.getgid()},umask=022,shortname=mixed"
+        if not partition_device.startswith("/dev/"):
+            mount_options = f"loop,{mount_options}"
         mounted = False
         try:
             self.runner.run(
@@ -1542,6 +1823,41 @@ class BootInstaller:
         )
         if disk_format is DiskFormat.FAT16 and bios_chs is not None:
             self._patch_fat16_bpb_geometry(partition_device=partition_device, bios_chs=bios_chs)
+
+    def _write_floppy_boot_sector(self, *, image_path: Path, template: Path) -> None:
+        data = template.read_bytes()
+        if len(data) < 512:
+            raise ValidationError(f"Boot template must be at least 512 bytes: {template}")
+        self.runner.run(
+            ["dd", f"if={template}", f"of={str(image_path)}", "bs=1", "count=3", "conv=notrunc"],
+            sudo=True,
+        )
+        self.runner.run(
+            [
+                "dd",
+                f"if={template}",
+                f"of={str(image_path)}",
+                "bs=1",
+                "skip=62",
+                "seek=62",
+                "count=448",
+                "conv=notrunc",
+            ],
+            sudo=True,
+        )
+        self.runner.run(
+            [
+                "dd",
+                f"if={template}",
+                f"of={str(image_path)}",
+                "bs=1",
+                "skip=510",
+                "seek=510",
+                "count=2",
+                "conv=notrunc",
+            ],
+            sudo=True,
+        )
 
     def _patch_fat16_bpb_geometry(self, *, partition_device: str, bios_chs: tuple[int, int]) -> None:
         sectors_per_track, heads = bios_chs

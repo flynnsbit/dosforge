@@ -8,7 +8,7 @@ import pytest
 from vhdmaker.boot import BootAssets, BootInstaller
 from vhdmaker.commands import RunResult
 from vhdmaker.errors import ValidationError
-from vhdmaker.models import DiskFormat
+from vhdmaker.models import BootMode, DiskFormat
 
 
 class FakeRunner:
@@ -281,3 +281,73 @@ def test_prepare_source_file_normalizes_fdauto_alias(tmp_path: Path) -> None:
     assert "PROMPT $P$G" in content
     assert b"\r\n" in prepared.read_bytes()
     assert len(temp_files) == 1
+
+
+def test_prepare_source_file_skips_freedos_normalization_for_msdos_modes(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    installer = BootInstaller(
+        runner,
+        mount_root=tmp_path / "mount-root",
+        mbr_boot_candidates=(tmp_path / "missing-mbr.bin",),
+    )
+    config = tmp_path / "CONFIG.SYS"
+    _touch(config, b"SHELL=A:\\COMMAND.COM /P\r\n")
+    temp_files: list[Path] = []
+
+    prepared = installer._prepare_source_file(
+        destination_name="CONFIG.SYS",
+        source_path=config,
+        temp_files=temp_files,
+        boot_mode=BootMode.IBM8088,
+    )
+
+    assert prepared == config
+    assert temp_files == []
+
+
+def test_make_floppy_bootable_writes_boot_sector_and_system_files(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    boot_template = tmp_path / "BOOTSECT.BIN"
+    _touch(boot_template, b"\0" * 512)
+    ibmbio = tmp_path / "IBMBIO.COM"
+    ibmdos = tmp_path / "IBMDOS.COM"
+    command = tmp_path / "COMMAND.COM"
+    _touch(ibmbio, b"bios")
+    _touch(ibmdos, b"dos")
+    _touch(command, b"command")
+
+    installer = BootInstaller(
+        runner,
+        mount_root=tmp_path / "mount-root",
+        mbr_boot_candidates=(tmp_path / "missing-mbr.bin",),
+    )
+    assets = BootAssets(
+        system_files={
+            "IBMBIO.COM": ibmbio,
+            "IBMDOS.COM": ibmdos,
+            "COMMAND.COM": command,
+        },
+        boot_sector_template=boot_template,
+        fdos_payload_dir=None,
+    )
+    image_path = tmp_path / "disk.img"
+    image_path.write_bytes(b"\0" * (1440 * 1024))
+
+    installer.make_floppy_bootable(
+        image_path=image_path,
+        assets=assets,
+        boot_mode=BootMode.PCDOS,
+    )
+
+    assert any(
+        command[:3] == ("dd", f"if={boot_template}", f"of={str(image_path)}") and sudo
+        for command, sudo in runner.calls
+    )
+    assert any(
+        command == ("mcopy", "-o", "-i", str(image_path), str(ibmbio), "::IBMBIO.COM") and sudo
+        for command, sudo in runner.calls
+    )
+    assert any(
+        command == ("mattrib", "-i", str(image_path), "+s", "+h", "::IBMBIO.COM") and sudo
+        for command, sudo in runner.calls
+    )

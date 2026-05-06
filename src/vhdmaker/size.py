@@ -6,7 +6,7 @@ import re
 from typing import Final
 
 from .errors import ValidationError
-from .models import DiskFormat
+from .models import DiskFormat, FloppyType, IBMDOSVersion
 
 _SIZE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^\s*(\d+)\s*([kmgt]?i?b?)?\s*$", re.IGNORECASE)
 _SIZE_FACTORS: Final[dict[str, int]] = {
@@ -30,6 +30,9 @@ FAT16_MIN_BYTES: Final[int] = 16 * 1024**2
 FAT16_MAX_BYTES: Final[int] = 2 * 1024**3
 FAT32_MIN_BYTES: Final[int] = 64 * 1024**2
 FAT32_MAX_BYTES: Final[int] = 2 * 1024**4
+IBM_DOS33_MAX_BYTES: Final[int] = 32 * 1024**2
+IBM_DOS50_MAX_BYTES: Final[int] = 504 * 1024**2
+FLOPPY_IMG_SIZES_BYTES: Final[set[int]] = {floppy_type.size_bytes for floppy_type in FloppyType}
 
 
 def parse_size(value: str) -> int:
@@ -75,3 +78,20 @@ def validate_size_for_format(size_bytes: int, disk_format: DiskFormat) -> None:
         raise ValidationError("FAT32 images should be at least 64 MiB for DOS compatibility.")
     if size_bytes > FAT32_MAX_BYTES:
         raise ValidationError("FAT32 images larger than 2 TiB are not supported.")
+
+
+def validate_size_for_ibm_dos(size_bytes: int, dos_version: IBMDOSVersion) -> None:
+    max_size = IBM_DOS33_MAX_BYTES if dos_version is IBMDOSVersion.DOS33 else IBM_DOS50_MAX_BYTES
+    if size_bytes > max_size:
+        limit_mb = 32 if dos_version is IBMDOSVersion.DOS33 else 504
+        label = "MS-DOS 3.3" if dos_version is IBMDOSVersion.DOS33 else "MS-DOS 5.0"
+        raise ValidationError(f"{label} IBM 8088/V20 profile images must not exceed {limit_mb} MiB.")
+
+
+def validate_size_for_floppy(size_bytes: int, floppy_type: FloppyType) -> None:
+    if size_bytes not in FLOPPY_IMG_SIZES_BYTES:
+        raise ValidationError("Unsupported floppy IMG size.")
+    if size_bytes != floppy_type.size_bytes:
+        raise ValidationError(
+            f"Floppy type {floppy_type.value} requires size {floppy_type.mkfs_size_kib} KiB."
+        )

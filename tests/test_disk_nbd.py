@@ -11,7 +11,7 @@ from vhdmaker.boot import BootAssetResolver, BootAssets, BootInstaller
 from vhdmaker.commands import RunResult
 from vhdmaker.disk import DiskManager
 from vhdmaker.errors import ValidationError
-from vhdmaker.models import BootMode, CreateRequest, DiskFormat
+from vhdmaker.models import BootMode, CreateRequest, DiskFormat, FloppyType, MediaType
 from vhdmaker.state import StateStore
 
 
@@ -332,3 +332,79 @@ def test_create_passes_vpc_footer_geometry_to_boot_installer(tmp_path: Path, mon
 
     assert installer.calls
     assert installer.calls[0]["bios_chs"] == (17, 12)
+
+
+def test_create_img_system_format_invokes_floppy_boot_installer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class StubResolver:
+        def __init__(self, template: Path) -> None:
+            self.template = template
+            self.calls = 0
+
+        def resolve(self, request: CreateRequest) -> BootAssets:
+            del request
+            self.calls += 1
+            return BootAssets(system_files={}, boot_sector_template=self.template, fdos_payload_dir=None)
+
+    class StubInstaller:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def make_floppy_bootable(self, **kwargs: object) -> None:
+            self.calls.append(kwargs)
+
+    boot_template = tmp_path / "BOOTSECT_FAT16.BIN"
+    boot_template.write_bytes(b"\0" * 512)
+    resolver = StubResolver(boot_template)
+    installer = StubInstaller()
+    runner = FakeRunner()
+    manager = DiskManager(
+        runner=runner,
+        state_store=StateStore(tmp_path / "state.json"),
+        boot_resolver=resolver,  # type: ignore[arg-type]
+        boot_installer=installer,  # type: ignore[arg-type]
+        mount_root=tmp_path / "mounts",
+        nbd_sys_block_root=tmp_path / "sys-class-block",
+        nbd_dev_root=tmp_path / "dev",
+        nbd_discovery_timeout=0.2,
+    )
+    monkeypatch.setattr(manager, "preflight", lambda request=None, media_type=None: None)
+
+    request = CreateRequest(
+        path=tmp_path / "dos.img",
+        size_bytes=FloppyType.F1440K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.IMG,
+        floppy_type=FloppyType.F1440K,
+        img_system_format=True,
+        boot_mode=BootMode.FREEDOS,
+    )
+    manager.create_and_prepare(request)
+
+    assert request.path.exists()
+    assert request.path.stat().st_size == FloppyType.F1440K.size_bytes
+    assert any(command[:3] == ("mkfs.fat", "-F", "12") and sudo for command, sudo in runner.calls)
+    assert resolver.calls == 1
+    assert installer.calls
+    assert installer.calls[0]["image_path"] == request.path
+
+
+def test_mount_img_uses_loop_mount_and_skips_nbd_disconnect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "sys-class-block").mkdir(parents=True)
+    (tmp_path / "dev").mkdir(parents=True)
+    runner = FakeRunner()
+    manager = _manager(tmp_path, runner)
+    monkeypatch.setattr(manager, "preflight", lambda request=None, media_type=None: None)
+
+    image = tmp_path / "disk.img"
+    image.write_bytes(b"\0" * FloppyType.F1440K.size_bytes)
+
+    record = manager.mount_vhd(image)
+    assert record.nbd_device == "img-loop"
+    assert record.partition_device == str(image.resolve())
+    assert any(
+        command[:4] == ("mount", "-t", "vfat", "-o") and "loop," in command[4] and sudo
+        for command, sudo in runner.calls
+    )
+
+    manager.unmount(record.mount_point)
+    assert not any(command[:2] == ("qemu-nbd", "--disconnect") for command, _ in runner.calls)

@@ -1,4 +1,4 @@
-"""Core VHD creation, formatting, mount and unmount workflows."""
+"""Core VHD/IMG creation, formatting, mount and unmount workflows."""
 
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ from .boot import BootAssetResolver, BootInstaller
 from .commands import CommandRunner
 from .dependencies import BOOT_COMMANDS, REQUIRED_COMMANDS, assert_dependencies, find_missing
 from .errors import ValidationError
-from .models import BootMode, CreateRequest, DiskFormat, FreeDOSSource, MountRecord
+from .models import BootMode, CreateRequest, DiskFormat, FloppyType, FreeDOSSource, MediaType, MountRecord
 from .paths import app_mount_root
-from .size import normalize_label, validate_size_for_format
+from .size import normalize_label, validate_size_for_floppy, validate_size_for_format, validate_size_for_ibm_dos
 from .state import StateStore
 
 
@@ -51,16 +51,29 @@ class DiskManager:
         self.nbd_dev_root = nbd_dev_root or Path("/dev")
         self.nbd_discovery_timeout = nbd_discovery_timeout
 
-    def preflight(self, request: CreateRequest | None = None) -> None:
-        if request is None:
-            assert_dependencies()
+    def preflight(
+        self,
+        request: CreateRequest | None = None,
+        *,
+        media_type: MediaType | None = None,
+    ) -> None:
+        if request is not None:
+            assert_dependencies(
+                media_type=request.media_type,
+                boot_mode=request.boot_mode,
+                freedos_source=request.freedos_source,
+            )
         else:
-            assert_dependencies(boot_mode=request.boot_mode, freedos_source=request.freedos_source)
+            assert_dependencies(media_type=media_type or MediaType.VHD)
         self._ensure_sudo_ready()
 
     def create_and_prepare(self, request: CreateRequest) -> None:
         self.preflight(request)
         self._validate_create_request(request)
+
+        if request.media_type is MediaType.IMG:
+            self._create_and_prepare_floppy_img(request)
+            return
 
         target_path = request.path.expanduser().resolve()
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,16 +103,40 @@ class DiskManager:
                     disk_format=request.disk_format,
                     assets=assets,
                     bios_chs=fat16_bios_chs,
+                    boot_mode=request.boot_mode,
                 )
 
         self._with_connected_nbd(target_path, configure, image_format="vpc")
 
     def mount_vhd(self, path: Path) -> MountRecord:
-        self.preflight()
-        vhd_path = path.expanduser().resolve()
-        if not vhd_path.exists():
-            raise ValidationError(f"VHD file does not exist: {vhd_path}")
+        image_path = path.expanduser().resolve()
+        if not image_path.exists():
+            raise ValidationError(f"Disk image file does not exist: {image_path}")
 
+        media_type = self._media_type_for_path(image_path)
+        self.preflight(media_type=media_type)
+        if media_type is MediaType.IMG:
+            return self._mount_floppy_img(image_path)
+        return self._mount_vhd(image_path)
+
+    def unmount(self, mount_point: Path) -> MountRecord:
+        record = self.state_store.find_mount(mount_point.expanduser().resolve())
+        if record is None:
+            raise ValidationError(f"Mount point is not tracked by vhdmaker: {mount_point}")
+
+        self.preflight(media_type=MediaType.VHD if self._is_nbd_record(record) else MediaType.IMG)
+        self.runner.run(["umount", str(record.mount_point)], sudo=True)
+        if self._is_nbd_record(record):
+            self._disconnect_nbd(record.nbd_device, check=True)
+        self.state_store.remove_mount(record.mount_point)
+        if record.mount_point.exists():
+            record.mount_point.rmdir()
+        return record
+
+    def list_mounts(self) -> list[MountRecord]:
+        return self.state_store.list_mounts()
+
+    def _mount_vhd(self, vhd_path: Path) -> MountRecord:
         nbd_device = self._connect_nbd(vhd_path)
         mountpoint = self._next_mountpoint(vhd_path)
         mountpoint.mkdir(parents=True, exist_ok=True)
@@ -130,21 +167,34 @@ class DiskManager:
             mountpoint.rmdir()
             raise
 
-    def unmount(self, mount_point: Path) -> MountRecord:
-        self.preflight()
-        record = self.state_store.find_mount(mount_point.expanduser().resolve())
-        if record is None:
-            raise ValidationError(f"Mount point is not tracked by vhdmaker: {mount_point}")
-
-        self.runner.run(["umount", str(record.mount_point)], sudo=True)
-        self._disconnect_nbd(record.nbd_device, check=True)
-        self.state_store.remove_mount(record.mount_point)
-        if record.mount_point.exists():
-            record.mount_point.rmdir()
-        return record
-
-    def list_mounts(self) -> list[MountRecord]:
-        return self.state_store.list_mounts()
+    def _mount_floppy_img(self, image_path: Path) -> MountRecord:
+        mountpoint = self._next_mountpoint(image_path)
+        mountpoint.mkdir(parents=True, exist_ok=True)
+        mount_options = "loop,uid={uid},gid={gid},umask=022,shortname=mixed".format(
+            uid=os.getuid(),
+            gid=os.getgid(),
+        )
+        mounted = False
+        try:
+            self.runner.run(
+                ["mount", "-t", "vfat", "-o", mount_options, str(image_path), str(mountpoint)],
+                sudo=True,
+            )
+            mounted = True
+            record = MountRecord.create(
+                vhd_path=image_path,
+                nbd_device="img-loop",
+                partition_device=str(image_path),
+                mount_point=mountpoint,
+            )
+            self.state_store.add_mount(record)
+            return record
+        except Exception:
+            if mounted:
+                self.runner.run(["umount", str(mountpoint)], sudo=True, check=False)
+            if mountpoint.exists():
+                mountpoint.rmdir()
+            raise
 
     def privilege_diagnostics(self) -> list[PrivilegeCheck]:
         checks: list[PrivilegeCheck] = []
@@ -289,8 +339,24 @@ class DiskManager:
         )
 
     def _validate_create_request(self, request: CreateRequest) -> None:
-        validate_size_for_format(request.size_bytes, request.disk_format)
         normalize_label(request.label)
+        if request.media_type is MediaType.IMG:
+            validate_size_for_floppy(request.size_bytes, request.floppy_type)
+            if request.path.suffix.lower() not in {".img", ".ima"}:
+                raise ValidationError("Floppy images must use .img or .ima extension.")
+            if request.img_system_format and request.boot_mode is BootMode.NONE:
+                raise ValidationError("System-formatted IMG requires selecting a DOS boot mode.")
+            if not request.img_system_format and request.boot_mode is not BootMode.NONE:
+                raise ValidationError("Select System format to install DOS boot files into IMG.")
+            return
+
+        validate_size_for_format(request.size_bytes, request.disk_format)
+        if request.boot_mode is BootMode.IBM8088:
+            if request.disk_format is not DiskFormat.FAT16:
+                raise ValidationError("IBM PC 8088/V20 mode supports FAT16 only.")
+            validate_size_for_ibm_dos(request.size_bytes, request.ibm_dos_version)
+        if request.boot_mode in {BootMode.PCDOS, BootMode.COMPAQ331} and request.disk_format is not DiskFormat.FAT16:
+            raise ValidationError("Legacy DOS boot profiles support FAT16 only.")
         if (
             request.boot_mode is BootMode.FREEDOS
             and request.freedos_source is FreeDOSSource.AUTO
@@ -305,6 +371,37 @@ class DiskManager:
         self.runner.run(
             ["qemu-img", "create", "-f", "vpc", "-o", "subformat=fixed", str(path), str(size_bytes)]
         )
+
+    def _create_and_prepare_floppy_img(self, request: CreateRequest) -> None:
+        target_path = request.path.expanduser().resolve()
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if target_path.exists():
+            if request.overwrite:
+                target_path.unlink()
+            else:
+                raise ValidationError(f"IMG already exists: {target_path}")
+
+        self._create_fixed_img(target_path, request.floppy_type)
+        request.path = target_path
+        self._format_floppy_img(target_path, label=normalize_label(request.label))
+        if request.img_system_format and request.boot_mode is not BootMode.NONE:
+            assets = self.boot_resolver.resolve(request)
+            self.boot_installer.make_floppy_bootable(
+                image_path=target_path,
+                assets=assets,
+                boot_mode=request.boot_mode,
+            )
+
+    def _create_fixed_img(self, path: Path, floppy_type: FloppyType) -> None:
+        with path.open("wb") as handle:
+            handle.truncate(floppy_type.size_bytes)
+
+    def _format_floppy_img(self, image_path: Path, *, label: str | None) -> None:
+        command = ["mkfs.fat", "-F", "12"]
+        if label:
+            command += ["-n", label]
+        command.append(str(image_path))
+        self.runner.run(command, sudo=True)
 
     def _partition_and_format(self, *, nbd_device: str, disk_format: DiskFormat, label: str | None) -> str:
         self.runner.run(["parted", "--script", nbd_device, "mklabel", "msdos"], sudo=True)
@@ -428,6 +525,12 @@ class DiskManager:
     def _next_mountpoint(self, vhd_path: Path) -> Path:
         safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "-", vhd_path.stem).strip("-") or "vhd"
         return self.mount_root / f"{safe_stem}-{uuid4().hex[:8]}"
+
+    def _media_type_for_path(self, path: Path) -> MediaType:
+        return MediaType.IMG if path.suffix.lower() in {".img", ".ima"} else MediaType.VHD
+
+    def _is_nbd_record(self, record: MountRecord) -> bool:
+        return record.nbd_device.startswith("/dev/nbd")
 
     def _list_nbd_candidates(self) -> list[Path]:
         return sorted(

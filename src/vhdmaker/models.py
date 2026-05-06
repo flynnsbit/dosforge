@@ -29,6 +29,14 @@ class BootMode(str, Enum):
     NONE = "none"
     FREEDOS = "freedos"
     MSDOS71 = "msdos71"
+    IBM8088 = "ibm8088"
+    PCDOS = "pcdos"
+    COMPAQ331 = "compaq331"
+
+
+class MediaType(str, Enum):
+    VHD = "vhd"
+    IMG = "img"
 
 
 class FreeDOSSource(str, Enum):
@@ -41,11 +49,45 @@ class MSDOSInstallProfile(str, Enum):
     FULL = "full"
 
 
+class IBMDOSVersion(str, Enum):
+    DOS33 = "dos33"
+    DOS50 = "dos50"
+
+
+class FloppyType(str, Enum):
+    F160K = "160k"
+    F180K = "180k"
+    F320K = "320k"
+    F360K = "360k"
+    F720K = "720k"
+    F1200K = "1200k"
+    F1440K = "1440k"
+
+    @property
+    def size_bytes(self) -> int:
+        return {
+            FloppyType.F160K: 160 * 1024,
+            FloppyType.F180K: 180 * 1024,
+            FloppyType.F320K: 320 * 1024,
+            FloppyType.F360K: 360 * 1024,
+            FloppyType.F720K: 720 * 1024,
+            FloppyType.F1200K: 1200 * 1024,
+            FloppyType.F1440K: 1440 * 1024,
+        }[self]
+
+    @property
+    def mkfs_size_kib(self) -> int:
+        return self.size_bytes // 1024
+
+
 @dataclass(slots=True)
 class CreateRequest:
     path: Path
     size_bytes: int
     disk_format: DiskFormat
+    media_type: MediaType = MediaType.VHD
+    floppy_type: FloppyType = FloppyType.F1440K
+    img_system_format: bool = False
     label: str | None = None
     overwrite: bool = False
     boot_mode: BootMode = BootMode.NONE
@@ -53,6 +95,7 @@ class CreateRequest:
     boot_assets_path: Path | None = None
     freedos_download_url: str | None = None
     msdos_install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL
+    ibm_dos_version: IBMDOSVersion = IBMDOSVersion.DOS33
 
 
 @dataclass(slots=True)
