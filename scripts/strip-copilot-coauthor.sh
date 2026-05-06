@@ -97,8 +97,11 @@ if [[ $pre_push_mode -eq 1 ]]; then
 
     if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
       commit_range="${local_sha}^!"
-    else
+    elif git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
       commit_range="$remote_sha..$local_sha"
+    else
+      # Remote tip might be newer than local refs if user has not fetched yet.
+      commit_range="${local_sha}^!"
     fi
 
     while read -r commit_sha; do
