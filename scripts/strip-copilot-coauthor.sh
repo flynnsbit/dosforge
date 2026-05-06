@@ -96,7 +96,7 @@ if [[ $pre_push_mode -eq 1 ]]; then
     [[ "$local_sha" != "0000000000000000000000000000000000000000" ]] || continue
 
     if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
-      commit_range="$local_sha"
+      commit_range="${local_sha}^!"
     else
       commit_range="$remote_sha..$local_sha"
     fi
@@ -133,7 +133,11 @@ if [[ -z "$range" ]]; then
 fi
 
 head_sha="$(git rev-parse HEAD)"
-target_commits="$(git rev-list --reverse "$range")"
+if [[ "$range" == *".."* || "$range" == *"..."* ]]; then
+  target_commits="$(git rev-list --reverse "$range")"
+else
+  target_commits="$(git rev-list --reverse "${range}^!")"
+fi
 if [[ -z "$target_commits" ]]; then
   echo "No commits matched range: $range"
   exit 0
