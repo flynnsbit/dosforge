@@ -64,6 +64,7 @@ def test_validate_size_for_ibm_dos_limits() -> None:
 
 def test_validate_size_for_floppy_type() -> None:
     validate_size_for_floppy(FloppyType.F1440K.size_bytes, FloppyType.F1440K)
+    validate_size_for_floppy(FloppyType.F2880K.size_bytes, FloppyType.F2880K)
     with pytest.raises(ValidationError, match="requires size"):
         validate_size_for_floppy(FloppyType.F1200K.size_bytes, FloppyType.F1440K)
     with pytest.raises(ValidationError, match="Unsupported floppy IMG size"):

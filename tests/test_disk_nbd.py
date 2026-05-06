@@ -449,6 +449,174 @@ def test_create_img_system_format_aligns_ibm_dos33_with_install_image_size(
     assert installer.calls[0]["image_path"] == request.path
 
 
+def test_create_img_formats_with_explicit_floppy_geometry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = FakeRunner()
+    manager = _manager(tmp_path, runner)
+    monkeypatch.setattr(manager, "preflight", lambda request=None, media_type=None: None)
+
+    request = CreateRequest(
+        path=tmp_path / "geo720.img",
+        size_bytes=FloppyType.F720K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.IMG,
+        floppy_type=FloppyType.F720K,
+        img_system_format=False,
+        boot_mode=BootMode.NONE,
+    )
+    manager.create_and_prepare(request)
+
+    mkfs_command = next(command for command, _ in runner.calls if command[:3] == ("mkfs.fat", "-F", "12"))
+    assert "-S" in mkfs_command and "512" in mkfs_command
+    assert "-g" in mkfs_command and "2/9" in mkfs_command
+    assert "-M" in mkfs_command and "0xf9" in mkfs_command
+    assert "-r" in mkfs_command and "112" in mkfs_command
+    assert "-s" in mkfs_command and "2" in mkfs_command
+    assert request.path.stat().st_size == FloppyType.F720K.size_bytes
+
+
+def test_create_img_system_format_aligns_msdos71_with_install_image_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class StubResolver:
+        def __init__(self, template: Path) -> None:
+            self.template = template
+
+        def resolve(self, request: CreateRequest) -> BootAssets:
+            del request
+            return BootAssets(
+                system_files={},
+                boot_sector_template=self.template,
+                fdos_payload_dir=None,
+                source_image_size_bytes=FloppyType.F1200K.size_bytes,
+            )
+
+    class StubInstaller:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def make_floppy_bootable(self, **kwargs: object) -> None:
+            self.calls.append(kwargs)
+
+    boot_template = tmp_path / "BOOTSECT_FAT16.BIN"
+    boot_template.write_bytes(b"\0" * 512)
+    resolver = StubResolver(boot_template)
+    installer = StubInstaller()
+    runner = FakeRunner()
+    manager = DiskManager(
+        runner=runner,
+        state_store=StateStore(tmp_path / "state.json"),
+        boot_resolver=resolver,  # type: ignore[arg-type]
+        boot_installer=installer,  # type: ignore[arg-type]
+        mount_root=tmp_path / "mounts",
+        nbd_sys_block_root=tmp_path / "sys-class-block",
+        nbd_dev_root=tmp_path / "dev",
+        nbd_discovery_timeout=0.2,
+    )
+    monkeypatch.setattr(manager, "preflight", lambda request=None, media_type=None: None)
+
+    request = CreateRequest(
+        path=tmp_path / "dos71.img",
+        size_bytes=FloppyType.F1440K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.IMG,
+        floppy_type=FloppyType.F1440K,
+        img_system_format=True,
+        boot_mode=BootMode.MSDOS71,
+    )
+    manager.create_and_prepare(request)
+
+    assert request.path.stat().st_size == FloppyType.F1200K.size_bytes
+    assert request.floppy_type is FloppyType.F1200K
+    assert request.size_bytes == FloppyType.F1200K.size_bytes
+    mkfs_command = next(command for command, _ in runner.calls if command[:3] == ("mkfs.fat", "-F", "12"))
+    assert "-g" in mkfs_command and "2/15" in mkfs_command
+    assert installer.calls
+    assert installer.calls[0]["floppy_type"] is FloppyType.F1200K
+    assert installer.calls[0]["verify_legacy_layout"] is True
+
+
+def test_create_img_system_format_aligns_pcdos7_with_xdf_install_image_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class StubResolver:
+        def __init__(self, template: Path) -> None:
+            self.template = template
+
+        def resolve(self, request: CreateRequest) -> BootAssets:
+            del request
+            return BootAssets(
+                system_files={},
+                boot_sector_template=self.template,
+                fdos_payload_dir=None,
+                source_image_size_bytes=FloppyType.F1840K.size_bytes,
+            )
+
+    class StubInstaller:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def make_floppy_bootable(self, **kwargs: object) -> None:
+            self.calls.append(kwargs)
+
+    boot_template = tmp_path / "BOOTSECT_FAT16.BIN"
+    boot_template.write_bytes(b"\0" * 512)
+    resolver = StubResolver(boot_template)
+    installer = StubInstaller()
+    runner = FakeRunner()
+    manager = DiskManager(
+        runner=runner,
+        state_store=StateStore(tmp_path / "state.json"),
+        boot_resolver=resolver,  # type: ignore[arg-type]
+        boot_installer=installer,  # type: ignore[arg-type]
+        mount_root=tmp_path / "mounts",
+        nbd_sys_block_root=tmp_path / "sys-class-block",
+        nbd_dev_root=tmp_path / "dev",
+        nbd_discovery_timeout=0.2,
+    )
+    monkeypatch.setattr(manager, "preflight", lambda request=None, media_type=None: None)
+
+    request = CreateRequest(
+        path=tmp_path / "pcdos7.img",
+        size_bytes=FloppyType.F1440K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.IMG,
+        floppy_type=FloppyType.F1440K,
+        img_system_format=True,
+        boot_mode=BootMode.PCDOS7,
+    )
+    manager.create_and_prepare(request)
+
+    assert request.path.stat().st_size == FloppyType.F1840K.size_bytes
+    assert request.floppy_type is FloppyType.F1840K
+    assert request.size_bytes == FloppyType.F1840K.size_bytes
+    mkfs_command = next(command for command, _ in runner.calls if command[:3] == ("mkfs.fat", "-F", "12"))
+    assert "-g" in mkfs_command and "2/23" in mkfs_command
+    assert installer.calls
+    assert installer.calls[0]["floppy_type"] is FloppyType.F1840K
+    assert installer.calls[0]["verify_legacy_layout"] is True
+
+
+def test_create_img_supports_2880k_geometry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = FakeRunner()
+    manager = _manager(tmp_path, runner)
+    monkeypatch.setattr(manager, "preflight", lambda request=None, media_type=None: None)
+
+    request = CreateRequest(
+        path=tmp_path / "ed2880.img",
+        size_bytes=FloppyType.F2880K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.IMG,
+        floppy_type=FloppyType.F2880K,
+    )
+    manager.create_and_prepare(request)
+
+    assert request.path.stat().st_size == FloppyType.F2880K.size_bytes
+    mkfs_command = next(command for command, _ in runner.calls if command[:3] == ("mkfs.fat", "-F", "12"))
+    assert "-g" in mkfs_command and "2/36" in mkfs_command
+    assert "-M" in mkfs_command and "0xf0" in mkfs_command
+    assert "-r" in mkfs_command and "240" in mkfs_command
+
+
 def test_mount_img_uses_loop_mount_and_skips_nbd_disconnect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "sys-class-block").mkdir(parents=True)
     (tmp_path / "dev").mkdir(parents=True)

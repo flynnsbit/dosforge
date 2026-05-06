@@ -121,6 +121,11 @@ def test_progressive_disclosure_for_boot_modes() -> None:
             assert app.query_one("#boot-assets", Input).display is True
             assert app.query_one("#dos-profile", Select).value == f"{BootMode.IBM8088.value}:{IBMDOSVersion.DOS33.value}"
 
+            app.query_one("#boot-mode", Select).value = BootMode.PCDOS7.value
+            app._sync_create_form_visibility()
+            assert app.query_one("#dos-profile", Select).display is False
+            assert app.query_one("#boot-assets", Input).display is True
+
             app.query_one("#media-type", Select).value = MediaType.IMG.value
             app._sync_create_form_visibility()
             assert app.query_one("#create-size", Input).display is False
@@ -208,6 +213,46 @@ def test_request_from_form_img_without_system_mode_forces_non_bootable() -> None
             request = app._request_from_form()
             assert request.boot_mode is BootMode.NONE
             assert request.img_system_format is False
+
+    asyncio.run(run())
+
+
+def test_request_from_form_img_supports_2880k_floppy() -> None:
+    async def run() -> None:
+        app = VhdMakerApp()
+        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
+
+        async with app.run_test():
+            app.query_one("#media-type", Select).value = MediaType.IMG.value
+            app.query_one("#create-path", Input).value = "/tmp/ed.img"
+            app.query_one("#floppy-type", Select).value = FloppyType.F2880K.value
+            app.query_one("#img-system-format", Checkbox).value = False
+
+            request = app._request_from_form()
+            assert request.floppy_type is FloppyType.F2880K
+            assert request.size_bytes == FloppyType.F2880K.size_bytes
+            assert request.img_system_format is False
+
+    asyncio.run(run())
+
+
+def test_request_from_form_img_supports_1840k_pcdos7_floppy() -> None:
+    async def run() -> None:
+        app = VhdMakerApp()
+        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
+
+        async with app.run_test():
+            app.query_one("#media-type", Select).value = MediaType.IMG.value
+            app.query_one("#create-path", Input).value = "/tmp/xdf.img"
+            app.query_one("#floppy-type", Select).value = FloppyType.F1840K.value
+            app.query_one("#img-system-format", Checkbox).value = True
+            app.query_one("#boot-mode", Select).value = BootMode.PCDOS7.value
+
+            request = app._request_from_form()
+            assert request.floppy_type is FloppyType.F1840K
+            assert request.size_bytes == FloppyType.F1840K.size_bytes
+            assert request.img_system_format is True
+            assert request.boot_mode is BootMode.PCDOS7
 
     asyncio.run(run())
 

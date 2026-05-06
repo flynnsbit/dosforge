@@ -17,7 +17,8 @@ with optional boot/system file staging for FreeDOS and legacy MS-DOS families.
   - FreeDOS
   - MS-DOS 7.1
   - IBM DOS 3.3 / 5.0
-  - PC-DOS
+  - MS-DOS 3.3 / 3.31 / 5.0 / 6.22
+  - PC-DOS / PC-DOS 7.0 (XDF)
   - Compaq DOS 3.31
 - Automatic DOS boot-template extraction from install images when possible
 - Mount + open in file manager from TUI and CLI (`.vhd`, `.img`, `.ima`)
@@ -26,10 +27,23 @@ with optional boot/system file staging for FreeDOS and legacy MS-DOS families.
 
 | Media | Format | Size model | Boot support |
 |---|---|---|---|
-| VHD | FAT16 / FAT32 | Fixed bytes (for example `512M`) | FreeDOS, MS-DOS 7.1, IBM DOS, PC-DOS, Compaq DOS |
-| IMG/IMA | FAT12 | Fixed floppy presets | FreeDOS, MS-DOS 7.1, IBM DOS, PC-DOS, Compaq DOS (system-format toggle) |
+| VHD | FAT16 / FAT32 | Fixed bytes (for example `512M`) | FreeDOS, MS-DOS 7.1, IBM DOS, MS-DOS 3.x/5.0/6.22, PC-DOS, Compaq DOS |
+| IMG/IMA | FAT12 | Fixed floppy presets | FreeDOS, MS-DOS 7.1, IBM DOS, MS-DOS 3.x/5.0/6.22, PC-DOS/PC-DOS 7.0, Compaq DOS (system-format toggle) |
 
-Floppy presets: `160K`, `180K`, `320K`, `360K`, `720K`, `1.2M`, `1.44M`.
+Floppy presets: `160K`, `180K`, `360K`, `720K`, `1.84M (XDF)`, `1.2M`, `1.44M`, `2.88M`.
+
+Floppy IMG formatting uses explicit DOS geometry/BPB settings per preset:
+
+| Preset | Tracks | Heads | Sectors/track | Total sectors | Media byte |
+|---|---:|---:|---:|---:|---:|
+| 160K | 40 | 1 | 8 | 320 | `0xFE` |
+| 180K | 40 | 1 | 9 | 360 | `0xFC` |
+| 360K | 40 | 2 | 9 | 720 | `0xFD` |
+| 720K | 80 | 2 | 9 | 1440 | `0xF9` |
+| 1.84M (XDF) | 80 | 2 | 23 | 3680 | `0xF0` |
+| 1.2M | 80 | 2 | 15 | 2400 | `0xF9` |
+| 1.44M | 80 | 2 | 18 | 2880 | `0xF0` |
+| 2.88M | 80 | 2 | 36 | 5760 | `0xF0` |
 
 ## Requirements
 
@@ -109,6 +123,9 @@ vhdmaker create \
 # Create non-bootable 1.44M floppy IMG
 vhdmaker create --path ~/floppy/tools.img --media-type img --floppy-type 1440k
 
+# Create non-bootable 2.88M floppy IMG
+vhdmaker create --path ~/floppy/tools-ed.img --media-type img --floppy-type 2880k
+
 # Create bootable 720K PC-DOS floppy IMG
 vhdmaker create \
   --path ~/floppy/pcdos-boot.img \
@@ -117,6 +134,15 @@ vhdmaker create \
   --img-system-format \
   --boot-mode pcdos \
   --boot-assets-path ./pcdos
+
+# Create bootable 1.84M XDF-style PC-DOS 7.0 floppy IMG
+vhdmaker create \
+  --path ~/floppy/pcdos7-boot.img \
+  --media-type img \
+  --floppy-type 1840k \
+  --img-system-format \
+  --boot-mode pcdos7 \
+  --boot-assets-path ./pcdos7
 
 # Mount + open
 vhdmaker mount --path ~/vhd/demo.vhd --open
@@ -138,7 +164,7 @@ vhdmaker unmount --mount-point ~/.local/state/vhdmaker/mounts/demo-xxxxxxxx
 Either:
 
 1. direct files (`IO.SYS`, `MSDOS.SYS`, `COMMAND.COM`, `HIMEM.SYS`, `IFSHLP.SYS`, boot template), or
-2. install disk images (`*.img` / `*.ima`) containing `DOS71_1S.PAK` (+ optional `DOS71_2S.PAK` for fuller payload)
+2. install disk images (`*.img` / `*.ima` / `*.dsk` / `*.xdf`) containing `DOS71_1S.PAK` (+ optional `DOS71_2S.PAK` for fuller payload)
 
 Supports `minimal` and `full` install profiles.
 
@@ -150,25 +176,44 @@ Supports `minimal` and `full` install profiles.
 - Assets can be direct files or floppy images
 - DOS 3.3 IMG system-format auto-aligns to install-media geometry and stages only core system files
 
-### PC-DOS / Compaq DOS 3.31
+### MS-DOS 3.3 / 3.31 / 5.0 / 6.22
 
 Resolver accepts either:
 
 - `IO.SYS` + `MSDOS.SYS` + `COMMAND.COM`, or
 - `IBMBIO.COM` + `IBMDOS.COM` + `COMMAND.COM`
 
-plus `BOOTSECT_FAT16.BIN` (or `BOOTSECT.BIN`), or install images (`*.img` / `*.ima`).
+plus `BOOTSECT_FAT16.BIN` (or `BOOTSECT.BIN`), or install images (`*.img` / `*.ima` / `*.dsk` / `*.xdf`).
+
+Subfolder auto-detect:
+
+- `msdos33/`
+- `msdos331/`
+- `msdos5/`
+- `msdos622/`
+
+### PC-DOS / PC-DOS 7.0 / Compaq DOS 3.31
+
+Resolver accepts either:
+
+- `IO.SYS` + `MSDOS.SYS` + `COMMAND.COM`, or
+- `IBMBIO.COM` + `IBMDOS.COM` + `COMMAND.COM`
+
+plus `BOOTSECT_FAT16.BIN` (or `BOOTSECT.BIN`), or install images (`*.img` / `*.ima` / `*.dsk` / `*.xdf`).
+
+For PC-DOS 7.0 install sets, SaveDskF-wrapped `.DSK` sources are unpacked to raw floppy payload automatically, and `.XDF` media is used to align IMG creation to 1.84M geometry.
 
 Subfolder auto-detect:
 
 - `pcdos/`
+- `pcdos7/`
 - `compaq331/`
 
 ## Compatibility guardrails
 
 - FAT16 VHD: **16 MiB .. 2 GiB**
 - FAT32 VHD: **64 MiB minimum** (up to 2 TiB)
-- IMG mode uses fixed floppy capacities and FAT12 geometry
+- IMG mode uses fixed floppy capacities and FAT12 geometry with explicit BPB/media profile checks
 - Legacy DOS profiles enforce FAT16-compatible boot workflows
 
 ## State paths
@@ -188,6 +233,12 @@ Run tests:
 
 ```bash
 pytest -q
+```
+
+Run native Linux floppy integration tests (real loop-mount + fsck checks):
+
+```bash
+VHDMAKER_RUN_NATIVE_IMG_TESTS=1 pytest -q -m native_linux
 ```
 
 ### Optional commit/push trailer cleanup hooks

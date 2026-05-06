@@ -5,7 +5,7 @@ import pytest
 import vhdmaker.cli as cli
 from vhdmaker.commands import RunResult
 from vhdmaker.errors import ValidationError
-from vhdmaker.models import FloppyType, IBMDOSVersion, MediaType
+from vhdmaker.models import BootMode, FloppyType, IBMDOSVersion, MediaType
 
 
 def test_main_tui_primes_sudo_before_running_app(monkeypatch) -> None:
@@ -127,6 +127,71 @@ def test_create_img_parses_floppy_options(monkeypatch, capsys) -> None:
     assert request.floppy_type is FloppyType.F720K
     assert request.img_system_format is True
     assert request.size_bytes == FloppyType.F720K.size_bytes
+    output = capsys.readouterr().out
+    assert "Created and prepared" in output
+
+
+def test_create_img_parses_2880k_floppy_option(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeManager:
+        def create_and_prepare(self, request) -> None:
+            captured["request"] = request
+
+    monkeypatch.setattr(cli, "DiskManager", lambda: FakeManager())
+
+    result = cli.main(
+        [
+            "create",
+            "--path",
+            "/tmp/ed.img",
+            "--media-type",
+            "img",
+            "--floppy-type",
+            "2880k",
+        ]
+    )
+    assert result == 0
+    request = captured["request"]
+    assert request.media_type is MediaType.IMG
+    assert request.floppy_type is FloppyType.F2880K
+    assert request.size_bytes == FloppyType.F2880K.size_bytes
+    output = capsys.readouterr().out
+    assert "Created and prepared" in output
+
+
+def test_create_img_parses_pcdos7_xdf_floppy_option(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeManager:
+        def create_and_prepare(self, request) -> None:
+            captured["request"] = request
+
+    monkeypatch.setattr(cli, "DiskManager", lambda: FakeManager())
+
+    result = cli.main(
+        [
+            "create",
+            "--path",
+            "/tmp/pcdos7.img",
+            "--media-type",
+            "img",
+            "--floppy-type",
+            "1840k",
+            "--img-system-format",
+            "--boot-mode",
+            "pcdos7",
+            "--boot-assets-path",
+            "/tmp/pcdos7",
+        ]
+    )
+    assert result == 0
+    request = captured["request"]
+    assert request.media_type is MediaType.IMG
+    assert request.floppy_type is FloppyType.F1840K
+    assert request.img_system_format is True
+    assert request.boot_mode is BootMode.PCDOS7
+    assert request.size_bytes == FloppyType.F1840K.size_bytes
     output = capsys.readouterr().out
     assert "Created and prepared" in output
 

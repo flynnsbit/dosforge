@@ -633,6 +633,87 @@ def test_resolve_pcdos_from_install_images_uses_ibmbio_files(
     assert assets.system_files["IBMDOS.COM"].read_bytes() == b"dos"
 
 
+def test_mtools_image_path_extracts_savedskf_wrapper(tmp_path: Path) -> None:
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    raw_payload = _msdos_fat16_boot_sector_bytes() + (b"\0" * (FloppyType.F1440K.size_bytes - 512))
+    offset = 0x29
+    header = bytearray(offset)
+    header[:2] = b"\xAA\x59"
+    header[0x22:0x24] = struct.pack("<H", len(raw_payload) // 512)
+    header[0x26:0x28] = struct.pack("<H", offset)
+
+    savedskf = tmp_path / "install.dsk"
+    savedskf.write_bytes(bytes(header) + raw_payload)
+
+    normalized = resolver._mtools_image_path(savedskf)
+    assert normalized != savedskf
+    assert normalized.exists()
+    assert normalized.stat().st_size == len(raw_payload)
+    assert normalized.read_bytes()[:512] == raw_payload[:512]
+
+
+def test_select_source_image_size_prefers_xdf(tmp_path: Path) -> None:
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    img = tmp_path / "disk01.img"
+    xdf = tmp_path / "disk02.xdf"
+    img.write_bytes(b"\0" * FloppyType.F1440K.size_bytes)
+    xdf.write_bytes(b"\0" * FloppyType.F1840K.size_bytes)
+
+    selected_size = resolver._select_source_image_size_bytes([img, xdf])
+    assert selected_size == FloppyType.F1840K.size_bytes
+
+
+def test_resolve_pcdos7_from_install_images_prefers_xdf_source_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets_dir = tmp_path / "pcdos7"
+    assets_dir.mkdir(parents=True)
+    disk1 = assets_dir / "disk01.img"
+    disk2 = assets_dir / "disk02.xdf"
+    disk1.write_bytes(_msdos_fat16_boot_sector_bytes() + (b"\0" * (FloppyType.F1440K.size_bytes - 512)))
+    disk2.write_bytes(_msdos33_boot_sector_bytes() + (b"\0" * (FloppyType.F1840K.size_bytes - 512)))
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    request = CreateRequest(
+        path=tmp_path / "disk.img",
+        size_bytes=FloppyType.F1440K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.PCDOS7,
+        boot_assets_path=assets_dir,
+    )
+    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1, disk2])
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [disk1, disk2]
+        payload_map = {
+            "IBMBIO.COM": b"bios",
+            "IBMDOS.COM": b"dos",
+            "COMMAND.COM": b"command",
+        }
+        payload = payload_map.get(dos_name.upper())
+        if payload is None:
+            if required:
+                raise ValidationError(f"missing {dos_name}")
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+    assets = resolver.resolve(request)
+
+    assert assets.source_image_size_bytes == FloppyType.F1840K.size_bytes
+    assert assets.system_files["IBMBIO.COM"].read_bytes() == b"bios"
+    assert assets.system_files["IBMDOS.COM"].read_bytes() == b"dos"
+    assert len(assets.boot_sector_template.read_bytes()) == 512
+
+
 def test_resolve_msdos71_direct_directory(tmp_path: Path) -> None:
     assets_dir = tmp_path / "msdos"
     _touch(assets_dir / "IO.SYS", b"io")
@@ -819,6 +900,7 @@ def test_resolve_msdos71_from_install_images(tmp_path: Path, monkeypatch: pytest
     assert len(template) == 512
     assert template[82:90] == b"FAT32   "
     assert b"IO      SYS" in template
+    assert assets.source_image_size_bytes == disk1.stat().st_size
 
 
 def test_resolve_msdos71_from_install_images_full_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -879,6 +961,7 @@ def test_resolve_msdos71_from_install_images_full_profile(tmp_path: Path, monkey
     assert assets.system_files["IFSHLP.SYS"].read_bytes() == b"ifshlp"
     assert "CONFIG.SYS" in assets.system_files
     assert "AUTOEXEC.BAT" in assets.system_files
+    assert assets.source_image_size_bytes == disk1.stat().st_size
 
 
 def test_resolve_msdos71_from_install_images_fat16(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -928,6 +1011,7 @@ def test_resolve_msdos71_from_install_images_fat16(tmp_path: Path, monkeypatch: 
     assert assets.system_files["COMMAND.COM"].read_bytes() == b"command"
     assert assets.system_files["HIMEM.SYS"].read_bytes() == b"himem"
     assert assets.system_files["IFSHLP.SYS"].read_bytes() == b"ifshlp"
+    assert assets.source_image_size_bytes == disk1.stat().st_size
     assert "CONFIG.SYS" in assets.system_files
     assert "AUTOEXEC.BAT" in assets.system_files
     assert assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1").splitlines()[:2] == [

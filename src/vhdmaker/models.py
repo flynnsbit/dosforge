@@ -8,6 +8,30 @@ from enum import Enum
 from pathlib import Path
 
 
+@dataclass(frozen=True, slots=True)
+class FloppySpec:
+    size_bytes: int
+    tracks: int
+    heads: int
+    sectors_per_track: int
+    media_descriptor: int
+    root_entries: int
+    sectors_per_cluster: int
+    sectors_per_fat: int
+
+    @property
+    def total_sectors(self) -> int:
+        return self.size_bytes // 512
+
+    @property
+    def mkfs_geometry(self) -> str:
+        return f"{self.heads}/{self.sectors_per_track}"
+
+    @property
+    def media_descriptor_hex(self) -> str:
+        return f"0x{self.media_descriptor:02x}"
+
+
 class DiskFormat(str, Enum):
     FAT16 = "fat16"
     FAT32 = "fat32"
@@ -30,7 +54,12 @@ class BootMode(str, Enum):
     FREEDOS = "freedos"
     MSDOS71 = "msdos71"
     IBM8088 = "ibm8088"
+    MSDOS33 = "msdos33"
+    MSDOS331 = "msdos331"
+    MSDOS5 = "msdos5"
+    MSDOS622 = "msdos622"
     PCDOS = "pcdos"
+    PCDOS7 = "pcdos7"
     COMPAQ331 = "compaq331"
 
 
@@ -57,27 +86,108 @@ class IBMDOSVersion(str, Enum):
 class FloppyType(str, Enum):
     F160K = "160k"
     F180K = "180k"
-    F320K = "320k"
     F360K = "360k"
     F720K = "720k"
+    F1840K = "1840k"
     F1200K = "1200k"
     F1440K = "1440k"
+    F2880K = "2880k"
 
     @property
     def size_bytes(self) -> int:
-        return {
-            FloppyType.F160K: 160 * 1024,
-            FloppyType.F180K: 180 * 1024,
-            FloppyType.F320K: 320 * 1024,
-            FloppyType.F360K: 360 * 1024,
-            FloppyType.F720K: 720 * 1024,
-            FloppyType.F1200K: 1200 * 1024,
-            FloppyType.F1440K: 1440 * 1024,
-        }[self]
+        return self.spec.size_bytes
 
     @property
     def mkfs_size_kib(self) -> int:
         return self.size_bytes // 1024
+
+    @property
+    def spec(self) -> FloppySpec:
+        return _FLOPPY_SPECS[self]
+
+
+_FLOPPY_SPECS: dict[FloppyType, FloppySpec] = {
+    FloppyType.F160K: FloppySpec(
+        size_bytes=160 * 1024,
+        tracks=40,
+        heads=1,
+        sectors_per_track=8,
+        media_descriptor=0xFE,
+        root_entries=64,
+        sectors_per_cluster=4,
+        sectors_per_fat=1,
+    ),
+    FloppyType.F180K: FloppySpec(
+        size_bytes=180 * 1024,
+        tracks=40,
+        heads=1,
+        sectors_per_track=9,
+        media_descriptor=0xFC,
+        root_entries=64,
+        sectors_per_cluster=4,
+        sectors_per_fat=1,
+    ),
+    FloppyType.F360K: FloppySpec(
+        size_bytes=360 * 1024,
+        tracks=40,
+        heads=2,
+        sectors_per_track=9,
+        media_descriptor=0xFD,
+        root_entries=112,
+        sectors_per_cluster=2,
+        sectors_per_fat=2,
+    ),
+    FloppyType.F720K: FloppySpec(
+        size_bytes=720 * 1024,
+        tracks=80,
+        heads=2,
+        sectors_per_track=9,
+        media_descriptor=0xF9,
+        root_entries=112,
+        sectors_per_cluster=2,
+        sectors_per_fat=3,
+    ),
+    FloppyType.F1840K: FloppySpec(
+        size_bytes=1840 * 1024,
+        tracks=80,
+        heads=2,
+        sectors_per_track=23,
+        media_descriptor=0xF0,
+        root_entries=224,
+        sectors_per_cluster=1,
+        sectors_per_fat=11,
+    ),
+    FloppyType.F1200K: FloppySpec(
+        size_bytes=1200 * 1024,
+        tracks=80,
+        heads=2,
+        sectors_per_track=15,
+        media_descriptor=0xF9,
+        root_entries=224,
+        sectors_per_cluster=1,
+        sectors_per_fat=7,
+    ),
+    FloppyType.F1440K: FloppySpec(
+        size_bytes=1440 * 1024,
+        tracks=80,
+        heads=2,
+        sectors_per_track=18,
+        media_descriptor=0xF0,
+        root_entries=224,
+        sectors_per_cluster=1,
+        sectors_per_fat=9,
+    ),
+    FloppyType.F2880K: FloppySpec(
+        size_bytes=2880 * 1024,
+        tracks=80,
+        heads=2,
+        sectors_per_track=36,
+        media_descriptor=0xF0,
+        root_entries=240,
+        sectors_per_cluster=2,
+        sectors_per_fat=9,
+    ),
+}
 
 
 @dataclass(slots=True)

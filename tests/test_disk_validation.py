@@ -172,6 +172,33 @@ def test_validate_accepts_img_system_format_with_boot_mode() -> None:
     manager._validate_create_request(request)
 
 
+def test_validate_accepts_img_system_format_with_pcdos7_xdf_mode() -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=Path("/tmp/pcdos7.img"),
+        size_bytes=FloppyType.F1840K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.IMG,
+        floppy_type=FloppyType.F1840K,
+        boot_mode=BootMode.PCDOS7,
+        img_system_format=True,
+        boot_assets_path=Path("/tmp/pcdos7-assets"),
+    )
+    manager._validate_create_request(request)
+
+
+def test_validate_accepts_2880k_img_size() -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=Path("/tmp/ed.img"),
+        size_bytes=FloppyType.F2880K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.IMG,
+        floppy_type=FloppyType.F2880K,
+    )
+    manager._validate_create_request(request)
+
+
 def test_validate_rejects_legacy_vhd_profile_with_fat32() -> None:
     manager = DiskManager()
     request = CreateRequest(

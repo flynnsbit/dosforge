@@ -32,3 +32,6 @@ where = ["src"]
 addopts = "-q"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "native_linux: integration tests that use native Linux mount/fsck tooling and require privileged loop mounts",
+]

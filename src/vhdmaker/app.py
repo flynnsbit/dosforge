@@ -38,11 +38,12 @@ _DOS_PROFILE_IBM_OPTIONS = [
 _FLOPPY_OPTIONS = [
     ("160K", FloppyType.F160K.value),
     ("180K", FloppyType.F180K.value),
-    ("320K", FloppyType.F320K.value),
     ("360K", FloppyType.F360K.value),
     ("720K", FloppyType.F720K.value),
+    ("1.84M (XDF)", FloppyType.F1840K.value),
     ("1.2M", FloppyType.F1200K.value),
     ("1.44M", FloppyType.F1440K.value),
+    ("2.88M", FloppyType.F2880K.value),
 ]
 
 
@@ -127,7 +128,12 @@ class VhdMakerApp(App[None]):
                         ("FreeDOS bootable", BootMode.FREEDOS.value),
                         ("MS-DOS 7.1 bootable", BootMode.MSDOS71.value),
                         ("IBM PC 8088/V20 (DOS 3.3 / 5.0)", BootMode.IBM8088.value),
+                        ("MS-DOS 3.3 bootable", BootMode.MSDOS33.value),
+                        ("MS-DOS 3.31 bootable", BootMode.MSDOS331.value),
+                        ("MS-DOS 5.0 bootable", BootMode.MSDOS5.value),
+                        ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
                         ("PC-DOS bootable", BootMode.PCDOS.value),
+                        ("PC-DOS 7.0 bootable (XDF media)", BootMode.PCDOS7.value),
                         ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
                     ],
                     value=BootMode.NONE.value,
@@ -263,7 +269,20 @@ class VhdMakerApp(App[None]):
 
         show_freedos = boot_controls_active and boot_mode is BootMode.FREEDOS
         show_dos_profile = boot_controls_active and boot_mode in {BootMode.MSDOS71, BootMode.IBM8088}
-        show_boot_assets = show_dos_profile or (show_freedos and freedos_source is FreeDOSSource.LOCAL)
+        legacy_boot_modes = {
+            BootMode.MSDOS33,
+            BootMode.MSDOS331,
+            BootMode.MSDOS5,
+            BootMode.MSDOS622,
+            BootMode.PCDOS,
+            BootMode.PCDOS7,
+            BootMode.COMPAQ331,
+        }
+        show_boot_assets = (
+            show_dos_profile
+            or (show_freedos and freedos_source is FreeDOSSource.LOCAL)
+            or (boot_controls_active and boot_mode in legacy_boot_modes)
+        )
         show_freedos_url = show_freedos and freedos_source is FreeDOSSource.AUTO
 
         self.query_one("#create-title", Label).update("Create fixed-size VHD" if is_vhd else "Create floppy IMG")

@@ -22,7 +22,6 @@ from .models import (
     DiskFormat,
     FloppyType,
     FreeDOSSource,
-    IBMDOSVersion,
     MediaType,
     MountRecord,
 )
@@ -364,7 +363,16 @@ class DiskManager:
             if request.disk_format is not DiskFormat.FAT16:
                 raise ValidationError("IBM PC 8088/V20 mode supports FAT16 only.")
             validate_size_for_ibm_dos(request.size_bytes, request.ibm_dos_version)
-        if request.boot_mode in {BootMode.PCDOS, BootMode.COMPAQ331} and request.disk_format is not DiskFormat.FAT16:
+        legacy_fat16_modes = {
+            BootMode.MSDOS33,
+            BootMode.MSDOS331,
+            BootMode.MSDOS5,
+            BootMode.MSDOS622,
+            BootMode.PCDOS,
+            BootMode.PCDOS7,
+            BootMode.COMPAQ331,
+        }
+        if request.boot_mode in legacy_fat16_modes and request.disk_format is not DiskFormat.FAT16:
             raise ValidationError("Legacy DOS boot profiles support FAT16 only.")
         if (
             request.boot_mode is BootMode.FREEDOS
@@ -394,34 +402,72 @@ class DiskManager:
         assets = None
         if request.img_system_format and request.boot_mode is not BootMode.NONE:
             assets = self.boot_resolver.resolve(request)
-            self._align_legacy_dos33_floppy_type(request, assets.source_image_size_bytes)
+            self._align_floppy_type_from_source_media(request, assets.source_image_size_bytes)
 
         self._create_fixed_img(target_path, request.floppy_type)
-        self._format_floppy_img(target_path, label=normalize_label(request.label))
+        self._format_floppy_img(target_path, floppy_type=request.floppy_type, label=normalize_label(request.label))
         if assets is not None:
+            verify_legacy_layout = request.boot_mode in {
+                BootMode.MSDOS71,
+                BootMode.IBM8088,
+                BootMode.MSDOS33,
+                BootMode.MSDOS331,
+                BootMode.MSDOS5,
+                BootMode.MSDOS622,
+                BootMode.PCDOS,
+                BootMode.PCDOS7,
+                BootMode.COMPAQ331,
+            }
             self.boot_installer.make_floppy_bootable(
                 image_path=target_path,
                 assets=assets,
                 boot_mode=request.boot_mode,
+                floppy_type=request.floppy_type,
+                verify_legacy_layout=verify_legacy_layout,
             )
 
     def _create_fixed_img(self, path: Path, floppy_type: FloppyType) -> None:
         with path.open("wb") as handle:
             handle.truncate(floppy_type.size_bytes)
 
-    def _format_floppy_img(self, image_path: Path, *, label: str | None) -> None:
-        command = ["mkfs.fat", "-F", "12"]
+    def _format_floppy_img(self, image_path: Path, *, floppy_type: FloppyType, label: str | None) -> None:
+        spec = floppy_type.spec
+        command = [
+            "mkfs.fat",
+            "-F",
+            "12",
+            "-S",
+            "512",
+            "-g",
+            spec.mkfs_geometry,
+            "-M",
+            spec.media_descriptor_hex,
+            "-r",
+            str(spec.root_entries),
+            "-s",
+            str(spec.sectors_per_cluster),
+        ]
         if label:
             command += ["-n", label]
         command.append(str(image_path))
         self.runner.run(command, sudo=True)
+        if isinstance(self.runner, CommandRunner):
+            self._validate_floppy_img_bpb(image_path=image_path, floppy_type=floppy_type)
 
-    def _align_legacy_dos33_floppy_type(self, request: CreateRequest, source_size_bytes: int | None) -> None:
-        if (
-            request.boot_mode is not BootMode.IBM8088
-            or request.ibm_dos_version is not IBMDOSVersion.DOS33
-            or source_size_bytes is None
-        ):
+    def _align_floppy_type_from_source_media(self, request: CreateRequest, source_size_bytes: int | None) -> None:
+        if source_size_bytes is None:
+            return
+        if request.boot_mode not in {
+            BootMode.MSDOS71,
+            BootMode.IBM8088,
+            BootMode.MSDOS33,
+            BootMode.MSDOS331,
+            BootMode.MSDOS5,
+            BootMode.MSDOS622,
+            BootMode.PCDOS,
+            BootMode.PCDOS7,
+            BootMode.COMPAQ331,
+        }:
             return
         source_floppy = self._floppy_type_for_size(source_size_bytes)
         if source_floppy is None:
@@ -434,6 +480,59 @@ class DiskManager:
             if floppy_type.size_bytes == size_bytes:
                 return floppy_type
         return None
+
+    def _validate_floppy_img_bpb(self, *, image_path: Path, floppy_type: FloppyType) -> None:
+        data = image_path.read_bytes()[:512]
+        if len(data) < 512:
+            raise ValidationError(f"Formatted IMG is too small to contain a valid boot sector: {image_path}")
+        if data[510:512] != b"\x55\xaa":
+            raise ValidationError(f"Formatted IMG is missing boot sector signature 0x55AA: {image_path}")
+
+        bytes_per_sector = struct.unpack("<H", data[11:13])[0]
+        sectors_per_cluster = data[13]
+        reserved_sectors = struct.unpack("<H", data[14:16])[0]
+        fats = data[16]
+        root_entries = struct.unpack("<H", data[17:19])[0]
+        total_sectors_16 = struct.unpack("<H", data[19:21])[0]
+        media_descriptor = data[21]
+        sectors_per_fat = struct.unpack("<H", data[22:24])[0]
+        sectors_per_track = struct.unpack("<H", data[24:26])[0]
+        heads = struct.unpack("<H", data[26:28])[0]
+        hidden_sectors = struct.unpack("<I", data[28:32])[0]
+        total_sectors_32 = struct.unpack("<I", data[32:36])[0]
+        total_sectors = total_sectors_16 or total_sectors_32
+        file_system_tag = data[54:62]
+        spec = floppy_type.spec
+
+        mismatches: list[str] = []
+        expected_pairs = (
+            ("bytes/sector", 512, bytes_per_sector),
+            ("sectors/cluster", spec.sectors_per_cluster, sectors_per_cluster),
+            ("reserved sectors", 1, reserved_sectors),
+            ("FAT count", 2, fats),
+            ("root entries", spec.root_entries, root_entries),
+            ("total sectors", spec.total_sectors, total_sectors),
+            ("media descriptor", spec.media_descriptor, media_descriptor),
+            ("sectors/FAT", spec.sectors_per_fat, sectors_per_fat),
+            ("sectors/track", spec.sectors_per_track, sectors_per_track),
+            ("heads", spec.heads, heads),
+            ("hidden sectors", 0, hidden_sectors),
+        )
+        for field, expected, actual in expected_pairs:
+            if actual != expected:
+                if field == "media descriptor":
+                    mismatches.append(f"{field} expected 0x{expected:02x} got 0x{actual:02x}")
+                else:
+                    mismatches.append(f"{field} expected {expected} got {actual}")
+
+        if file_system_tag != b"FAT12   ":
+            mismatches.append(f"filesystem tag expected FAT12 got {file_system_tag.decode('latin-1', 'replace').strip()!r}")
+
+        if mismatches:
+            detail = "; ".join(mismatches)
+            raise ValidationError(
+                f"Formatted IMG BPB does not match {floppy_type.value} floppy geometry for {image_path}: {detail}"
+            )
 
     def _partition_and_format(self, *, nbd_device: str, disk_format: DiskFormat, label: str | None) -> str:
         self.runner.run(["parted", "--script", nbd_device, "mklabel", "msdos"], sudo=True)

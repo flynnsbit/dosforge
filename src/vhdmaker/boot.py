@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from .commands import CommandRunner
 from .errors import ValidationError
-from .models import BootMode, CreateRequest, DiskFormat, FreeDOSSource, IBMDOSVersion, MSDOSInstallProfile
+from .models import BootMode, CreateRequest, DiskFormat, FloppyType, FreeDOSSource, IBMDOSVersion, MSDOSInstallProfile
 from .paths import app_cache_dir, app_mount_root
 
 FREEDOS_DEFAULT_IMAGE_URL = (
@@ -43,7 +43,7 @@ _MSDOS71_INSTALL_PAK = "DOS71_1S.PAK"
 _MSDOS71_OPTIONAL_INSTALL_PAK = "DOS71_2S.PAK"
 _MSDOS71_PAK_PASSWORD = b":MSDOS"
 _MSDOS71_BOOTSECTOR_SOURCES = ("SYS.COM", "FORMAT.COM")
-_MSDOS71_IMAGE_SUFFIXES = (".img", ".ima")
+_MSDOS71_IMAGE_SUFFIXES = (".img", ".ima", ".dsk", ".xdf")
 _MSDOS71_ROOT_FILES_EXCLUDED_FROM_DOS_DIR = {
     "IO.SYS",
     "MSDOS.SYS",
@@ -136,6 +136,10 @@ _MSDOS_INSTALL_DIR_DRIVERS = frozenset(
         "SETVER.EXE",
     }
 )
+_SAVE_DSKF_HEADER_MIN = 0x2A
+_SAVE_DSKF_SIGNATURE = b"\xAA\x59"
+_SAVE_DSKF_SECTOR_COUNT_OFFSET = 0x22
+_SAVE_DSKF_FIRST_SECTOR_OFFSET = 0x26
 
 
 def normalize_msdos_config_sys(text: str, *, install_dir: str = r"C:\DOS") -> str:
@@ -298,8 +302,18 @@ class BootAssetResolver:
             return self._resolve_msdos71(request)
         if request.boot_mode is BootMode.IBM8088:
             return self._resolve_ibm8088(request)
+        if request.boot_mode is BootMode.MSDOS33:
+            return self._resolve_msdos33(request)
+        if request.boot_mode is BootMode.MSDOS331:
+            return self._resolve_msdos331(request)
+        if request.boot_mode is BootMode.MSDOS5:
+            return self._resolve_msdos5(request)
+        if request.boot_mode is BootMode.MSDOS622:
+            return self._resolve_msdos622(request)
         if request.boot_mode is BootMode.PCDOS:
             return self._resolve_pcdos(request)
+        if request.boot_mode is BootMode.PCDOS7:
+            return self._resolve_pcdos7(request)
         if request.boot_mode is BootMode.COMPAQ331:
             return self._resolve_compaq331(request)
         raise ValidationError(f"Unsupported boot mode: {request.boot_mode.value}")
@@ -637,12 +651,58 @@ class BootAssetResolver:
     def _resolve_ibm8088(self, request: CreateRequest) -> BootAssets:
         version_dir_name = "dos33" if request.ibm_dos_version is IBMDOSVersion.DOS33 else "dos50"
         version_label = "DOS 3.3" if request.ibm_dos_version is IBMDOSVersion.DOS33 else "DOS 5.0"
+        default_asset_dirs = ("msdos33", "dos33") if request.ibm_dos_version is IBMDOSVersion.DOS33 else (
+            "msdos5",
+            "dos5",
+            "dos50",
+        )
         return self._resolve_legacy_dos(
             request=request,
             profile_label=f"IBM 8088/V20 {version_label}",
             version_subdir_name=version_dir_name,
             cache_tag=f"ibm8088-{request.ibm_dos_version.value}",
             prefer_install_image_boot_sector=request.ibm_dos_version is IBMDOSVersion.DOS33,
+            default_asset_dirs=default_asset_dirs,
+        )
+
+    def _resolve_msdos33(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="MS-DOS 3.3",
+            version_subdir_name="msdos33",
+            cache_tag="msdos33",
+            prefer_install_image_boot_sector=True,
+            default_asset_dirs=("msdos33",),
+        )
+
+    def _resolve_msdos331(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="MS-DOS 3.31",
+            version_subdir_name="msdos331",
+            cache_tag="msdos331",
+            prefer_install_image_boot_sector=True,
+            default_asset_dirs=("msdos331",),
+        )
+
+    def _resolve_msdos5(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="MS-DOS 5.0",
+            version_subdir_name="msdos5",
+            cache_tag="msdos5",
+            prefer_install_image_boot_sector=True,
+            default_asset_dirs=("msdos5",),
+        )
+
+    def _resolve_msdos622(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="MS-DOS 6.22",
+            version_subdir_name="msdos622",
+            cache_tag="msdos622",
+            prefer_install_image_boot_sector=True,
+            default_asset_dirs=("msdos622",),
         )
 
     def _resolve_pcdos(self, request: CreateRequest) -> BootAssets:
@@ -652,6 +712,17 @@ class BootAssetResolver:
             version_subdir_name="pcdos",
             cache_tag="pcdos",
             prefer_install_image_boot_sector=False,
+            default_asset_dirs=("pcdos", "pcdos7"),
+        )
+
+    def _resolve_pcdos7(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="PC-DOS 7.0",
+            version_subdir_name="pcdos7",
+            cache_tag="pcdos7",
+            prefer_install_image_boot_sector=True,
+            default_asset_dirs=("pcdos7",),
         )
 
     def _resolve_compaq331(self, request: CreateRequest) -> BootAssets:
@@ -661,6 +732,7 @@ class BootAssetResolver:
             version_subdir_name="compaq331",
             cache_tag="compaq331",
             prefer_install_image_boot_sector=False,
+            default_asset_dirs=("compaq331", "msdos331"),
         )
 
     def _resolve_legacy_dos(
@@ -671,12 +743,11 @@ class BootAssetResolver:
         version_subdir_name: str | None,
         cache_tag: str,
         prefer_install_image_boot_sector: bool,
+        default_asset_dirs: tuple[str, ...] = (),
     ) -> BootAssets:
         if request.disk_format is not DiskFormat.FAT16:
             raise ValidationError(f"{profile_label} boot mode requires FAT16 format.")
-        if request.boot_assets_path is None:
-            raise ValidationError(f"{profile_label} mode requires a local boot assets path.")
-        directory = request.boot_assets_path.expanduser().resolve()
+        directory = self._resolve_legacy_assets_directory(request=request, fallback_dirs=default_asset_dirs)
         if not directory.is_dir():
             raise ValidationError(f"{profile_label} asset path must be a directory: {directory}")
 
@@ -702,7 +773,19 @@ class BootAssetResolver:
         raise ValidationError(
             f"{profile_label} assets were not found. Provide either direct files "
             "(IO.SYS+MSDOS.SYS+COMMAND.COM or IBMBIO.COM+IBMDOS.COM+COMMAND.COM, plus BOOTSECT_FAT16.BIN/BOOTSECT.BIN) "
-            f"or floppy images (*.img/*.ima) under {directory}."
+            f"or floppy images (*.img/*.ima/*.dsk/*.xdf) under {directory}."
+        )
+
+    def _resolve_legacy_assets_directory(self, *, request: CreateRequest, fallback_dirs: tuple[str, ...]) -> Path:
+        if request.boot_assets_path is not None:
+            return request.boot_assets_path.expanduser().resolve()
+        for directory_name in fallback_dirs:
+            candidate = (Path.cwd() / directory_name).resolve()
+            if candidate.is_dir():
+                return candidate
+        raise ValidationError(
+            "This DOS boot mode requires a local boot assets path. "
+            f"Checked defaults under current directory: {', '.join(fallback_dirs) if fallback_dirs else '(none)'}"
         )
 
     def _try_resolve_legacy_dos_from_directory(self, directory: Path) -> BootAssets | None:
@@ -779,13 +862,7 @@ class BootAssetResolver:
                     return None
                 template.write_bytes(boot_sector)
 
-        source_image_size_bytes: int | None = None
-        for image in install_images:
-            try:
-                source_image_size_bytes = image.stat().st_size
-            except OSError:
-                continue
-            break
+        source_image_size_bytes = self._select_source_image_size_bytes(install_images)
 
         return BootAssets(
             system_files=files,
@@ -884,7 +961,7 @@ class BootAssetResolver:
                 "MS-DOS 7.1 assets were not found. Provide either direct files "
                 "(IO.SYS, MSDOS.SYS, COMMAND.COM, HIMEM.SYS, IFSHLP.SYS, "
                 "BOOTSECT_FAT16.BIN/BOOTSECT_FAT32.BIN) "
-                "or DOS71 install disk images (*.img)."
+                "or DOS71 install disk images (*.img/*.ima/*.dsk/*.xdf)."
             )
 
         cache_key = self._msdos71_cache_key(directory, install_images)
@@ -952,11 +1029,14 @@ class BootAssetResolver:
             )
             payload_target_dir = "DOS"
 
+        source_image_size_bytes = self._select_source_image_size_bytes(install_images)
+
         return BootAssets(
             system_files=files,
             boot_sector_template=template,
             fdos_payload_dir=payload_dir,
             payload_target_dir=payload_target_dir,
+            source_image_size_bytes=source_image_size_bytes,
         )
 
     def _collect_msdos71_install_images(self, directory: Path) -> list[Path]:
@@ -977,6 +1057,17 @@ class BootAssetResolver:
             parts.append(f"{image_path.name}:{stat.st_size}:{stat.st_mtime_ns}")
         return "|".join(parts)
 
+    def _select_source_image_size_bytes(self, image_paths: list[Path]) -> int | None:
+        preferred = [path for path in image_paths if path.suffix.lower() == ".xdf"]
+        ordered = [*preferred, *[path for path in image_paths if path not in preferred]]
+        for image in ordered:
+            normalized = self._mtools_image_path(image)
+            try:
+                return normalized.stat().st_size
+            except OSError:
+                continue
+        return None
+
     def _copy_msdos71_pak_from_images(self, image_paths: list[Path], pak_name: str, destination: Path) -> bool:
         for image_path in image_paths:
             if self._copy_file_from_image_case_insensitive(image_path, pak_name, destination):
@@ -987,16 +1078,63 @@ class BootAssetResolver:
         if destination.exists() and destination.stat().st_size > 0:
             return True
         destination.parent.mkdir(parents=True, exist_ok=True)
+        mtools_image = self._mtools_image_path(image_path)
         for candidate in (dos_name, dos_name.upper(), dos_name.lower()):
             if destination.exists():
                 destination.unlink()
             result = self.runner.run(
-                ["mcopy", "-i", str(image_path), f"::{candidate}", str(destination)],
+                ["mcopy", "-i", str(mtools_image), f"::{candidate}", str(destination)],
                 check=False,
             )
             if result.returncode == 0 and destination.exists() and destination.stat().st_size > 0:
                 return True
         return False
+
+    def _mtools_image_path(self, image_path: Path) -> Path:
+        if image_path.suffix.lower() != ".dsk":
+            return image_path
+        return self._convert_savedskf_image(image_path) or image_path
+
+    def _convert_savedskf_image(self, image_path: Path) -> Path | None:
+        try:
+            header = image_path.read_bytes()[:_SAVE_DSKF_HEADER_MIN]
+            stat = image_path.stat()
+        except OSError:
+            return None
+        if len(header) < _SAVE_DSKF_HEADER_MIN or header[:2] != _SAVE_DSKF_SIGNATURE:
+            return None
+
+        sector_count = struct.unpack(
+            "<H",
+            header[_SAVE_DSKF_SECTOR_COUNT_OFFSET : _SAVE_DSKF_SECTOR_COUNT_OFFSET + 2],
+        )[0]
+        first_sector_offset = struct.unpack(
+            "<H",
+            header[_SAVE_DSKF_FIRST_SECTOR_OFFSET : _SAVE_DSKF_FIRST_SECTOR_OFFSET + 2],
+        )[0]
+        if sector_count <= 0 or first_sector_offset <= 0:
+            return None
+        raw_size = sector_count * 512
+        if first_sector_offset + raw_size > stat.st_size:
+            return None
+
+        cache_key = self._hash_value(
+            f"{image_path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}:{first_sector_offset}:{sector_count}"
+        )
+        raw_path = self.cache_root / f"savedskf-{cache_key}.img"
+        if raw_path.exists() and raw_path.stat().st_size == raw_size:
+            return raw_path
+
+        try:
+            with image_path.open("rb") as source:
+                source.seek(first_sector_offset)
+                raw_data = source.read(raw_size)
+        except OSError:
+            return None
+        if len(raw_data) != raw_size:
+            return None
+        raw_path.write_bytes(raw_data)
+        return raw_path
 
     def _extract_msdos71_pak_files(self, pak_path: Path, destination: Path) -> None:
         destination.mkdir(parents=True, exist_ok=True)
@@ -1328,8 +1466,9 @@ class BootAssetResolver:
         output_path = output_dir / dos_name
         if output_path.exists() and output_path.stat().st_size > 0:
             return output_path
+        mtools_image = self._mtools_image_path(image_path)
         result = self.runner.run(
-            ["mcopy", "-i", str(image_path), f"::{dos_name}", str(output_path)],
+            ["mcopy", "-i", str(mtools_image), f"::{dos_name}", str(output_path)],
             check=False,
         )
         if result.returncode == 0 and output_path.exists():
@@ -1366,7 +1505,8 @@ class BootAssetResolver:
     def _extract_msdos_fat16_boot_sector_from_images(self, image_paths: list[Path]) -> bytes | None:
         for image_path in image_paths:
             try:
-                with image_path.open("rb") as handle:
+                normalized = self._mtools_image_path(image_path)
+                with normalized.open("rb") as handle:
                     sector = handle.read(512)
             except OSError:
                 continue
@@ -1636,8 +1776,22 @@ class BootInstaller:
         image_path: Path,
         assets: BootAssets,
         boot_mode: BootMode,
+        floppy_type: FloppyType | None = None,
+        verify_legacy_layout: bool = False,
     ) -> None:
+        before_sector = self._read_first_sector(image_path)
         self._write_floppy_boot_sector(image_path=image_path, template=assets.boot_sector_template)
+        after_sector = self._read_first_sector(image_path)
+        self._validate_floppy_bpb_fields_preserved(
+            before_sector=before_sector,
+            after_sector=after_sector,
+            image_path=image_path,
+        )
+        if floppy_type is not None and isinstance(self.runner, CommandRunner):
+            self._validate_floppy_bpb_matches_type(
+                image_path=image_path,
+                floppy_type=floppy_type,
+            )
         self._copy_system_files(
             partition_device=str(image_path),
             system_files=assets.system_files,
@@ -1645,6 +1799,8 @@ class BootInstaller:
             payload_target_dir=assets.payload_target_dir,
             boot_mode=boot_mode,
         )
+        if verify_legacy_layout and isinstance(self.runner, CommandRunner):
+            self._validate_legacy_floppy_system_layout(image_path=image_path, boot_mode=boot_mode)
 
     def _copy_system_files(
         self,
@@ -1954,3 +2110,238 @@ class BootInstaller:
         finally:
             if patch_file.exists():
                 patch_file.unlink()
+
+    def _read_first_sector(self, path: Path) -> bytes:
+        data = path.read_bytes()[:512]
+        if len(data) < 512:
+            raise ValidationError(f"Image is too small to contain a boot sector: {path}")
+        return data
+
+    def _fat12_16_bpb_fields(self, sector: bytes) -> dict[str, int]:
+        return {
+            "bytes_per_sector": struct.unpack("<H", sector[11:13])[0],
+            "sectors_per_cluster": sector[13],
+            "reserved_sectors": struct.unpack("<H", sector[14:16])[0],
+            "fat_count": sector[16],
+            "root_entries": struct.unpack("<H", sector[17:19])[0],
+            "total_sectors_16": struct.unpack("<H", sector[19:21])[0],
+            "media_descriptor": sector[21],
+            "sectors_per_fat": struct.unpack("<H", sector[22:24])[0],
+            "sectors_per_track": struct.unpack("<H", sector[24:26])[0],
+            "heads": struct.unpack("<H", sector[26:28])[0],
+            "hidden_sectors": struct.unpack("<I", sector[28:32])[0],
+            "total_sectors_32": struct.unpack("<I", sector[32:36])[0],
+        }
+
+    def _validate_floppy_bpb_fields_preserved(
+        self,
+        *,
+        before_sector: bytes,
+        after_sector: bytes,
+        image_path: Path,
+    ) -> None:
+        before = self._fat12_16_bpb_fields(before_sector)
+        after = self._fat12_16_bpb_fields(after_sector)
+        tracked_fields = (
+            "bytes_per_sector",
+            "sectors_per_cluster",
+            "reserved_sectors",
+            "fat_count",
+            "root_entries",
+            "total_sectors_16",
+            "media_descriptor",
+            "sectors_per_fat",
+            "sectors_per_track",
+            "heads",
+            "hidden_sectors",
+            "total_sectors_32",
+        )
+        mismatches = [
+            f"{field} changed from {before[field]} to {after[field]}"
+            for field in tracked_fields
+            if before[field] != after[field]
+        ]
+        if mismatches:
+            raise ValidationError(
+                f"Boot sector patch changed floppy BPB geometry for {image_path}: {'; '.join(mismatches)}"
+            )
+
+    def _validate_floppy_bpb_matches_type(self, *, image_path: Path, floppy_type: FloppyType) -> None:
+        sector = self._read_first_sector(image_path)
+        if sector[510:512] != b"\x55\xaa":
+            raise ValidationError(f"Floppy boot sector signature is invalid in {image_path}")
+        bpb = self._fat12_16_bpb_fields(sector)
+        spec = floppy_type.spec
+        total_sectors = bpb["total_sectors_16"] or bpb["total_sectors_32"]
+        expected_pairs = (
+            ("bytes_per_sector", 512, bpb["bytes_per_sector"]),
+            ("sectors_per_cluster", spec.sectors_per_cluster, bpb["sectors_per_cluster"]),
+            ("reserved_sectors", 1, bpb["reserved_sectors"]),
+            ("fat_count", 2, bpb["fat_count"]),
+            ("root_entries", spec.root_entries, bpb["root_entries"]),
+            ("total_sectors", spec.total_sectors, total_sectors),
+            ("media_descriptor", spec.media_descriptor, bpb["media_descriptor"]),
+            ("sectors_per_fat", spec.sectors_per_fat, bpb["sectors_per_fat"]),
+            ("sectors_per_track", spec.sectors_per_track, bpb["sectors_per_track"]),
+            ("heads", spec.heads, bpb["heads"]),
+            ("hidden_sectors", 0, bpb["hidden_sectors"]),
+        )
+        mismatches: list[str] = []
+        for field, expected, actual in expected_pairs:
+            if expected == actual:
+                continue
+            if field == "media_descriptor":
+                mismatches.append(f"{field} expected 0x{expected:02x} got 0x{actual:02x}")
+            else:
+                mismatches.append(f"{field} expected {expected} got {actual}")
+        if mismatches:
+            raise ValidationError(
+                f"Floppy BPB metadata mismatch for {image_path} ({floppy_type.value}): {'; '.join(mismatches)}"
+            )
+
+    def _validate_legacy_floppy_system_layout(self, *, image_path: Path, boot_mode: BootMode) -> None:
+        if boot_mode not in {
+            BootMode.MSDOS71,
+            BootMode.IBM8088,
+            BootMode.MSDOS33,
+            BootMode.MSDOS331,
+            BootMode.MSDOS5,
+            BootMode.MSDOS622,
+            BootMode.PCDOS,
+            BootMode.PCDOS7,
+            BootMode.COMPAQ331,
+        }:
+            return
+
+        raw = image_path.read_bytes()
+        if len(raw) < 512:
+            raise ValidationError(f"Floppy image is too small for system-file validation: {image_path}")
+        bpb = self._fat12_16_bpb_fields(raw[:512])
+        bytes_per_sector = bpb["bytes_per_sector"]
+        sectors_per_cluster = bpb["sectors_per_cluster"]
+        reserved_sectors = bpb["reserved_sectors"]
+        fat_count = bpb["fat_count"]
+        root_entries = bpb["root_entries"]
+        sectors_per_fat = bpb["sectors_per_fat"]
+        if (
+            bytes_per_sector <= 0
+            or sectors_per_cluster <= 0
+            or reserved_sectors <= 0
+            or fat_count <= 0
+            or root_entries <= 0
+            or sectors_per_fat <= 0
+        ):
+            raise ValidationError(f"Floppy BPB is invalid for system-file validation: {image_path}")
+
+        root_dir_sectors = ((root_entries * 32) + (bytes_per_sector - 1)) // bytes_per_sector
+        fat_offset = reserved_sectors * bytes_per_sector
+        root_offset = (reserved_sectors + (fat_count * sectors_per_fat)) * bytes_per_sector
+        root_end = root_offset + (root_entries * 32)
+        fat_end = fat_offset + (sectors_per_fat * bytes_per_sector)
+        if root_end > len(raw) or fat_end > len(raw):
+            raise ValidationError(f"Floppy layout exceeds image size during system-file validation: {image_path}")
+
+        entries: list[dict[str, int | str | bool]] = []
+        for index in range(root_entries):
+            offset = root_offset + (index * 32)
+            entry = raw[offset : offset + 32]
+            if entry[0] == 0x00:
+                break
+            if entry[0] == 0xE5:
+                continue
+            attributes = entry[11]
+            if attributes == 0x0F:
+                continue
+            name = f"{entry[0:8].decode('ascii', 'replace').rstrip()}.{entry[8:11].decode('ascii', 'replace').rstrip()}".rstrip(
+                "."
+            )
+            entries.append(
+                {
+                    "name": name.upper(),
+                    "index": index,
+                    "cluster": struct.unpack("<H", entry[26:28])[0],
+                    "size": struct.unpack("<I", entry[28:32])[0],
+                    "is_volume_label": bool(attributes & 0x08),
+                }
+            )
+
+        by_name = {str(entry["name"]): entry for entry in entries}
+        if {"IO.SYS", "MSDOS.SYS"}.issubset(by_name):
+            first_name, second_name = ("IO.SYS", "MSDOS.SYS")
+        elif {"IBMBIO.COM", "IBMDOS.COM"}.issubset(by_name):
+            first_name, second_name = ("IBMBIO.COM", "IBMDOS.COM")
+        else:
+            raise ValidationError(
+                f"Legacy DOS system files are missing from floppy root directory: {image_path}"
+            )
+
+        first_entry = by_name[first_name]
+        second_entry = by_name[second_name]
+        if int(first_entry["index"]) >= int(second_entry["index"]):
+            raise ValidationError(
+                f"Legacy DOS system-file order is invalid in root directory: {first_name} must appear before {second_name}"
+            )
+
+        strict_modes = {
+            BootMode.IBM8088,
+            BootMode.MSDOS33,
+            BootMode.MSDOS331,
+            BootMode.MSDOS5,
+            BootMode.MSDOS622,
+            BootMode.PCDOS,
+            BootMode.PCDOS7,
+            BootMode.COMPAQ331,
+        }
+        if boot_mode in strict_modes:
+            non_label_entries = [entry for entry in entries if not bool(entry["is_volume_label"])]
+            if len(non_label_entries) < 2:
+                raise ValidationError(f"Floppy root directory does not contain enough system entries: {image_path}")
+            if (
+                str(non_label_entries[0]["name"]) != first_name
+                or str(non_label_entries[1]["name"]) != second_name
+            ):
+                raise ValidationError(
+                    f"Legacy DOS boot expects first root entries to be {first_name}, {second_name}; found "
+                    f"{non_label_entries[0]['name']}, {non_label_entries[1]['name']}"
+                )
+
+            cluster_size = sectors_per_cluster * bytes_per_sector
+            first_cluster = int(first_entry["cluster"])
+            second_cluster = int(second_entry["cluster"])
+            first_size = int(first_entry["size"])
+            if first_cluster < 2 or second_cluster < 2:
+                raise ValidationError(
+                    f"Legacy DOS system files were not allocated in data area for {image_path}"
+                )
+            first_clusters = max(1, (first_size + cluster_size - 1) // cluster_size)
+            expected_second_cluster = first_cluster + first_clusters
+            if second_cluster != expected_second_cluster:
+                raise ValidationError(
+                    f"Legacy DOS system files are not contiguous in data area for {image_path}: "
+                    f"{second_name} starts at cluster {second_cluster}, expected {expected_second_cluster}"
+                )
+
+            fat = raw[fat_offset:fat_end]
+            current_cluster = first_cluster
+            for _ in range(first_clusters - 1):
+                next_cluster = self._fat12_entry(fat, current_cluster)
+                expected_next = current_cluster + 1
+                if next_cluster != expected_next:
+                    raise ValidationError(
+                        f"Legacy DOS system file {first_name} is fragmented in FAT chain for {image_path}: "
+                        f"cluster {current_cluster} points to {next_cluster}, expected {expected_next}"
+                    )
+                current_cluster = next_cluster
+            terminal = self._fat12_entry(fat, current_cluster)
+            if terminal < 0xFF8:
+                raise ValidationError(
+                    f"Legacy DOS system file {first_name} FAT chain is not properly terminated in {image_path}"
+                )
+
+    def _fat12_entry(self, fat: bytes, cluster: int) -> int:
+        offset = cluster + (cluster // 2)
+        if offset + 1 >= len(fat):
+            raise ValidationError(f"FAT12 table is truncated when reading cluster {cluster}")
+        if cluster & 1:
+            return ((fat[offset] >> 4) | (fat[offset + 1] << 4)) & 0x0FFF
+        return (fat[offset] | ((fat[offset + 1] & 0x0F) << 8)) & 0x0FFF
