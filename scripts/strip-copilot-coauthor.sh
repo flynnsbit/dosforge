@@ -114,7 +114,7 @@ if [[ $pre_push_mode -eq 1 ]]; then
     else
       echo "Would rewrite commit messages in range $commit_range."
     fi
-  done
+  done || true
 
   if [[ $rewritten -eq 1 ]]; then
     echo "Push aborted after rewriting commit messages. Re-run 'git push' now." >&2
