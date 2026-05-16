@@ -2109,3 +2109,64 @@ def test_resolve_msdos33_full_profile_writes_pre_dos5_config_sys(
     assert "LASTDRIVE" not in config_text.upper()
     assert "HIMEM" not in config_text.upper()
     assert ",0" not in config_text  # rule out BUFFERS=20,0
+
+
+def test_resolve_freedos_local_auto_picks_dosassets_freedos(tmp_path: Path, monkeypatch) -> None:
+    """When no boot_assets_path is given, FreeDOS LOCAL mode should auto-pick
+    ./dosassets/freedos/."""
+    monkeypatch.chdir(tmp_path)
+    assets_dir = tmp_path / "dosassets" / "freedos"
+    _touch(assets_dir / "KERNEL.SYS", b"k")
+    _touch(assets_dir / "COMMAND.COM", b"c")
+    _touch(assets_dir / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
+
+    request = CreateRequest(
+        path=tmp_path / "fd.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.FREEDOS,
+        freedos_source=FreeDOSSource.LOCAL,
+        # No boot_assets_path → resolver should fall back to dosassets/freedos.
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+    assert "KERNEL.SYS" in assets.system_files
+    assert assets.system_files["KERNEL.SYS"].read_bytes() == b"k"
+
+
+def test_resolve_freedos_local_bare_name_resolves_under_dosassets(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Bare boot_assets_path='freedos' must resolve to ./dosassets/freedos/."""
+    monkeypatch.chdir(tmp_path)
+    assets_dir = tmp_path / "dosassets" / "freedos"
+    _touch(assets_dir / "KERNEL.SYS", b"k")
+    _touch(assets_dir / "COMMAND.COM", b"c")
+    _touch(assets_dir / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
+
+    request = CreateRequest(
+        path=tmp_path / "fd.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.FREEDOS,
+        freedos_source=FreeDOSSource.LOCAL,
+        boot_assets_path=Path("freedos"),
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+    assert "KERNEL.SYS" in assets.system_files
+
+
+def test_resolve_freedos_local_error_mentions_dosassets(tmp_path: Path, monkeypatch) -> None:
+    """When dosassets/freedos/ is missing, the error should point users there."""
+    monkeypatch.chdir(tmp_path)
+    request = CreateRequest(
+        path=tmp_path / "fd.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.FREEDOS,
+        freedos_source=FreeDOSSource.LOCAL,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    with pytest.raises(ValidationError, match=r"dosassets/freedos"):
+        resolver.resolve(request)

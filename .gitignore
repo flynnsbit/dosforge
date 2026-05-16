@@ -1,7 +1,24 @@
-# Local DOS asset folders — keep the structure + readme.txt tracked,
-# but ignore the install media payload the user drops inside.
-/dosassets/*/*
-!/dosassets/*/readme.txt
+# Local DOS asset folders — see ./dosassets/readme.txt for the layout.
+#
+# WinWorldPC-derived install media is gitignored per-folder: only
+# readme.txt is tracked. The open-source folders (freedos, msdos125,
+# msdos2, msdos4 — Microsoft / FreeDOS licensed for redistribution)
+# are NOT listed here so their contents stay tracked.
+/dosassets/compaq331/*
+!/dosassets/compaq331/readme.txt
+/dosassets/ibmpcdos401/*
+!/dosassets/ibmpcdos401/readme.txt
+/dosassets/msdos33/*
+!/dosassets/msdos33/readme.txt
+/dosassets/msdos5/*
+!/dosassets/msdos5/readme.txt
+/dosassets/msdos622/*
+!/dosassets/msdos622/readme.txt
+/dosassets/msdos71/*
+!/dosassets/msdos71/readme.txt
+/dosassets/pcdos7/*
+!/dosassets/pcdos7/readme.txt
+
 /tdlprocessed/
 /win21-*/
 
@@ -11,10 +28,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# Local VHD / floppy images and install archives (large binary artifacts)
+# Local VHD / floppy images and install archives (large binary
+# artifacts that aren't part of the open-source DOS tree).
 *.vhd
-*.img
-*.ima
+/*.img
+/*.ima
 *.7z
 *.zip
 testing-notes.md

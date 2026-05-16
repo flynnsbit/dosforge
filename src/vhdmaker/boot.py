@@ -414,9 +414,26 @@ class BootAssetResolver:
 
     def _resolve_freedos(self, request: CreateRequest) -> BootAssets:
         if request.freedos_source is FreeDOSSource.LOCAL:
-            if request.boot_assets_path is None:
-                raise ValidationError("FreeDOS local mode requires a boot assets path.")
-            target = request.boot_assets_path.expanduser().resolve()
+            if request.boot_assets_path is not None:
+                # Bare name like "freedos" → ./dosassets/freedos/. Full
+                # path used verbatim.
+                resolved = resolve_dos_asset_dir(request.boot_assets_path)
+                target = (
+                    resolved
+                    if resolved is not None
+                    else request.boot_assets_path.expanduser().resolve()
+                )
+            else:
+                # No explicit path — auto-pick ./dosassets/freedos/ when
+                # present (matches the structured layout shipped in this
+                # repo).
+                target = resolve_dos_asset_dir("freedos")
+                if target is None:
+                    raise ValidationError(
+                        "FreeDOS local mode requires a boot assets path. "
+                        f"Drop FreeDOS into ./{DOS_ASSETS_SUBDIR}/freedos/ "
+                        "or pass --boot-assets-path /path/to/freedos."
+                    )
             if target.is_dir():
                 assets = self._resolve_freedos_from_directory(target, request.disk_format)
             elif target.is_file():

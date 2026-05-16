@@ -119,9 +119,9 @@ def test_fetch_freedos_assets_uses_working_directory(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(manager.boot_resolver, "export_latest_freedos_assets", fake_export)
     result = manager.fetch_freedos_assets()
 
-    assert captured["destination"] == (tmp_path / "freedos")
+    assert captured["destination"] == (tmp_path / "dosassets" / "freedos")
     assert captured["include_full_fdos"] is True
-    assert result == (tmp_path / "freedos").resolve()
+    assert result == (tmp_path / "dosassets" / "freedos").resolve()
 
 
 def test_validate_rejects_img_without_img_extension() -> None:

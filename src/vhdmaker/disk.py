@@ -649,7 +649,11 @@ class DiskManager:
         missing = find_missing(("mcopy", "mkfs.fat"))
         if missing:
             raise ValidationError(f"Missing required tools for FreeDOS extraction: {', '.join(missing)}")
-        target = destination if destination is not None else (Path.cwd() / "freedos")
+        target = (
+            destination
+            if destination is not None
+            else (Path.cwd() / DOS_ASSETS_SUBDIR / "freedos")
+        )
         return self.boot_resolver.export_latest_freedos_assets(
             target,
             image_url=download_url,
