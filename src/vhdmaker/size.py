@@ -34,6 +34,36 @@ IBM_DOS33_MAX_BYTES: Final[int] = 32 * 1024**2
 IBM_DOS50_MAX_BYTES: Final[int] = 504 * 1024**2
 FLOPPY_IMG_SIZES_BYTES: Final[set[int]] = {floppy_type.size_bytes for floppy_type in FloppyType}
 
+# A "cylinder" in the BIOS-friendly canonical ATA geometry vhdmaker writes
+# into VHD footers (16 heads × 63 sectors-per-track × 512 bytes per sector).
+# Used to align disk sizes so footer CHS exactly maps to total_sectors.
+NORMAL_CHS_CYLINDER_BYTES: Final[int] = 16 * 63 * 512  # 516096
+
+
+def align_size_for_normal_chs(
+    size_bytes: int,
+    *,
+    min_bytes: int | None = None,
+    max_bytes: int | None = None,
+) -> int:
+    """Align ``size_bytes`` to a multiple of ``NORMAL_CHS_CYLINDER_BYTES``.
+
+    Prefers rounding up; falls back to rounding down when the ceiling would
+    exceed ``max_bytes`` (so DOS-3.3 / FAT16 / FAT32 caps remain honored).
+    Ensures the result is at least ``min_bytes`` when supplied.
+    """
+    step = NORMAL_CHS_CYLINDER_BYTES
+    if size_bytes <= 0:
+        return step
+    ceil_size = ((size_bytes + step - 1) // step) * step
+    if max_bytes is not None and ceil_size > max_bytes:
+        floor_size = (max_bytes // step) * step
+        if floor_size > 0:
+            ceil_size = floor_size
+    if min_bytes is not None and ceil_size < min_bytes:
+        ceil_size = ((min_bytes + step - 1) // step) * step
+    return ceil_size
+
 
 def parse_size(value: str) -> int:
     match = _SIZE_PATTERN.match(value)

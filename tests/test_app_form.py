@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from textual.widgets import Button, Checkbox, DirectoryTree, Input, Select
 
 from vhdmaker.app import VhdMakerApp
+from vhdmaker.errors import VhdMakerError
 from vhdmaker.models import BootMode, DiskFormat, FloppyType, FreeDOSSource, IBMDOSVersion, MSDOSInstallProfile, MediaType
 
 
@@ -23,16 +24,15 @@ def test_create_defaults_to_choose_and_hides_boot_specific_fields() -> None:
             assert app.query_one("#media-type", Select).value == MediaType.VHD.value
             assert app.query_one("#boot-mode", Select).value == BootMode.NONE.value
             assert app.query_one("#freedos-source", Select).value == FreeDOSSource.AUTO.value
-            assert app.query_one("#dos-profile", Select).value == (
-                f"{BootMode.MSDOS71.value}:{MSDOSInstallProfile.MINIMAL.value}"
-            )
+            assert app.query_one("#dos-profile", Select).value == MSDOSInstallProfile.MINIMAL.value
             assert app.query_one("#create-size", Input).display is True
             assert app.query_one("#create-format", Select).display is True
             assert app.query_one("#floppy-type", Select).display is False
             assert app.query_one("#img-system-format", Checkbox).display is False
             assert app.query_one("#freedos-source", Select).display is False
             assert app.query_one("#dos-profile", Select).display is False
-            assert app.query_one("#boot-assets", Input).display is False
+            assert app.query_one("#ibm-dos-version", Select).display is False
+            assert app.query_one("#boot-assets-row").display is False
             assert app.query_one("#freedos-url", Input).display is False
             assert app.query_one("#fetch-freedos-btn", Button).display is False
 
@@ -50,7 +50,7 @@ def test_request_from_form_python314_safe_select_lookup() -> None:
             app.query_one("#create-format", Select).value = DiskFormat.FAT32.value
             app.query_one("#boot-mode", Select).value = BootMode.MSDOS71.value
             app.query_one("#freedos-source", Select).value = FreeDOSSource.LOCAL.value
-            app.query_one("#dos-profile", Select).value = f"{BootMode.MSDOS71.value}:{MSDOSInstallProfile.FULL.value}"
+            app.query_one("#dos-profile", Select).value = MSDOSInstallProfile.FULL.value
 
             request = app._request_from_form()
             assert request.path.as_posix() == "/tmp/example.vhd"
@@ -58,6 +58,7 @@ def test_request_from_form_python314_safe_select_lookup() -> None:
             assert request.boot_mode is BootMode.MSDOS71
             assert request.freedos_source is FreeDOSSource.LOCAL
             assert request.msdos_install_profile is MSDOSInstallProfile.FULL
+            assert app.query_one("#custom-payload", Input).display is True
 
     asyncio.run(run())
 
@@ -96,35 +97,36 @@ def test_progressive_disclosure_for_boot_modes() -> None:
             assert app.query_one("#freedos-source", Select).display is True
             assert app.query_one("#fetch-freedos-btn", Button).display is True
             assert app.query_one("#freedos-url", Input).display is True
-            assert app.query_one("#boot-assets", Input).display is False
+            assert app.query_one("#boot-assets-row").display is False
             assert app.query_one("#dos-profile", Select).display is False
 
             app.query_one("#freedos-source", Select).value = FreeDOSSource.LOCAL.value
             app._sync_create_form_visibility()
-            assert app.query_one("#boot-assets", Input).display is True
+            assert app.query_one("#boot-assets-row").display is True
             assert app.query_one("#freedos-url", Input).display is False
 
             app.query_one("#boot-mode", Select).value = BootMode.MSDOS71.value
             app._sync_create_form_visibility()
             assert app.query_one("#dos-profile", Select).display is True
-            assert app.query_one("#boot-assets", Input).display is True
+            assert app.query_one("#boot-assets-row").display is True
             assert app.query_one("#freedos-source", Select).display is False
             assert app.query_one("#freedos-url", Input).display is False
             assert app.query_one("#fetch-freedos-btn", Button).display is False
-            assert app.query_one("#dos-profile", Select).value == (
-                f"{BootMode.MSDOS71.value}:{MSDOSInstallProfile.MINIMAL.value}"
-            )
+            assert app.query_one("#dos-profile", Select).value == MSDOSInstallProfile.MINIMAL.value
+            assert app.query_one("#ibm-dos-version", Select).display is False
 
             app.query_one("#boot-mode", Select).value = BootMode.IBM8088.value
             app._sync_create_form_visibility()
             assert app.query_one("#dos-profile", Select).display is True
-            assert app.query_one("#boot-assets", Input).display is True
-            assert app.query_one("#dos-profile", Select).value == f"{BootMode.IBM8088.value}:{IBMDOSVersion.DOS33.value}"
+            assert app.query_one("#boot-assets-row").display is True
+            assert app.query_one("#ibm-dos-version", Select).display is True
+            assert app.query_one("#ibm-dos-version", Select).value == IBMDOSVersion.DOS33.value
 
             app.query_one("#boot-mode", Select).value = BootMode.PCDOS7.value
             app._sync_create_form_visibility()
-            assert app.query_one("#dos-profile", Select).display is False
-            assert app.query_one("#boot-assets", Input).display is True
+            assert app.query_one("#dos-profile", Select).display is True
+            assert app.query_one("#ibm-dos-version", Select).display is False
+            assert app.query_one("#boot-assets-row").display is True
 
             app.query_one("#media-type", Select).value = MediaType.IMG.value
             app._sync_create_form_visibility()
@@ -152,7 +154,7 @@ def test_request_from_form_reads_ibm_dos_profile() -> None:
             app.query_one("#create-format", Select).value = DiskFormat.FAT16.value
             app.query_one("#boot-mode", Select).value = BootMode.IBM8088.value
             app._sync_create_form_visibility()
-            app.query_one("#dos-profile", Select).value = f"{BootMode.IBM8088.value}:{IBMDOSVersion.DOS50.value}"
+            app.query_one("#ibm-dos-version", Select).value = IBMDOSVersion.DOS50.value
             request = app._request_from_form()
             assert request.boot_mode is BootMode.IBM8088
             assert request.ibm_dos_version is IBMDOSVersion.DOS50
@@ -257,6 +259,44 @@ def test_request_from_form_img_supports_1840k_pcdos7_floppy() -> None:
     asyncio.run(run())
 
 
+def test_request_from_form_vhd_supports_full_profile_for_legacy_mode() -> None:
+    async def run() -> None:
+        app = VhdMakerApp()
+        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
+
+        async with app.run_test():
+            app.query_one("#create-path", Input).value = "/tmp/full-legacy.vhd"
+            app.query_one("#create-size", Input).value = "128M"
+            app.query_one("#create-format", Select).value = DiskFormat.FAT16.value
+            app.query_one("#boot-mode", Select).value = BootMode.PCDOS7.value
+            app.query_one("#dos-profile", Select).value = MSDOSInstallProfile.FULL.value
+
+            request = app._request_from_form()
+            assert request.boot_mode is BootMode.PCDOS7
+            assert request.msdos_install_profile is MSDOSInstallProfile.FULL
+
+    asyncio.run(run())
+
+
+def test_request_from_form_vhd_allows_missing_size_with_custom_payload() -> None:
+    async def run() -> None:
+        app = VhdMakerApp()
+        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
+
+        async with app.run_test():
+            app.query_one("#create-path", Input).value = "/tmp/custom.vhd"
+            app.query_one("#create-size", Input).value = ""
+            app.query_one("#create-format", Select).value = DiskFormat.FAT16.value
+            app.query_one("#custom-payload", Input).value = "/tmp/payload"
+
+            request = app._request_from_form()
+            assert request.size_bytes == 1
+            assert request.custom_payload_path is not None
+            assert request.custom_payload_path.as_posix() == "/tmp/payload"
+
+    asyncio.run(run())
+
+
 def test_selecting_vhd_sets_create_path_and_size(monkeypatch, tmp_path) -> None:
     async def run() -> None:
         app = VhdMakerApp()
@@ -325,20 +365,113 @@ def test_create_controls_share_horizontal_alignment() -> None:
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
-            create_path = app.query_one("#create-path", Input)
+            create_path_row = app.query_one("#create-path-row")
+            create_path_input = app.query_one("#create-path", Input)
             create_format = app.query_one("#create-format", Select)
             boot_mode = app.query_one("#boot-mode", Select)
-            diag_button = app.query_one("#diag-btn", Button)
-            create_button = app.query_one("#create-btn", Button)
 
-            assert create_format.region.x == create_path.region.x
-            assert create_format.region.width == create_path.region.width
-            assert boot_mode.region.x == create_path.region.x
-            assert boot_mode.region.width == create_path.region.width
-            assert diag_button.content_region.x == create_path.content_region.x
-            assert diag_button.content_region.width == create_path.content_region.width
-            assert create_button.content_region.x == create_path.content_region.x
-            assert create_button.content_region.width == create_path.content_region.width
+            assert create_format.region.x == create_path_row.region.x
+            assert create_format.region.width == create_path_row.region.width
+            assert boot_mode.region.x == create_path_row.region.x
+            assert boot_mode.region.width == create_path_row.region.width
+            assert create_path_input.region.x == create_path_row.region.x
+
+    asyncio.run(run())
+
+
+def test_browse_buttons_start_path_picker_and_apply_selection(tmp_path) -> None:
+    async def run() -> None:
+        app = VhdMakerApp()
+        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
+        payload_dir = tmp_path / "payload"
+        payload_dir.mkdir(parents=True, exist_ok=True)
+        boot_img = tmp_path / "boot.img"
+        boot_img.write_bytes(b"")
+
+        async with app.run_test():
+            app._pick_path_with_dialog = lambda target: None  # type: ignore[assignment]
+            app.on_button_pressed(SimpleNamespace(button=SimpleNamespace(id="browse-custom-payload-btn")))
+            assert app.path_picker_target == "custom-payload"
+            app.on_directory_tree_directory_selected(SimpleNamespace(path=str(payload_dir)))
+            assert app.query_one("#custom-payload", Input).value == str(payload_dir.resolve())
+            assert app.path_picker_target is None
+
+            app.on_button_pressed(SimpleNamespace(button=SimpleNamespace(id="browse-boot-assets-btn")))
+            assert app.path_picker_target == "boot-assets"
+            app.on_directory_tree_file_selected(SimpleNamespace(path=str(boot_img)))
+            assert app.query_one("#boot-assets", Input).value == str(boot_img.resolve())
+            assert app.path_picker_target is None
+
+    asyncio.run(run())
+
+
+def test_browse_buttons_apply_dialog_selection_directly(tmp_path) -> None:
+    async def run() -> None:
+        app = VhdMakerApp()
+        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
+        payload_dir = tmp_path / "payload"
+        payload_dir.mkdir(parents=True, exist_ok=True)
+        output_vhd = tmp_path / "selected.vhd"
+
+        def fake_pick(target: str):
+            if target == "custom-payload":
+                return payload_dir
+            if target == "create-path":
+                return output_vhd
+            return None
+
+        async with app.run_test():
+            app._pick_path_with_dialog = fake_pick  # type: ignore[assignment]
+            app.on_button_pressed(SimpleNamespace(button=SimpleNamespace(id="browse-custom-payload-btn")))
+            assert app.query_one("#custom-payload", Input).value == str(payload_dir.resolve())
+            assert app.path_picker_target is None
+
+            app.on_button_pressed(SimpleNamespace(button=SimpleNamespace(id="browse-create-path-btn")))
+            assert app.query_one("#create-path", Input).value == str(output_vhd.resolve())
+            assert app.path_picker_target is None
+
+    asyncio.run(run())
+
+
+def test_tree_parent_entry_moves_browser_root_up(tmp_path, monkeypatch) -> None:
+    async def run() -> None:
+        child = tmp_path / "child"
+        child.mkdir(parents=True, exist_ok=True)
+        monkeypatch.chdir(child)
+
+        app = VhdMakerApp()
+        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
+
+        async with app.run_test():
+            tree = app.query_one("#vhd-tree", DirectoryTree)
+            await tree.reload()
+            assert Path(str(tree.path)).resolve() == child.resolve()
+            parent_node = next(node for node in tree.root.children if node.label.plain == "../")
+            app.on_directory_tree_directory_selected(SimpleNamespace(path=str(tmp_path), node=parent_node))
+            assert Path(str(tree.path)).resolve() == tmp_path.resolve()
+
+    asyncio.run(run())
+
+
+def test_parent_entry_is_only_added_at_tree_root(tmp_path, monkeypatch) -> None:
+    async def run() -> None:
+        child = tmp_path / "child"
+        child.mkdir(parents=True, exist_ok=True)
+        monkeypatch.chdir(child)
+
+        app = VhdMakerApp()
+        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
+
+        async with app.run_test():
+            tree = app.query_one("#vhd-tree", DirectoryTree)
+            await tree.reload()
+            root_parent_nodes = [node for node in tree.root.children if node.label.plain == "../"]
+            assert len(root_parent_nodes) == 1
+            parent_node = root_parent_nodes[0]
+            await tree._load_directory(parent_node).wait()
+            await tree._add_to_load_queue(parent_node)
+            child_parent_nodes = [node for node in parent_node.children if node.label.plain == "../"]
+            assert child_parent_nodes == []
 
     asyncio.run(run())
 
@@ -365,5 +498,61 @@ def test_create_refreshes_browser_tree(monkeypatch, tmp_path) -> None:
             app.query_one("#create-size", Input).value = "512M"
             app._handle_create()
             assert refresh_calls["count"] == 1
+
+    asyncio.run(run())
+
+
+def test_create_reauthenticates_and_retries_when_sudo_expires(monkeypatch, tmp_path) -> None:
+    async def run() -> None:
+        app = VhdMakerApp()
+        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
+        attempts = {"count": 0}
+
+        def fake_create(request) -> None:
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise VhdMakerError(
+                    "Sudo authentication is required for disk operations. Details: sudo: a password is required"
+                )
+            request.path.parent.mkdir(parents=True, exist_ok=True)
+            request.path.write_bytes(b"")
+
+        app.manager.create_and_prepare = fake_create  # type: ignore[assignment]
+        app._reauthenticate_sudo = lambda: (True, "Sudo credentials refreshed.")  # type: ignore[assignment]
+        monkeypatch.setattr(app, "_refresh_browser_tree", lambda: None)
+        monkeypatch.setattr(app, "_refresh_mounts", lambda: None)
+
+        async with app.run_test():
+            app.query_one("#create-path", Input).value = str(tmp_path / "newdisk.vhd")
+            app.query_one("#create-size", Input).value = "64M"
+            app._handle_create()
+            assert attempts["count"] == 2
+            assert "Created and prepared" in str(app.query_one("#status").render())
+
+    asyncio.run(run())
+
+
+def test_create_shows_error_when_sudo_reauth_fails(tmp_path) -> None:
+    async def run() -> None:
+        app = VhdMakerApp()
+        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
+        attempts = {"count": 0}
+
+        def fake_create(request) -> None:
+            del request
+            attempts["count"] += 1
+            raise VhdMakerError(
+                "Sudo authentication is required for disk operations. Details: sudo: a password is required"
+            )
+
+        app.manager.create_and_prepare = fake_create  # type: ignore[assignment]
+        app._reauthenticate_sudo = lambda: (False, "Sudo re-authentication failed.")  # type: ignore[assignment]
+
+        async with app.run_test():
+            app.query_one("#create-path", Input).value = str(tmp_path / "newdisk.vhd")
+            app.query_one("#create-size", Input).value = "64M"
+            app._handle_create()
+            assert attempts["count"] == 1
+            assert "Sudo re-authentication failed." == str(app.query_one("#status").render()).strip()
 
     asyncio.run(run())

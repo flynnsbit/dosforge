@@ -5,6 +5,7 @@ from typing import Sequence
 
 import pytest
 
+import vhdmaker.boot as boot_module
 from vhdmaker.boot import BootAssets, BootInstaller
 from vhdmaker.commands import RunResult
 from vhdmaker.errors import ValidationError
@@ -72,7 +73,7 @@ def test_boot_installer_writes_mbr_boot_code_before_partition_boot_code(tmp_path
         for command, sudo in runner.calls
     )
     assert any(
-        command == ("mattrib", "-i", "/dev/nbd0p1", "+s", "+h", "::KERNEL.SYS") and sudo
+        command == ("mattrib", "-i", "/dev/nbd0p1", "+r", "+s", "+h", "-a", "::KERNEL.SYS") and sudo
         for command, sudo in runner.calls
     )
 
@@ -173,6 +174,66 @@ def test_boot_installer_uses_payload_target_dir_for_staged_copy(tmp_path: Path) 
     assert captured["partition_device"] == "/dev/nbd0p1"
     assert captured["payload_dir"] == payload_root
     assert captured["payload_target_dir"] == "DOS"
+
+
+def test_copy_payload_via_mount_expands_compressed_dos_payload_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = FakeRunner()
+    mount_root = tmp_path / "mount-root"
+    payload_root = tmp_path / "DOS"
+    _touch(payload_root / "SUBST.EX_", b"compressed")
+    _touch(payload_root / "KEYB.COM", b"keyb")
+
+    installer = BootInstaller(
+        runner,
+        mount_root=mount_root,
+        mbr_boot_candidates=(tmp_path / "missing-mbr.bin",),
+    )
+    monkeypatch.setattr(boot_module, "expand_dos_compressed_payload", lambda payload: b"expanded")
+
+    removed_paths: list[Path] = []
+
+    def fake_rmtree(path: Path) -> None:
+        removed_paths.append(Path(path))
+
+    monkeypatch.setattr(boot_module.shutil, "rmtree", fake_rmtree)
+    installer._copy_payload_via_mount(
+        partition_device=str(tmp_path / "disk.img"),
+        payload_dir=payload_root,
+        payload_target_dir="DOS",
+    )
+
+    staging_dirs = [path for path in mount_root.glob("staging-*") if path.is_dir()]
+    assert len(staging_dirs) == 1
+    staged_root = staging_dirs[0] / "DOS"
+    assert (staged_root / "SUBST.EXE").read_bytes() == b"expanded"
+    assert not (staged_root / "SUBST.EX_").exists()
+    assert (staged_root / "KEYB.COM").read_bytes() == b"keyb"
+    assert removed_paths and removed_paths[0] == staging_dirs[0]
+
+
+def test_copy_payload_via_mount_raises_when_compressed_payload_cannot_expand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = FakeRunner()
+    payload_root = tmp_path / "DOS"
+    _touch(payload_root / "SUBST.EX_", b"compressed")
+    installer = BootInstaller(
+        runner,
+        mount_root=tmp_path / "mount-root",
+        mbr_boot_candidates=(tmp_path / "missing-mbr.bin",),
+    )
+
+    def failing_expand(payload: bytes) -> bytes:
+        del payload
+        raise ValidationError("decode failed")
+
+    monkeypatch.setattr(boot_module, "expand_dos_compressed_payload", failing_expand)
+    with pytest.raises(ValidationError, match="Unable to expand compressed DOS payload file SUBST.EX_"):
+        installer._copy_payload_via_mount(
+            partition_device=str(tmp_path / "disk.img"),
+            payload_dir=payload_root,
+            payload_target_dir="DOS",
+        )
 
 
 def test_boot_installer_reports_missing_mbr_boot_code(tmp_path: Path) -> None:
@@ -348,7 +409,67 @@ def test_make_floppy_bootable_writes_boot_sector_and_system_files(tmp_path: Path
         for command, sudo in runner.calls
     )
     assert any(
-        command == ("mattrib", "-i", str(image_path), "+s", "+h", "::IBMBIO.COM") and sudo
+        command == ("mattrib", "-i", str(image_path), "+r", "+s", "+h", "-a", "::IBMBIO.COM") and sudo
+        for command, sudo in runner.calls
+    )
+    assert not any(
+        command == ("mattrib", "-i", str(image_path), "+r", "+s", "+h", "-a", "::COMMAND.COM") and sudo
+        for command, sudo in runner.calls
+    )
+    assert not any(
+        command == ("mattrib", "-i", str(image_path), "-r", "-s", "-h", "::COMMAND.COM") and sudo
+        for command, sudo in runner.calls
+    )
+
+
+def test_make_floppy_bootable_normalizes_msdos_command_attributes(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    boot_template = tmp_path / "BOOTSECT.BIN"
+    _touch(boot_template, b"\0" * 512)
+    io = tmp_path / "IO.SYS"
+    msdos = tmp_path / "MSDOS.SYS"
+    command = tmp_path / "COMMAND.COM"
+    _touch(io, b"io")
+    _touch(msdos, b"msdos")
+    _touch(command, b"command")
+
+    installer = BootInstaller(
+        runner,
+        mount_root=tmp_path / "mount-root",
+        mbr_boot_candidates=(tmp_path / "missing-mbr.bin",),
+    )
+    assets = BootAssets(
+        system_files={
+            "IO.SYS": io,
+            "MSDOS.SYS": msdos,
+            "COMMAND.COM": command,
+        },
+        boot_sector_template=boot_template,
+        fdos_payload_dir=None,
+    )
+    image_path = tmp_path / "disk-msdos.img"
+    image_path.write_bytes(b"\0" * (1440 * 1024))
+
+    installer.make_floppy_bootable(
+        image_path=image_path,
+        assets=assets,
+        boot_mode=BootMode.MSDOS622,
+    )
+
+    assert any(
+        command == ("mattrib", "-i", str(image_path), "+r", "+s", "+h", "-a", "::IO.SYS") and sudo
+        for command, sudo in runner.calls
+    )
+    assert any(
+        command == ("mattrib", "-i", str(image_path), "+r", "+s", "+h", "-a", "::MSDOS.SYS") and sudo
+        for command, sudo in runner.calls
+    )
+    assert any(
+        command == ("mattrib", "-i", str(image_path), "-r", "-s", "-h", "::COMMAND.COM") and sudo
+        for command, sudo in runner.calls
+    )
+    assert not any(
+        command == ("mattrib", "-i", str(image_path), "+r", "+s", "+h", "-a", "::COMMAND.COM") and sudo
         for command, sudo in runner.calls
     )
 

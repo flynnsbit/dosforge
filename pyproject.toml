@@ -34,4 +34,6 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
   "native_linux: integration tests that use native Linux mount/fsck tooling and require privileged loop mounts",
+  "native_boot: integration tests that boot images in QEMU and validate runtime boot markers",
+  "native_86box: integration tests that execute external 86Box boot command contracts",
 ]

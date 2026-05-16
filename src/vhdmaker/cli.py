@@ -21,7 +21,12 @@ from .models import (
     FreeDOSSource,
     IBMDOSVersion,
     MSDOSInstallProfile,
+    MachineTarget,
+    MartyPCXebecDriveType,
     MediaType,
+    DEFAULT_MARTYPC_AT_FORMAT_SLUG,
+    MARTYPC_AT_FORMATS,
+    lookup_martypc_at_format,
 )
 from .size import parse_size
 
@@ -56,7 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
     create = subcommands.add_parser("create", help="Create and format a VHD or floppy IMG.")
     create.add_argument("--path", required=True, help="Output image file path.")
     create.add_argument("--media-type", choices=[media.value for media in MediaType], default=MediaType.VHD.value)
-    create.add_argument("--size", help="Static size (for example 512M or 1G). Required for VHD mode.")
+    create.add_argument(
+        "--size",
+        help="Static size (for example 512M or 1G). Optional for VHD when --custom-payload-path is provided.",
+    )
     create.add_argument(
         "--format",
         dest="disk_format",
@@ -86,16 +94,56 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--boot-assets-path", default=None, help="Path to local boot assets dir or image.")
     create.add_argument("--freedos-download-url", default=None, help="Override FreeDOS auto-download URL.")
     create.add_argument(
+        "--dos-install-profile",
         "--msdos-install-profile",
+        dest="msdos_install_profile",
         choices=[profile.value for profile in MSDOSInstallProfile],
         default=MSDOSInstallProfile.MINIMAL.value,
-        help="MS-DOS 7.1 install profile: minimal boot files or full C:\\DOS payload.",
+        help="DOS install profile for bootable DOS modes: minimal boot files or full C:\\DOS-style payload.",
     )
     create.add_argument(
         "--ibm-dos-version",
         choices=[version.value for version in IBMDOSVersion],
         default=IBMDOSVersion.DOS33.value,
         help="IBM PC 8088/V20 DOS version: dos33 (max 32MB) or dos50 (max ~504MB).",
+    )
+    create.add_argument(
+        "--custom-payload-path",
+        default=None,
+        help="Directory whose contents are copied into the created filesystem root.",
+    )
+    create.add_argument(
+        "--machine-target",
+        choices=[target.value for target in MachineTarget],
+        default=MachineTarget.GENERIC.value,
+        help=(
+            "Emulator/machine profile constraining VHD geometry. "
+            "'generic' uses canonical ATA 16h/63spt; "
+            "'martypc-xebec' uses one of the 4 fixed Xebec MFM drive geometries."
+        ),
+    )
+    create.add_argument(
+        "--martypc-xebec-drive-type",
+        choices=[dt.value for dt in MartyPCXebecDriveType],
+        default=MartyPCXebecDriveType.TYPE2.value,
+        help=(
+            "MartyPC Xebec drive type when --machine-target=martypc-xebec: "
+            "type1 (10 MiB 306x4x17, requires FAT12 — not yet supported), "
+            "type16 (20 MiB 612x4x17), "
+            "type2 (20 MiB 615x4x17), "
+            "type13 (20 MiB 306x8x17)."
+        ),
+    )
+    create.add_argument(
+        "--martypc-at-drive-type",
+        default=DEFAULT_MARTYPC_AT_FORMAT_SLUG,
+        metavar="SLUG",
+        help=(
+            "MartyPC AT/XT-IDE drive type when --machine-target=martypc-xtide "
+            "or martypc-jride. Slug format is 'at-<cyl>-<heads>-<spt>' (for "
+            "example 'at-1024-16-63' for the 504 MiB entry). Run "
+            "'vhdmaker list-martypc-formats' for the full set of 127 entries."
+        ),
     )
 
     mount = subcommands.add_parser("mount", help="Mount a disk image and track it in app state.")
@@ -106,6 +154,10 @@ def build_parser() -> argparse.ArgumentParser:
     unmount.add_argument("--mount-point", required=True, help="Mount path to unmount.")
 
     subcommands.add_parser("list-mounts", help="List tracked active mounts.")
+    subcommands.add_parser(
+        "list-martypc-formats",
+        help="Print all 127 MartyPC AT/XT-IDE drive type slugs and exit.",
+    )
     return parser
 
 
@@ -167,10 +219,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             media_type = MediaType(args.media_type)
             floppy_type = FloppyType(args.floppy_type)
             disk_format = DiskFormat(args.disk_format) if media_type is MediaType.VHD else DiskFormat.FAT16
+            machine_target_value = MachineTarget(args.machine_target)
+            martypc_at_slug = args.martypc_at_drive_type
+            if machine_target_value in (
+                MachineTarget.MARTYPC_XTIDE,
+                MachineTarget.MARTYPC_JRIDE,
+            ):
+                # Validate slug eagerly so CLI errors are clear.
+                lookup_martypc_at_format(martypc_at_slug)
             if media_type is MediaType.VHD:
-                if not args.size:
-                    raise ValidationError("--size is required when --media-type is vhd.")
-                size_bytes = parse_size(args.size)
+                if args.size:
+                    size_bytes = parse_size(args.size)
+                elif args.custom_payload_path:
+                    size_bytes = 1
+                elif machine_target_value is MachineTarget.MARTYPC_XEBEC:
+                    size_bytes = MartyPCXebecDriveType(args.martypc_xebec_drive_type).size_bytes
+                elif machine_target_value in (
+                    MachineTarget.MARTYPC_XTIDE,
+                    MachineTarget.MARTYPC_JRIDE,
+                ):
+                    size_bytes = lookup_martypc_at_format(martypc_at_slug).size_bytes
+                else:
+                    raise ValidationError(
+                        "--size is required when --media-type is vhd unless --custom-payload-path is provided "
+                        "or --machine-target selects a fixed-geometry profile."
+                    )
             else:
                 size_bytes = parse_size(args.size) if args.size else floppy_type.size_bytes
             request = CreateRequest(
@@ -188,6 +261,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 freedos_download_url=args.freedos_download_url,
                 msdos_install_profile=MSDOSInstallProfile(args.msdos_install_profile),
                 ibm_dos_version=IBMDOSVersion(args.ibm_dos_version),
+                custom_payload_path=Path(args.custom_payload_path).expanduser() if args.custom_payload_path else None,
+                machine_target=MachineTarget(args.machine_target),
+                martypc_xebec_drive_type=MartyPCXebecDriveType(args.martypc_xebec_drive_type),
+                martypc_at_drive_type_slug=martypc_at_slug,
             )
             manager.create_and_prepare(request)
             print(f"Created and prepared {request.path.expanduser().resolve()}")
@@ -213,6 +290,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 0
             for mount in mounts:
                 print(f"{mount.mount_point}\t{mount.vhd_path}\t{mount.nbd_device}")
+            return 0
+
+        if args.command == "list-martypc-formats":
+            print(
+                f"{'slug':18s}  {'CHS':>13}  {'bytes':>11}  {'MiB':>7}  description"
+            )
+            for fmt in MARTYPC_AT_FORMATS:
+                chs = f"{fmt.cylinders}x{fmt.heads}x{fmt.sectors_per_track}"
+                print(
+                    f"{fmt.slug:18s}  {chs:>13}  {fmt.size_bytes:>11}  "
+                    f"{fmt.size_bytes/1024/1024:>7.2f}  {fmt.description}"
+                )
             return 0
     except VhdMakerError as exc:
         print(str(exc), file=sys.stderr)

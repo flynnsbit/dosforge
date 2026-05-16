@@ -10,6 +10,7 @@ import shutil
 import struct
 import urllib.request
 import zipfile
+from collections import OrderedDict
 from urllib.error import HTTPError, URLError
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +18,17 @@ from uuid import uuid4
 
 from .commands import CommandRunner
 from .errors import ValidationError
-from .models import BootMode, CreateRequest, DiskFormat, FloppyType, FreeDOSSource, IBMDOSVersion, MSDOSInstallProfile
+from .mscompress import compressed_variant_name, expand_dos_compressed_payload, expanded_name_from_compressed
+from .models import (
+    BootMode,
+    CreateRequest,
+    DiskFormat,
+    FloppyType,
+    FreeDOSSource,
+    IBMDOSVersion,
+    MSDOSInstallProfile,
+    MediaType,
+)
 from .paths import app_cache_dir, app_mount_root
 
 FREEDOS_DEFAULT_IMAGE_URL = (
@@ -55,15 +66,7 @@ _MSDOS71_ROOT_FILES_EXCLUDED_FROM_DOS_DIR = {
 }
 _MSDOS71_DEFAULT_AUTOEXEC_BAT = (
     "@ECHO OFF\r\n"
-    "PATH=C:\\DOS;..;.\r\n"
-    "PROMPT $P$G\r\n"
-    "SET DIRCMD=/4\r\n"
-    "SET TEMP=C:\\DOS\\TEMP\r\n"
-    "IF NOT EXIST C:\\DOS\\TEMP MD C:\\DOS\\TEMP\r\n"
-    "BREAK ON\r\n"
-    "ECHO.\r\n"
-    "ECHO MS-DOS 7.10 ready.\r\n"
-    "ECHO.\r\n"
+    "PATH=A:\\DOS\r\n"
 )
 _FREEDOS_USERSPACE_TOOLS = (
     "assign",
@@ -119,11 +122,9 @@ _AUTOEXEC_A_DRIVE_PATTERN = re.compile(r"(?<![A-Za-z0-9_])A:\\", re.IGNORECASE)
 _AUTOEXEC_PROMPT_PATTERN = re.compile(r"^\s*@?\s*PROMPT\s+.*$", re.IGNORECASE | re.MULTILINE)
 _AUTOEXEC_PATH_PATTERN = re.compile(r"^\s*@?\s*SET\s+PATH\s*=.*$", re.IGNORECASE | re.MULTILINE)
 _MSDOS_DEVICE_PATTERN = re.compile(r"^(?P<prefix>\s*DEVICE(?:HIGH)?=)(?P<driver>[^\s]+)(?P<suffix>.*)$", re.IGNORECASE)
+_MSDOS_INSTALL_PATTERN = re.compile(r"^\s*INSTALL(?:HIGH)?=(?P<program>[^\s]+)(?P<suffix>.*)$", re.IGNORECASE)
 _MSDOS_PATH_PATTERN = re.compile(r"^\s*(?:SET\s+)?PATH(?:\s*=|\s+).*$", re.IGNORECASE)
-_MSDOS_DOSLFN_TABLE_PATTERN = re.compile(
-    r"(?P<prefix>\bDOSLFN(?:\.COM)?\s+/Z:)(?P<table>[^\s]+)",
-    re.IGNORECASE,
-)
+_MSDOS_COUNTRY_PATTERN = re.compile(r"^\s*COUNTRY\s*=", re.IGNORECASE)
 _VALID_FAT_MEDIA_DESCRIPTORS = frozenset({0xF0, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF})
 _MSDOS_INSTALL_DIR_DRIVERS = frozenset(
     {
@@ -136,13 +137,80 @@ _MSDOS_INSTALL_DIR_DRIVERS = frozenset(
         "SETVER.EXE",
     }
 )
+_DOS_CORE_PAYLOAD_UTILITY_CANDIDATES = (
+    ("EDIT.COM",),
+    ("E.EXE",),
+    ("CHKDSK.EXE", "CHKDSK.COM", "CHKDSK.EX_"),
+    ("SUBST.EXE", "SUBST.EX_"),
+    ("ATTRIB.EXE", "ATTRIB.EX_"),
+    ("FDISK.EXE", "FDISK.COM", "FDISK.EX_"),
+    ("FORMAT.COM", "FORMAT.EXE", "FORMAT.CO_"),
+    ("SYS.COM", "SYS.EXE", "SYS.CO_"),
+    ("MODE.COM", "MODE.EXE", "MODE.CO_"),
+    ("MEM.EXE", "MEM.COM", "MEM.EX_"),
+    ("KEYB.COM", "KEYB.EXE", "KEYB.CO_"),
+    ("DEBUG.EXE", "DEBUG.COM", "DEBUG.EX_"),
+    ("EDLIN.EXE", "EDLIN.COM", "EDLIN.EX_"),
+    ("XCOPY.EXE", "XCOPY.COM", "XCOPY.EX_"),
+    ("FIND.EXE", "FIND.COM", "FIND.EX_"),
+    ("MORE.COM", "MORE.EXE", "MORE.CO_"),
+    ("LABEL.EXE", "LABEL.COM", "LABEL.EX_"),
+    ("DISKCOPY.COM", "DISKCOPY.EXE", "DISKCOPY.CO_"),
+    ("DISKCOMP.COM", "DISKCOMP.EXE", "DISKCOMP.CO_"),
+    ("QBASIC.EXE", "QBASIC.EX_"),
+)
+_DOS_CORE_PAYLOAD_COMPANION_FILES = {
+    "EDIT.COM": ("EDIT.HLP",),
+    "QBASIC.EXE": ("QBASIC.HLP",),
+    "E.EXE": ("E.EX", "E.INI", "EHELP.HLP"),
+}
+_DOS_CORE_PAYLOAD_MIN_BYTES = 64 * 1024
+_DOS_CORE_PAYLOAD_MAX_BYTES = 512 * 1024
+_DOS_STARTUP_WRAPPER_COMMANDS = frozenset({"CALL", "LH", "LOADHIGH"})
+_DOS_INTERNAL_COMMANDS = frozenset(
+    {
+        "BREAK",
+        "CD",
+        "CHDIR",
+        "CLS",
+        "COPY",
+        "CTTY",
+        "DATE",
+        "DEL",
+        "DIR",
+        "ECHO",
+        "ERASE",
+        "FOR",
+        "GOTO",
+        "IF",
+        "MD",
+        "MKDIR",
+        "PATH",
+        "PAUSE",
+        "PROMPT",
+        "RD",
+        "REM",
+        "REN",
+        "RENAME",
+        "RMDIR",
+        "SET",
+        "SHIFT",
+        "TIME",
+        "TYPE",
+        "VER",
+        "VERIFY",
+        "VOL",
+    }
+)
+_DOS_BOOT_ROOT_FILES = frozenset({"COMMAND.COM", "IBMBIO.COM", "IBMDOS.COM", "IO.SYS", "KERNEL.SYS", "MSDOS.SYS"})
+_DOS_SYSTEM_HIDDEN_FILES = frozenset({"IBMBIO.COM", "IBMDOS.COM", "IO.SYS", "KERNEL.SYS", "MSDOS.SYS"})
 _SAVE_DSKF_HEADER_MIN = 0x2A
 _SAVE_DSKF_SIGNATURE = b"\xAA\x59"
 _SAVE_DSKF_SECTOR_COUNT_OFFSET = 0x22
 _SAVE_DSKF_FIRST_SECTOR_OFFSET = 0x26
 
 
-def normalize_msdos_config_sys(text: str, *, install_dir: str = r"C:\DOS") -> str:
+def normalize_msdos_config_sys(text: str, *, install_dir: str = r"A:\DOS") -> str:
     normalized = _as_dos_text(text).replace("\r\n", "\n")
     output: list[str] = []
     for raw_line in normalized.split("\n"):
@@ -159,27 +227,12 @@ def normalize_msdos_config_sys(text: str, *, install_dir: str = r"C:\DOS") -> st
             driver = _normalize_msdos_driver_path(match.group("driver"), install_dir)
             line = f"{match.group('prefix')}{driver}{match.group('suffix')}"
         output.append(line)
-    output.append(f"SET PATH={install_dir};..;.")
     return _as_dos_text("\r\n".join(output).rstrip("\r\n") + "\r\n")
 
 
-def normalize_msdos_autoexec_bat(text: str, *, install_dir: str = r"C:\DOS") -> str:
-    normalized = _as_dos_text(text).replace("\r\n", "\n")
-    output: list[str] = []
-    for raw_line in normalized.split("\n"):
-        line = raw_line.rstrip("\r")
-        if _MSDOS_PATH_PATTERN.match(line.strip()):
-            continue
-        line = _MSDOS_DOSLFN_TABLE_PATTERN.sub(
-            lambda match: f"{match.group('prefix')}{install_dir}\\{_dos_basename(match.group('table'))}",
-            line,
-        )
-        output.append(line)
-
-    path_line = f"PATH={install_dir};..;."
-    insert_index = 1 if output and output[0].strip().upper() == "@ECHO OFF" else 0
-    output.insert(insert_index, path_line)
-    return _as_dos_text("\r\n".join(output).rstrip("\r\n") + "\r\n")
+def normalize_msdos_autoexec_bat(text: str, *, install_dir: str = r"A:\DOS") -> str:
+    _ = text
+    return _as_dos_text(f"@ECHO OFF\r\nPATH={install_dir}\r\n")
 
 
 def _normalize_msdos_driver_path(driver: str, install_dir: str) -> str:
@@ -359,6 +412,17 @@ class BootAssetResolver:
         self._populate_freedos_startup_aliases(files)
 
         template = self._resolve_boot_template(directory, disk_format)
+        if disk_format is DiskFormat.FAT32:
+            template_sector = template.read_bytes()[:512]
+            if not self._looks_like_freedos_fat32_boot_sector(template_sector):
+                fat16_template = self._find_file_case_insensitive(directory, "BOOTSECT_FAT16.BIN")
+                if fat16_template is None:
+                    raise ValidationError(
+                        "FreeDOS FAT32 boot assets include a non-bootable BOOTSECT_FAT32.BIN and no "
+                        "BOOTSECT_FAT16.BIN fallback is available. Provide valid FreeDOS boot templates."
+                    )
+                self._validate_boot_sector_file(fat16_template)
+                template = fat16_template
         payload_dir = directory / "FDOS"
         self._prefer_freedos_core_system_files(files, payload_dir)
         mbr_template = self._resolve_mbr_boot_template(directory) if disk_format is DiskFormat.FAT16 else None
@@ -642,10 +706,16 @@ class BootAssetResolver:
         )
         if direct_assets is not None:
             return direct_assets
+        payload_budget_bytes = (
+            self._dos_core_payload_budget(request)
+            if request.msdos_install_profile is MSDOSInstallProfile.FULL
+            else None
+        )
         return self._resolve_msdos71_from_install_images(
             directory,
             disk_format=request.disk_format,
             install_profile=request.msdos_install_profile,
+            payload_budget_bytes=payload_budget_bytes,
         )
 
     def _resolve_ibm8088(self, request: CreateRequest) -> BootAssets:
@@ -663,6 +733,7 @@ class BootAssetResolver:
             cache_tag=f"ibm8088-{request.ibm_dos_version.value}",
             prefer_install_image_boot_sector=request.ibm_dos_version is IBMDOSVersion.DOS33,
             default_asset_dirs=default_asset_dirs,
+            install_profile=request.msdos_install_profile,
         )
 
     def _resolve_msdos33(self, request: CreateRequest) -> BootAssets:
@@ -673,16 +744,27 @@ class BootAssetResolver:
             cache_tag="msdos33",
             prefer_install_image_boot_sector=True,
             default_asset_dirs=("msdos33",),
+            install_profile=request.msdos_install_profile,
         )
 
     def _resolve_msdos331(self, request: CreateRequest) -> BootAssets:
+        # MS-DOS 3.31 (Compaq OEM and equivalents) introduced FAT16B with
+        # uint32 total_sectors_32, so >32 MiB FAT16 partitions are supported.
+        # The install diskettes are 720K floppies whose first sector is a
+        # FLOPPY boot sector (OEM "IBM  3.3", total16=1440); grafting that
+        # onto a hard-disk partition produces an unbootable VHD because the
+        # floppy boot code expects a 720K geometry and a fully-populated
+        # floppy BPB. Use prefer_install_image_boot_sector=False so vhdmaker
+        # synthesizes a proper hard-disk FAT16 boot sector from SYS.COM /
+        # FORMAT.COM extracted out of the install image (same as compaq331).
         return self._resolve_legacy_dos(
             request=request,
             profile_label="MS-DOS 3.31",
             version_subdir_name="msdos331",
             cache_tag="msdos331",
-            prefer_install_image_boot_sector=True,
-            default_asset_dirs=("msdos331",),
+            prefer_install_image_boot_sector=False,
+            default_asset_dirs=("msdos331", "compaq331"),
+            install_profile=request.msdos_install_profile,
         )
 
     def _resolve_msdos5(self, request: CreateRequest) -> BootAssets:
@@ -693,6 +775,7 @@ class BootAssetResolver:
             cache_tag="msdos5",
             prefer_install_image_boot_sector=True,
             default_asset_dirs=("msdos5",),
+            install_profile=request.msdos_install_profile,
         )
 
     def _resolve_msdos622(self, request: CreateRequest) -> BootAssets:
@@ -703,6 +786,7 @@ class BootAssetResolver:
             cache_tag="msdos622",
             prefer_install_image_boot_sector=True,
             default_asset_dirs=("msdos622",),
+            install_profile=request.msdos_install_profile,
         )
 
     def _resolve_pcdos(self, request: CreateRequest) -> BootAssets:
@@ -713,6 +797,7 @@ class BootAssetResolver:
             cache_tag="pcdos",
             prefer_install_image_boot_sector=False,
             default_asset_dirs=("pcdos", "pcdos7"),
+            install_profile=request.msdos_install_profile,
         )
 
     def _resolve_pcdos7(self, request: CreateRequest) -> BootAssets:
@@ -723,6 +808,9 @@ class BootAssetResolver:
             cache_tag="pcdos7",
             prefer_install_image_boot_sector=True,
             default_asset_dirs=("pcdos7",),
+            prefer_install_images_first=True,
+            prefer_directory_boot_template=False,
+            install_profile=request.msdos_install_profile,
         )
 
     def _resolve_compaq331(self, request: CreateRequest) -> BootAssets:
@@ -733,6 +821,7 @@ class BootAssetResolver:
             cache_tag="compaq331",
             prefer_install_image_boot_sector=False,
             default_asset_dirs=("compaq331", "msdos331"),
+            install_profile=request.msdos_install_profile,
         )
 
     def _resolve_legacy_dos(
@@ -744,12 +833,20 @@ class BootAssetResolver:
         cache_tag: str,
         prefer_install_image_boot_sector: bool,
         default_asset_dirs: tuple[str, ...] = (),
+        prefer_install_images_first: bool = False,
+        prefer_directory_boot_template: bool = True,
+        install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL,
     ) -> BootAssets:
         if request.disk_format is not DiskFormat.FAT16:
             raise ValidationError(f"{profile_label} boot mode requires FAT16 format.")
         directory = self._resolve_legacy_assets_directory(request=request, fallback_dirs=default_asset_dirs)
         if not directory.is_dir():
             raise ValidationError(f"{profile_label} asset path must be a directory: {directory}")
+        payload_budget_bytes = (
+            self._dos_core_payload_budget(request)
+            if install_profile is MSDOSInstallProfile.FULL
+            else None
+        )
 
         candidate_directories: list[Path] = [directory]
         if version_subdir_name:
@@ -758,17 +855,59 @@ class BootAssetResolver:
                 candidate_directories.append(version_subdir)
 
         for candidate in candidate_directories:
-            direct_assets = self._try_resolve_legacy_dos_from_directory(candidate)
-            if direct_assets is not None:
-                return direct_assets
+            if prefer_install_images_first:
+                image_assets = self._try_resolve_legacy_dos_from_install_images(
+                    candidate,
+                    cache_tag=cache_tag,
+                    prefer_install_image_boot_sector=prefer_install_image_boot_sector,
+                    prefer_directory_boot_template=prefer_directory_boot_template,
+                    install_profile=install_profile,
+                    payload_budget_bytes=payload_budget_bytes,
+                    media_type=request.media_type,
+                )
+                if image_assets is not None:
+                    return image_assets
 
-            image_assets = self._try_resolve_legacy_dos_from_install_images(
-                candidate,
-                cache_tag=cache_tag,
-                prefer_install_image_boot_sector=prefer_install_image_boot_sector,
-            )
-            if image_assets is not None:
-                return image_assets
+                direct_assets = self._try_resolve_legacy_dos_from_directory(
+                    candidate,
+                    install_profile=install_profile,
+                )
+                if direct_assets is not None:
+                    return direct_assets
+            else:
+                direct_assets = self._try_resolve_legacy_dos_from_directory(
+                    candidate,
+                    install_profile=install_profile,
+                )
+                if direct_assets is not None:
+                    if (
+                        install_profile is MSDOSInstallProfile.FULL
+                        and direct_assets.fdos_payload_dir is None
+                    ):
+                        image_assets = self._try_resolve_legacy_dos_from_install_images(
+                            candidate,
+                            cache_tag=cache_tag,
+                            prefer_install_image_boot_sector=prefer_install_image_boot_sector,
+                            prefer_directory_boot_template=prefer_directory_boot_template,
+                            install_profile=install_profile,
+                            payload_budget_bytes=payload_budget_bytes,
+                            media_type=request.media_type,
+                        )
+                        if image_assets is not None:
+                            return image_assets
+                    return direct_assets
+
+                image_assets = self._try_resolve_legacy_dos_from_install_images(
+                    candidate,
+                    cache_tag=cache_tag,
+                    prefer_install_image_boot_sector=prefer_install_image_boot_sector,
+                    prefer_directory_boot_template=prefer_directory_boot_template,
+                    install_profile=install_profile,
+                    payload_budget_bytes=payload_budget_bytes,
+                    media_type=request.media_type,
+                )
+                if image_assets is not None:
+                    return image_assets
 
         raise ValidationError(
             f"{profile_label} assets were not found. Provide either direct files "
@@ -788,7 +927,12 @@ class BootAssetResolver:
             f"Checked defaults under current directory: {', '.join(fallback_dirs) if fallback_dirs else '(none)'}"
         )
 
-    def _try_resolve_legacy_dos_from_directory(self, directory: Path) -> BootAssets | None:
+    def _try_resolve_legacy_dos_from_directory(
+        self,
+        directory: Path,
+        *,
+        install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL,
+    ) -> BootAssets | None:
         files = self._collect_legacy_system_files_from_directory(directory)
         if files is None:
             return None
@@ -796,11 +940,28 @@ class BootAssetResolver:
             located = self._find_file_case_insensitive(directory, name)
             if located is not None:
                 files[name] = located
+        startup_defaults_root = self.cache_root / f"legacy-startup-{self._hash_value(str(directory.resolve()))}"
+        if any(name in files for name in _OPTIONAL_MSDOS_STARTUP_FILES):
+            self._normalize_msdos_startup_files(files, defaults_root=startup_defaults_root)
+        payload_dir: Path | None = None
+        payload_target_dir = "FDOS"
+        if install_profile is MSDOSInstallProfile.FULL:
+            self._ensure_msdos_startup_files(files, defaults_root=startup_defaults_root)
+            self._normalize_msdos_startup_files(files, defaults_root=startup_defaults_root)
+            payload_dir = self._find_directory_case_insensitive(directory, "DOS")
+            if payload_dir is not None:
+                payload_target_dir = "DOS"
+        self._ensure_country_sys_from_directory(files, directory)
         try:
             template = self._resolve_boot_template(directory, DiskFormat.FAT16)
         except ValidationError:
             return None
-        return BootAssets(system_files=files, boot_sector_template=template)
+        return BootAssets(
+            system_files=files,
+            boot_sector_template=template,
+            fdos_payload_dir=payload_dir,
+            payload_target_dir=payload_target_dir,
+        )
 
     def _try_resolve_legacy_dos_from_install_images(
         self,
@@ -808,6 +969,10 @@ class BootAssetResolver:
         *,
         cache_tag: str,
         prefer_install_image_boot_sector: bool,
+        prefer_directory_boot_template: bool = True,
+        install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL,
+        payload_budget_bytes: int | None = None,
+        media_type: MediaType = MediaType.VHD,
     ) -> BootAssets | None:
         install_images = self._collect_msdos71_install_images(directory)
         if not install_images:
@@ -820,18 +985,24 @@ class BootAssetResolver:
         files = self._extract_legacy_system_files_from_images(install_images, extraction_root)
         if files is None:
             return None
-        for name in _OPTIONAL_MSDOS_STARTUP_FILES:
-            extracted = self._extract_file_from_images(install_images, extraction_root, name, required=False)
-            if extracted is not None:
-                files[name] = extracted
+        if install_profile is MSDOSInstallProfile.FULL:
+            for name in _OPTIONAL_MSDOS_STARTUP_FILES:
+                extracted = self._extract_file_from_images(install_images, extraction_root, name, required=False)
+                if extracted is not None:
+                    files[name] = extracted
+            startup_defaults_root = extraction_root / "startup-defaults"
+            self._ensure_msdos_startup_files(files, defaults_root=startup_defaults_root)
+            self._normalize_msdos_startup_files(files, defaults_root=startup_defaults_root)
+        self._ensure_country_sys_from_install_images(files, install_images, extraction_root=extraction_root)
         for name in _IBM_DOS_BOOTSECTOR_SOURCES:
             self._extract_file_from_images(install_images, extraction_root, name, required=False)
 
         template: Path | None = None
-        try:
-            template = self._resolve_boot_template(directory, DiskFormat.FAT16)
-        except ValidationError:
-            template = None
+        if prefer_directory_boot_template:
+            try:
+                template = self._resolve_boot_template(directory, DiskFormat.FAT16)
+            except ValidationError:
+                template = None
 
         if template is None:
             template = extraction_root / "BOOTSECT_FAT16.BIN"
@@ -862,13 +1033,420 @@ class BootAssetResolver:
                     return None
                 template.write_bytes(boot_sector)
 
+        if media_type is MediaType.VHD:
+            self._normalize_legacy_vhd_boot_template(template=template, system_files=files)
+
         source_image_size_bytes = self._select_source_image_size_bytes(install_images)
+        payload_dir: Path | None = None
+        payload_target_dir = "FDOS"
+        if install_profile is MSDOSInstallProfile.FULL:
+            payload_dir = extraction_root / "DOS"
+            self._extract_legacy_full_payload_from_images(
+                install_images=install_images,
+                destination=payload_dir,
+                payload_budget_bytes=payload_budget_bytes,
+                startup_files=files,
+            )
+            payload_target_dir = "DOS"
 
         return BootAssets(
             system_files=files,
             boot_sector_template=template,
+            fdos_payload_dir=payload_dir,
+            payload_target_dir=payload_target_dir,
             source_image_size_bytes=source_image_size_bytes,
         )
+
+    def _extract_legacy_full_payload_from_images(
+        self,
+        *,
+        install_images: list[Path],
+        destination: Path,
+        payload_budget_bytes: int | None = None,
+        startup_files: dict[str, Path] | None = None,
+    ) -> None:
+        if destination.exists():
+            shutil.rmtree(destination)
+        destination.mkdir(parents=True, exist_ok=True)
+        self._extract_core_payload_from_images(
+            install_images=install_images,
+            destination=destination,
+            payload_budget_bytes=payload_budget_bytes,
+            startup_files=startup_files,
+        )
+
+    def _dos_core_payload_budget(self, request: CreateRequest) -> int | None:
+        if request.media_type is not MediaType.IMG and request.path.suffix.lower() not in {".img", ".ima"}:
+            return None
+        return min(
+            _DOS_CORE_PAYLOAD_MAX_BYTES,
+            max(_DOS_CORE_PAYLOAD_MIN_BYTES, request.size_bytes // 2),
+        )
+
+    def _trim_payload_to_core_files(
+        self,
+        *,
+        payload_dir: Path,
+        payload_budget_bytes: int | None,
+        startup_files: dict[str, Path] | None = None,
+    ) -> None:
+        startup_requests = self._collect_startup_payload_requests(startup_files or {})
+        selected = self._select_dos_core_payload_files(
+            roots=(payload_dir,),
+            payload_budget_bytes=payload_budget_bytes,
+            startup_requests=startup_requests,
+        )
+        if not selected:
+            raise ValidationError(
+                "Unable to identify core DOS utilities in the provided install media for full install profile."
+            )
+
+        staged_dir = payload_dir.parent / f"{payload_dir.name}-core-{uuid4().hex[:8]}"
+        if staged_dir.exists():
+            shutil.rmtree(staged_dir)
+        staged_dir.mkdir(parents=True, exist_ok=True)
+        written: set[str] = set()
+        for source in selected:
+            upper_name = source.name.upper()
+            if upper_name in written:
+                continue
+            shutil.copy2(source, staged_dir / source.name)
+            written.add(upper_name)
+
+        if payload_dir.exists():
+            shutil.rmtree(payload_dir)
+        staged_dir.rename(payload_dir)
+
+    def _extract_core_payload_from_images(
+        self,
+        *,
+        install_images: list[Path],
+        destination: Path,
+        payload_budget_bytes: int | None,
+        startup_files: dict[str, Path] | None,
+    ) -> None:
+        selected_size_bytes = 0
+        selected_names: set[str] = set()
+        extracted_any = False
+        startup_requests = self._collect_startup_payload_requests(startup_files or {})
+        for startup_candidates in startup_requests:
+            selected = self._extract_core_payload_file_from_images(
+                install_images=install_images,
+                destination=destination,
+                candidate_names=startup_candidates,
+                selected_names=selected_names,
+                selected_size_bytes=selected_size_bytes,
+                payload_budget_bytes=payload_budget_bytes,
+            )
+            if selected is None:
+                continue
+            extracted_any = True
+            selected_path, selected_size = selected
+            selected_names.add(selected_path.name.upper())
+            selected_size_bytes += selected_size
+
+        for utility_candidates in _DOS_CORE_PAYLOAD_UTILITY_CANDIDATES:
+            selected = self._extract_core_payload_file_from_images(
+                install_images=install_images,
+                destination=destination,
+                candidate_names=utility_candidates,
+                selected_names=selected_names,
+                selected_size_bytes=selected_size_bytes,
+                payload_budget_bytes=payload_budget_bytes,
+            )
+            if selected is None:
+                continue
+            extracted_any = True
+            selected_path, selected_size = selected
+            selected_names.add(selected_path.name.upper())
+            selected_size_bytes += selected_size
+            for companion_name in _DOS_CORE_PAYLOAD_COMPANION_FILES.get(selected_path.name.upper(), ()):
+                companion = self._extract_core_payload_file_from_images(
+                    install_images=install_images,
+                    destination=destination,
+                    candidate_names=(companion_name,),
+                    selected_names=selected_names,
+                    selected_size_bytes=selected_size_bytes,
+                    payload_budget_bytes=payload_budget_bytes,
+                )
+                if companion is None:
+                    continue
+                companion_path, companion_size = companion
+                selected_names.add(companion_path.name.upper())
+                selected_size_bytes += companion_size
+
+        if not extracted_any:
+            raise ValidationError(
+                "Unable to identify core DOS utilities in the provided install media for full install profile."
+            )
+
+    def _collect_startup_payload_requests(self, system_files: dict[str, Path]) -> tuple[tuple[str, ...], ...]:
+        requests: OrderedDict[tuple[str, ...], None] = OrderedDict()
+        for base_name, extensions in self._parse_config_payload_references(system_files):
+            self._record_startup_payload_request(requests, base_name, extensions)
+        for base_name, extensions in self._parse_autoexec_payload_references(system_files):
+            self._record_startup_payload_request(requests, base_name, extensions)
+        return tuple(requests.keys())
+
+    def _record_startup_payload_request(
+        self,
+        requests: OrderedDict[tuple[str, ...], None],
+        base_name: str,
+        extensions: tuple[str, ...],
+    ) -> None:
+        candidates: list[str] = []
+        for extension in extensions:
+            normalized = f"{base_name.upper()}.{extension.upper()}"
+            if normalized in _DOS_BOOT_ROOT_FILES:
+                continue
+            candidates.append(normalized)
+            compressed = compressed_variant_name(normalized)
+            if compressed is not None:
+                candidates.append(compressed)
+        if candidates:
+            requests.setdefault(tuple(candidates), None)
+
+    def _parse_config_payload_references(self, system_files: dict[str, Path]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        config = system_files.get("CONFIG.SYS")
+        if config is None or not config.exists() or not config.is_file():
+            return ()
+        try:
+            content = _read_dos_text(config)
+        except OSError:
+            return ()
+
+        references: OrderedDict[tuple[str, tuple[str, ...]], None] = OrderedDict()
+        for raw_line in _as_dos_text(content).splitlines():
+            line = raw_line.replace("\x1a", "").strip()
+            if not line:
+                continue
+            upper = line.upper()
+            if upper.startswith("REM ") or upper == "REM" or line.startswith("::"):
+                continue
+
+            device_match = _MSDOS_DEVICE_PATTERN.match(line)
+            if device_match is not None:
+                reference = self._normalize_startup_payload_reference(
+                    device_match.group("driver"),
+                    default_extensions=("SYS",),
+                )
+                if reference is not None:
+                    references.setdefault(reference, None)
+                continue
+
+            install_match = _MSDOS_INSTALL_PATTERN.match(line)
+            if install_match is not None:
+                reference = self._normalize_startup_payload_reference(
+                    install_match.group("program"),
+                    default_extensions=("COM", "EXE", "BAT"),
+                )
+                if reference is not None:
+                    references.setdefault(reference, None)
+
+        return tuple(references.keys())
+
+    def _parse_autoexec_payload_references(self, system_files: dict[str, Path]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        autoexec = system_files.get("AUTOEXEC.BAT")
+        if autoexec is None or not autoexec.exists() or not autoexec.is_file():
+            return ()
+        try:
+            content = _read_dos_text(autoexec)
+        except OSError:
+            return ()
+
+        references: OrderedDict[tuple[str, tuple[str, ...]], None] = OrderedDict()
+        for raw_line in _as_dos_text(content).splitlines():
+            line = raw_line.replace("\x1a", "").strip()
+            if not line:
+                continue
+            upper = line.upper()
+            if upper.startswith("REM ") or upper == "REM" or line.startswith("::"):
+                continue
+            if _MSDOS_PATH_PATTERN.match(line):
+                continue
+
+            tokens = line.split()
+            if not tokens:
+                continue
+            command = tokens[0].lstrip("@")
+            if not command:
+                continue
+            if command.upper() == "IF":
+                continue
+
+            while command.upper() in _DOS_STARTUP_WRAPPER_COMMANDS and len(tokens) > 1:
+                tokens = tokens[1:]
+                command = tokens[0].lstrip("@")
+                if not command:
+                    break
+            if not command:
+                continue
+            if command.upper() in _DOS_INTERNAL_COMMANDS:
+                continue
+            if "=" in command and not any(marker in command for marker in (".", "\\", "/")):
+                continue
+
+            reference = self._normalize_startup_payload_reference(
+                command,
+                default_extensions=("COM", "EXE", "BAT"),
+            )
+            if reference is None:
+                continue
+            references.setdefault(reference, None)
+
+        return tuple(references.keys())
+
+    def _normalize_startup_payload_reference(
+        self,
+        token: str,
+        *,
+        default_extensions: tuple[str, ...],
+    ) -> tuple[str, tuple[str, ...]] | None:
+        name = _dos_basename(token.strip().strip('"'))
+        if not name:
+            return None
+        upper_name = name.upper()
+        if upper_name in _DOS_INTERNAL_COMMANDS:
+            return None
+        if upper_name in {"COMMAND.COM", "IO.SYS", "MSDOS.SYS", "IBMBIO.COM", "IBMDOS.COM", "KERNEL.SYS"}:
+            return None
+
+        if "." in upper_name:
+            stem, extension = upper_name.rsplit(".", 1)
+            if not stem or not extension:
+                return None
+            return (stem, (extension,))
+        return (upper_name, default_extensions)
+
+    def _config_references_country_sys(self, system_files: dict[str, Path]) -> bool:
+        config = system_files.get("CONFIG.SYS")
+        if config is None or not config.exists() or not config.is_file():
+            return False
+        try:
+            content = _read_dos_text(config)
+        except OSError:
+            return False
+        for raw_line in _as_dos_text(content).splitlines():
+            line = raw_line.replace("\x1a", "").strip()
+            if not line:
+                continue
+            upper = line.upper()
+            if upper.startswith("REM ") or upper == "REM" or line.startswith("::"):
+                continue
+            if _MSDOS_COUNTRY_PATTERN.match(line):
+                return True
+        return False
+
+    def _ensure_country_sys_from_directory(self, system_files: dict[str, Path], directory: Path) -> None:
+        if "COUNTRY.SYS" in system_files:
+            return
+        if not self._config_references_country_sys(system_files):
+            return
+        country = self._find_file_case_insensitive(directory, "COUNTRY.SYS")
+        if country is not None:
+            system_files["COUNTRY.SYS"] = country
+
+    def _ensure_country_sys_from_install_images(
+        self,
+        system_files: dict[str, Path],
+        install_images: list[Path],
+        *,
+        extraction_root: Path,
+    ) -> None:
+        if "COUNTRY.SYS" in system_files:
+            return
+        if not self._config_references_country_sys(system_files):
+            return
+        country = self._extract_file_from_images_with_compression_fallback(
+            install_images,
+            extraction_root,
+            "COUNTRY.SYS",
+            required=False,
+        )
+        if country is not None:
+            system_files["COUNTRY.SYS"] = country
+
+    def _extract_core_payload_file_from_images(
+        self,
+        *,
+        install_images: list[Path],
+        destination: Path,
+        candidate_names: tuple[str, ...],
+        selected_names: set[str],
+        selected_size_bytes: int,
+        payload_budget_bytes: int | None,
+    ) -> tuple[Path, int] | None:
+        for candidate_name in candidate_names:
+            if candidate_name.upper() in selected_names:
+                continue
+            extracted = self._extract_file_from_images(
+                install_images,
+                destination,
+                candidate_name,
+                required=False,
+            )
+            if extracted is None:
+                continue
+            try:
+                size_bytes = extracted.stat().st_size
+            except OSError:
+                continue
+            if payload_budget_bytes is not None and selected_size_bytes + size_bytes > payload_budget_bytes:
+                if extracted.exists():
+                    extracted.unlink()
+                continue
+            return (extracted, size_bytes)
+        return None
+
+    def _select_dos_core_payload_files(
+        self,
+        *,
+        roots: tuple[Path, ...],
+        payload_budget_bytes: int | None,
+        startup_requests: tuple[tuple[str, ...], ...] = (),
+    ) -> list[Path]:
+        lookup: dict[str, list[Path]] = {}
+        for root in roots:
+            if not root.exists() or not root.is_dir():
+                continue
+            for candidate in sorted(root.rglob("*")):
+                if candidate.is_file():
+                    lookup.setdefault(candidate.name.upper(), []).append(candidate)
+
+        selected: list[Path] = []
+        selected_names: set[str] = set()
+        selected_size = 0
+
+        def select_first_available(*candidate_names: str) -> Path | None:
+            nonlocal selected_size
+            for candidate_name in candidate_names:
+                for source in lookup.get(candidate_name.upper(), ()):
+                    upper_name = source.name.upper()
+                    if upper_name in selected_names:
+                        return source
+                    try:
+                        source_size = source.stat().st_size
+                    except OSError:
+                        continue
+                    if payload_budget_bytes is not None and selected_size + source_size > payload_budget_bytes:
+                        continue
+                    selected.append(source)
+                    selected_names.add(upper_name)
+                    selected_size += source_size
+                    return source
+            return None
+
+        for startup_candidates in startup_requests:
+            select_first_available(*startup_candidates)
+
+        for candidate_names in _DOS_CORE_PAYLOAD_UTILITY_CANDIDATES:
+            chosen = select_first_available(*candidate_names)
+            if chosen is None:
+                continue
+            for companion in _DOS_CORE_PAYLOAD_COMPANION_FILES.get(chosen.name.upper(), ()):
+                select_first_available(companion)
+
+        return selected
 
     def _collect_legacy_system_files_from_directory(self, directory: Path) -> dict[str, Path] | None:
         for required_set in _LEGACY_DOS_SYSTEM_FILE_SETS:
@@ -929,6 +1507,7 @@ class BootAssetResolver:
             files,
             defaults_root=self.cache_root / "msdos71-default-startup",
         )
+        self._ensure_country_sys_from_directory(files, directory)
 
         try:
             template = self._resolve_boot_template(directory, disk_format)
@@ -954,6 +1533,7 @@ class BootAssetResolver:
         *,
         disk_format: DiskFormat,
         install_profile: MSDOSInstallProfile,
+        payload_budget_bytes: int | None = None,
     ) -> BootAssets:
         install_images = self._collect_msdos71_install_images(directory)
         if not install_images:
@@ -994,6 +1574,7 @@ class BootAssetResolver:
             files,
             defaults_root=extraction_root,
         )
+        self._ensure_country_sys_from_install_images(files, install_images, extraction_root=extraction_root)
 
         template: Path | None = None
         template_candidates = (
@@ -1026,6 +1607,8 @@ class BootAssetResolver:
                 install_images=install_images,
                 extraction_root=extraction_root,
                 destination=payload_dir,
+                payload_budget_bytes=payload_budget_bytes,
+                startup_files=files,
             )
             payload_target_dir = "DOS"
 
@@ -1227,6 +1810,8 @@ class BootAssetResolver:
         install_images: list[Path],
         extraction_root: Path,
         destination: Path,
+        payload_budget_bytes: int | None = None,
+        startup_files: dict[str, Path] | None = None,
     ) -> None:
         destination.mkdir(parents=True, exist_ok=True)
         for pak_name in (_MSDOS71_INSTALL_PAK, _MSDOS71_OPTIONAL_INSTALL_PAK):
@@ -1241,6 +1826,11 @@ class BootAssetResolver:
                         )
                     continue
             self._extract_msdos71_archive_all(pak_path, destination)
+        self._trim_payload_to_core_files(
+            payload_dir=destination,
+            payload_budget_bytes=payload_budget_bytes,
+            startup_files=startup_files,
+        )
 
     def _extract_msdos71_archive_all(self, pak_path: Path, destination: Path) -> None:
         destination_resolved = destination.resolve()
@@ -1369,6 +1959,29 @@ class BootAssetResolver:
         if b"This is not a bootable disk" in sector:
             return False
         return True
+
+    def _looks_like_msdos_floppy_fat12_boot_sector(self, sector: bytes) -> bool:
+        if len(sector) < 512 or sector[510:512] != b"\x55\xaa":
+            return False
+        if sector[54:62] != b"FAT12   ":
+            return False
+        return sector[21] in (0xF0, 0xF9, 0xFD, 0xFC, 0xFE)
+
+    def _normalize_legacy_vhd_boot_template(self, *, template: Path, system_files: dict[str, Path]) -> None:
+        try:
+            template_sector = template.read_bytes()[:512]
+        except OSError:
+            return
+        if not self._looks_like_msdos_floppy_fat12_boot_sector(template_sector):
+            return
+        # IO.SYS/MSDOS.SYS profiles need HDD-capable DOS boot code on VHD targets.
+        if "IO.SYS" in system_files and "MSDOS.SYS" in system_files:
+            # Preserve install-image DOS loader sectors when they already target IO.SYS/MSDOS.SYS.
+            if b"IO      SYS" in template_sector or b"MSDOS   SYS" in template_sector:
+                return
+            # FreeDOS-style floppy sectors (KERNEL.SYS loader) are not reliable for legacy HDD boot.
+            if b"KERNEL  SYS" in template_sector:
+                template.write_bytes(base64.b64decode(_BUILTIN_FAT16_BOOT_SECTOR_B64))
 
     def _looks_like_legacy_fat12_16_bpb(self, sector: bytes) -> bool:
         bytes_per_sector = struct.unpack("<H", sector[11:13])[0]
@@ -1501,6 +2114,56 @@ class BootAssetResolver:
             names = ", ".join(path.name for path in image_paths)
             raise ValidationError(f"Missing required DOS file {dos_name} in provided install images: {names}")
         return None
+
+    def _extract_file_from_images_with_compression_fallback(
+        self,
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        output_path = output_dir / dos_name
+        if output_path.exists() and output_path.stat().st_size > 0:
+            return output_path
+
+        extracted = self._extract_file_from_images(
+            image_paths,
+            output_dir,
+            dos_name,
+            required=False,
+        )
+        if extracted is not None:
+            return extracted
+
+        compressed_name = compressed_variant_name(dos_name)
+        if compressed_name is None:
+            if required:
+                names = ", ".join(path.name for path in image_paths)
+                raise ValidationError(f"Missing required DOS file {dos_name} in provided install images: {names}")
+            return None
+
+        compressed_path = self._extract_file_from_images(
+            image_paths,
+            output_dir,
+            compressed_name,
+            required=False,
+        )
+        if compressed_path is None:
+            if required:
+                names = ", ".join(path.name for path in image_paths)
+                raise ValidationError(f"Missing required DOS file {dos_name} in provided install images: {names}")
+            return None
+
+        try:
+            expanded_bytes = expand_dos_compressed_payload(compressed_path.read_bytes())
+        except OSError as exc:
+            raise ValidationError(f"Unable to read compressed DOS payload file: {compressed_path}") from exc
+        except ValidationError as exc:
+            raise ValidationError(f"Unable to expand compressed DOS payload file {compressed_path.name}") from exc
+
+        output_path.write_bytes(expanded_bytes)
+        return output_path
 
     def _extract_msdos_fat16_boot_sector_from_images(self, image_paths: list[Path]) -> bytes | None:
         for image_path in image_paths:
@@ -1813,6 +2476,8 @@ class BootInstaller:
     ) -> None:
         temp_files: list[Path] = []
         system_order = ("IO.SYS", "MSDOS.SYS", "IBMBIO.COM", "IBMDOS.COM", "KERNEL.SYS", "COMMAND.COM")
+        system_file_names = {name.upper() for name in system_files}
+        msdos_loader_profile = "IO.SYS" in system_file_names and "MSDOS.SYS" in system_file_names
         written: set[str] = set()
         try:
             for name in system_order:
@@ -1830,7 +2495,13 @@ class BootInstaller:
                     source_path=prepared_source,
                     destination_name=name,
                 )
-                self._mark_system_hidden(partition_device=partition_device, destination_name=name)
+                if name.upper() in _DOS_SYSTEM_HIDDEN_FILES:
+                    self._mark_system_hidden(partition_device=partition_device, destination_name=name)
+                self._normalize_command_com_for_msdos_profile(
+                    partition_device=partition_device,
+                    destination_name=name,
+                    msdos_loader_profile=msdos_loader_profile,
+                )
                 written.add(name)
 
             for destination_name, source_path in system_files.items():
@@ -1846,6 +2517,11 @@ class BootInstaller:
                     partition_device=partition_device,
                     source_path=prepared_source,
                     destination_name=destination_name,
+                )
+                self._normalize_command_com_for_msdos_profile(
+                    partition_device=partition_device,
+                    destination_name=destination_name,
+                    msdos_loader_profile=msdos_loader_profile,
                 )
 
             if fdos_payload_dir is not None and fdos_payload_dir.is_dir():
@@ -1868,8 +2544,25 @@ class BootInstaller:
         )
 
     def _mark_system_hidden(self, *, partition_device: str, destination_name: str) -> None:
+        # Match real DOS SYS attribute output: ReadOnly + Hidden + System (0x07), Archive cleared.
         self.runner.run(
-            ["mattrib", "-i", partition_device, "+s", "+h", f"::{destination_name}"],
+            ["mattrib", "-i", partition_device, "+r", "+s", "+h", "-a", f"::{destination_name}"],
+            sudo=True,
+            check=False,
+        )
+
+    def _normalize_command_com_for_msdos_profile(
+        self,
+        *,
+        partition_device: str,
+        destination_name: str,
+        msdos_loader_profile: bool,
+    ) -> None:
+        if not msdos_loader_profile or destination_name.upper() != "COMMAND.COM":
+            return
+        # DOS SYS leaves COMMAND.COM as Archive only (0x20). Clear R/S/H carried over from source media.
+        self.runner.run(
+            ["mattrib", "-i", partition_device, "-r", "-s", "-h", f"::{destination_name}"],
             sudo=True,
             check=False,
         )
@@ -1940,19 +2633,61 @@ class BootInstaller:
             mounted = True
             target_root = mountpoint / payload_target_dir
             target_root.mkdir(parents=True, exist_ok=True)
-            for source in payload_dir.rglob("*"):
+            for source in sorted(payload_dir.rglob("*")):
                 relative = source.relative_to(payload_dir)
                 destination = target_root / relative
                 if source.is_dir():
                     destination.mkdir(parents=True, exist_ok=True)
                 else:
                     destination.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source, destination)
+                    expanded_name = expanded_name_from_compressed(source.name)
+                    if expanded_name is None:
+                        shutil.copy2(source, destination)
+                        continue
+                    expanded_destination = destination.with_name(expanded_name)
+                    if expanded_destination.exists():
+                        continue
+                    try:
+                        expanded_bytes = expand_dos_compressed_payload(source.read_bytes())
+                    except OSError as exc:
+                        raise ValidationError(f"Unable to read compressed DOS payload file: {source}") from exc
+                    except ValidationError as exc:
+                        raise ValidationError(f"Unable to expand compressed DOS payload file {source.name}") from exc
+                    expanded_destination.write_bytes(expanded_bytes)
         finally:
             if mounted:
                 self.runner.run(["umount", str(mountpoint)], sudo=True, check=False)
             if mountpoint.exists():
                 shutil.rmtree(mountpoint)
+
+    def write_mbr_only(self, *, disk_device: str, template: Path | None = None) -> None:
+        """Write only the MBR boot code (sector 0 IPL), no VBR or system files.
+
+        Used by boot modes (e.g. compaq331) that produce the partition boot
+        sector and system files via an out-of-process step (running the
+        emulator's own SYS.COM). The standard MBR boot code chains to the
+        partition's VBR, which the QEMU step will write.
+        """
+        self._write_mbr_boot_code(disk_device=disk_device, template=template)
+
+    def patch_fat16_bpb_geometry(
+        self,
+        *,
+        partition_device: str,
+        bios_chs: tuple[int, int],
+    ) -> None:
+        """Patch BPB heads/spt to match BIOS-canonical geometry.
+
+        Public wrapper around :meth:`_patch_fat16_bpb_geometry`. Used by
+        boot modes that produce their boot sector out-of-band (e.g.
+        compaq331 via QEMU SYS.COM) but still need a BPB whose heads/spt
+        match the VHD footer's geometry so DOS's INT 13h calls land on the
+        right sectors.
+        """
+        self._patch_fat16_bpb_geometry(
+            partition_device=partition_device,
+            bios_chs=bios_chs,
+        )
 
     def _write_mbr_boot_code(self, *, disk_device: str, template: Path | None = None) -> None:
         mbr_code_path = template or self._find_mbr_boot_code()

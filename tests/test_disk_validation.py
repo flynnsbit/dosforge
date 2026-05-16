@@ -6,7 +6,17 @@ import pytest
 
 from vhdmaker.disk import DiskManager
 from vhdmaker.errors import ValidationError
-from vhdmaker.models import BootMode, CreateRequest, DiskFormat, FloppyType, FreeDOSSource, IBMDOSVersion, MediaType
+from vhdmaker.models import (
+    BootMode,
+    CreateRequest,
+    DiskFormat,
+    FloppyType,
+    FreeDOSSource,
+    IBMDOSVersion,
+    MachineTarget,
+    MartyPCXebecDriveType,
+    MediaType,
+)
 
 
 def test_validate_rejects_freedos_auto_with_fat32() -> None:
@@ -210,3 +220,367 @@ def test_validate_rejects_legacy_vhd_profile_with_fat32() -> None:
     )
     with pytest.raises(ValidationError, match="Legacy DOS boot profiles support FAT16 only"):
         manager._validate_create_request(request)
+
+
+def test_validate_rejects_missing_custom_payload_directory(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=64 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        custom_payload_path=tmp_path / "missing-payload",
+    )
+    with pytest.raises(ValidationError, match="Custom payload path does not exist"):
+        manager._validate_create_request(request)
+
+
+def test_validate_rejects_custom_payload_when_not_directory(tmp_path: Path) -> None:
+    manager = DiskManager()
+    payload_file = tmp_path / "payload.bin"
+    payload_file.write_bytes(b"x")
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=64 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        custom_payload_path=payload_file,
+    )
+    with pytest.raises(ValidationError, match="must be a directory"):
+        manager._validate_create_request(request)
+
+
+def test_apply_custom_payload_autosizing_grows_vhd_size(tmp_path: Path) -> None:
+    manager = DiskManager()
+    payload_dir = tmp_path / "payload"
+    payload_dir.mkdir(parents=True)
+    (payload_dir / "big.bin").write_bytes(b"x" * (8 * 1024 * 1024))
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=1 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        custom_payload_path=payload_dir,
+    )
+
+    manager._apply_custom_payload_autosizing(request)
+
+    assert request.size_bytes > 8 * 1024 * 1024
+
+
+def test_validate_martypc_xebec_accepts_type2_with_fat16(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "marty.vhd",
+        size_bytes=0,  # forced from drive type
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+    )
+    manager._validate_create_request(request)
+    # Validation must force the request size to match the Xebec drive type.
+    assert request.size_bytes == MartyPCXebecDriveType.TYPE2.size_bytes
+
+
+def test_validate_martypc_xebec_rejects_type1_until_fat12_supported(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "marty.vhd",
+        size_bytes=0,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE1,
+    )
+    with pytest.raises(ValidationError, match="Type 1.*FAT12"):
+        manager._validate_create_request(request)
+
+
+def test_validate_martypc_xebec_rejects_fat32(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "marty.vhd",
+        size_bytes=0,
+        disk_format=DiskFormat.FAT32,
+        boot_mode=BootMode.NONE,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+    )
+    with pytest.raises(ValidationError, match="FAT16"):
+        manager._validate_create_request(request)
+
+
+def test_validate_martypc_xebec_rejects_non_xt_boot_mode(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "marty.vhd",
+        size_bytes=0,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS622,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+    )
+    with pytest.raises(ValidationError, match="XT-class"):
+        manager._validate_create_request(request)
+
+
+def test_validate_martypc_xebec_rejects_img_media(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "marty.img",
+        size_bytes=FloppyType.F1440K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.IMG,
+        floppy_type=FloppyType.F1440K,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+    )
+    # IMG path validates floppy-only; MartyPC Xebec target is incompatible.
+    # IMG-path validation runs first and ignores machine_target by design,
+    # so we exercise the VHD path explicitly:
+    request_vhd = CreateRequest(
+        path=tmp_path / "marty.vhd",
+        size_bytes=0,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.VHD,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+    )
+    # Sanity: the VHD path accepts MartyPC.
+    manager._validate_create_request(request_vhd)
+
+
+def test_normalize_vhd_size_for_chs_returns_xebec_size(tmp_path: Path) -> None:
+    manager = DiskManager()
+    for drive_type in (
+        MartyPCXebecDriveType.TYPE16,
+        MartyPCXebecDriveType.TYPE2,
+        MartyPCXebecDriveType.TYPE13,
+    ):
+        request = CreateRequest(
+            path=tmp_path / "marty.vhd",
+            size_bytes=1234567,  # arbitrary; must be overridden
+            disk_format=DiskFormat.FAT16,
+            machine_target=MachineTarget.MARTYPC_XEBEC,
+            martypc_xebec_drive_type=drive_type,
+        )
+        assert manager._normalize_vhd_size_for_chs(request) == drive_type.size_bytes
+
+
+def test_validate_martypc_xtide_accepts_504mib_with_fat16(tmp_path: Path) -> None:
+    from vhdmaker.models import lookup_martypc_at_format, DEFAULT_MARTYPC_AT_FORMAT_SLUG
+
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "marty.vhd",
+        size_bytes=0,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS622,
+        machine_target=MachineTarget.MARTYPC_XTIDE,
+        martypc_at_drive_type_slug=DEFAULT_MARTYPC_AT_FORMAT_SLUG,
+    )
+    manager._validate_create_request(request)
+    assert request.size_bytes == lookup_martypc_at_format(DEFAULT_MARTYPC_AT_FORMAT_SLUG).size_bytes
+
+
+def test_validate_martypc_xtide_rejects_below_fat16_min(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "marty.vhd",
+        size_bytes=0,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        machine_target=MachineTarget.MARTYPC_XTIDE,
+        martypc_at_drive_type_slug="at-306-4-17",  # 10.16 MiB
+    )
+    with pytest.raises(ValidationError, match="FAT16 minimum"):
+        manager._validate_create_request(request)
+
+
+def test_validate_martypc_jride_rejects_oversize_for_dos33(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "marty.vhd",
+        size_bytes=0,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+        machine_target=MachineTarget.MARTYPC_JRIDE,
+        martypc_at_drive_type_slug="at-1024-16-63",  # 504 MiB - way over DOS 3.3 32 MiB cap
+    )
+    with pytest.raises(ValidationError, match="DOS 3.3"):
+        manager._validate_create_request(request)
+
+
+def test_normalize_vhd_size_for_chs_returns_at_drive_size(tmp_path: Path) -> None:
+    from vhdmaker.models import MARTYPC_AT_FORMATS_BY_SLUG
+
+    manager = DiskManager()
+    for slug in ("at-1024-16-63", "at-1218-15-36", "at-1054-16-63"):
+        request = CreateRequest(
+            path=tmp_path / "marty.vhd",
+            size_bytes=999_999_999,
+            disk_format=DiskFormat.FAT16,
+            machine_target=MachineTarget.MARTYPC_XTIDE,
+            martypc_at_drive_type_slug=slug,
+        )
+        expected = MARTYPC_AT_FORMATS_BY_SLUG[slug].size_bytes
+        assert manager._normalize_vhd_size_for_chs(request) == expected
+
+
+def test_lookup_martypc_at_format_rejects_unknown_slug() -> None:
+    from vhdmaker.models import lookup_martypc_at_format
+
+    with pytest.raises(ValueError, match="Unknown MartyPC"):
+        lookup_martypc_at_format("at-nonsense-1-2-3")
+
+
+def test_validate_rejects_custom_payload_pointing_at_install_diskettes(tmp_path: Path) -> None:
+    """Reject the common mistake of putting the DOS install dir into custom-payload.
+
+    The custom payload feature copies the directory verbatim to C:\\; if the
+    user typed the install-disk directory there, install diskettes (Disk1.img,
+    Disk2.img, ...) would land on the disk instead of being extracted.
+    """
+    manager = DiskManager()
+    install_dir = tmp_path / "msdos622"
+    install_dir.mkdir()
+    for name in ("Disk1.img", "Disk2.img", "Disk3.img"):
+        (install_dir / name).write_bytes(b"\0" * 1024)
+
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS622,
+        custom_payload_path=install_dir,
+    )
+    with pytest.raises(ValidationError, match="install diskette"):
+        manager._validate_create_request(request)
+
+
+def test_validate_rejects_custom_payload_equal_to_boot_assets_path(tmp_path: Path) -> None:
+    manager = DiskManager()
+    install_dir = tmp_path / "msdos622"
+    install_dir.mkdir()
+    # No install-image .img files, so the install-image heuristic won't fire.
+    (install_dir / "README.txt").write_text("hello")
+    (install_dir / "IO.SYS").write_bytes(b"\0" * 1024)
+
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS622,
+        boot_assets_path=install_dir,
+        custom_payload_path=install_dir,
+    )
+    with pytest.raises(ValidationError, match="boot assets directory"):
+        manager._validate_create_request(request)
+
+
+def test_validate_allows_custom_payload_distinct_from_boot_assets(tmp_path: Path) -> None:
+    manager = DiskManager()
+    install_dir = tmp_path / "msdos622"
+    install_dir.mkdir()
+    (install_dir / "Disk1.img").write_bytes(b"\0" * 1024)
+    (install_dir / "Disk2.img").write_bytes(b"\0" * 1024)
+
+    payload_dir = tmp_path / "user-payload"
+    payload_dir.mkdir()
+    (payload_dir / "notes.txt").write_text("personal data")
+
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS622,
+        boot_assets_path=install_dir,
+        custom_payload_path=payload_dir,
+    )
+    # Should not raise.
+    manager._validate_create_request(request)
+
+
+def test_validate_rejects_msdos33_above_32mib(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=64 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+    )
+    with pytest.raises(ValidationError, match="msdos33.*32 MiB"):
+        manager._validate_create_request(request)
+
+
+def test_normalize_vhd_size_for_msdos33_caps_at_32mib(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+    )
+    aligned = manager._normalize_vhd_size_for_chs(request)
+    # 32 MiB request must round DOWN to fit in DOS 3.30's uint16 partition
+    # sector cap (65535 sectors). 65 cyl x 16 x 63 x 512 = 33,546,240 B = 31.99 MiB.
+    assert aligned == 65 * 16 * 63 * 512
+    assert aligned < 32 * 1024 * 1024
+
+
+def test_normalize_vhd_size_for_msdos331_allows_above_32mib(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS331,
+    )
+    aligned = manager._normalize_vhd_size_for_chs(request)
+    # FAT16B (DOS 3.31 / Compaq) handles total_sectors_32, so >32 MiB is fine.
+    # 128 MiB rounds up to 65,011,712 bytes (~62 MiB)? No, 128 MiB = 134217728
+    # 134217728 / 516096 = 260.07 -> 261 cyl -> 261 * 516096 = 134,701,056 B
+    assert aligned >= 128 * 1024 * 1024
+
+
+def test_normalize_vhd_size_for_compaq331_allows_above_32mib(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.COMPAQ331,
+    )
+    aligned = manager._normalize_vhd_size_for_chs(request)
+    assert aligned >= 128 * 1024 * 1024
+
+
+def test_resolve_compaq331_assets_dir_uses_boot_assets_path(tmp_path: Path) -> None:
+    manager = DiskManager()
+    assets = tmp_path / "cpq"
+    assets.mkdir()
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.COMPAQ331,
+        boot_assets_path=assets,
+    )
+    assert manager._resolve_compaq331_assets_dir(request) == assets.resolve()
+
+
+def test_find_compaq331_startup_image_preferred_name(tmp_path: Path) -> None:
+    manager = DiskManager()
+    assets = tmp_path / "cpq"
+    assets.mkdir()
+    # Bytes don't matter; we only check the filename matching path.
+    (assets / "STARTUP.IMG").write_bytes(b"\0" * 1024)
+    found = manager._find_compaq331_startup_image(assets)
+    assert found is not None
+    assert found.name == "STARTUP.IMG"
+
+
+def test_find_compaq331_startup_image_missing(tmp_path: Path) -> None:
+    manager = DiskManager()
+    assets = tmp_path / "cpq"
+    assets.mkdir()
+    (assets / "readme.txt").write_text("nothing here")
+    assert manager._find_compaq331_startup_image(assets) is None

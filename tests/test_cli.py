@@ -5,7 +5,7 @@ import pytest
 import vhdmaker.cli as cli
 from vhdmaker.commands import RunResult
 from vhdmaker.errors import ValidationError
-from vhdmaker.models import BootMode, FloppyType, IBMDOSVersion, MediaType
+from vhdmaker.models import BootMode, FloppyType, IBMDOSVersion, MSDOSInstallProfile, MediaType
 
 
 def test_main_tui_primes_sudo_before_running_app(monkeypatch) -> None:
@@ -131,6 +131,33 @@ def test_create_img_parses_floppy_options(monkeypatch, capsys) -> None:
     assert "Created and prepared" in output
 
 
+def test_create_vhd_allows_missing_size_with_custom_payload(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeManager:
+        def create_and_prepare(self, request) -> None:
+            captured["request"] = request
+
+    monkeypatch.setattr(cli, "DiskManager", lambda: FakeManager())
+
+    result = cli.main(
+        [
+            "create",
+            "--path",
+            "/tmp/custom.vhd",
+            "--format",
+            "fat16",
+            "--custom-payload-path",
+            "/tmp/payload",
+        ]
+    )
+    assert result == 0
+    request = captured["request"]
+    assert request.size_bytes == 1
+    assert request.custom_payload_path.as_posix() == "/tmp/payload"
+    assert "Created and prepared" in capsys.readouterr().out
+
+
 def test_create_img_parses_2880k_floppy_option(monkeypatch, capsys) -> None:
     captured: dict[str, object] = {}
 
@@ -194,6 +221,39 @@ def test_create_img_parses_pcdos7_xdf_floppy_option(monkeypatch, capsys) -> None
     assert request.size_bytes == FloppyType.F1840K.size_bytes
     output = capsys.readouterr().out
     assert "Created and prepared" in output
+
+
+def test_create_parses_dos_install_profile_for_legacy_mode(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeManager:
+        def create_and_prepare(self, request) -> None:
+            captured["request"] = request
+
+    monkeypatch.setattr(cli, "DiskManager", lambda: FakeManager())
+
+    result = cli.main(
+        [
+            "create",
+            "--path",
+            "/tmp/dosfull.vhd",
+            "--size",
+            "128M",
+            "--format",
+            "fat16",
+            "--boot-mode",
+            "pcdos7",
+            "--boot-assets-path",
+            "/tmp/pcdos7",
+            "--dos-install-profile",
+            "full",
+        ]
+    )
+    assert result == 0
+    request = captured["request"]
+    assert request.boot_mode is BootMode.PCDOS7
+    assert request.msdos_install_profile is MSDOSInstallProfile.FULL
+    assert "Created and prepared" in capsys.readouterr().out
 
 
 def test_check_deps_passes_media_type(monkeypatch, capsys) -> None:

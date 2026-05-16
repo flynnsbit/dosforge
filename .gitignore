@@ -1,2 +1,21 @@
 # Local DOS media folders (keep FreeDOS tracked)
 /dos*/
+/compaq*/
+/ibmpcdos*/
+/msdos*/
+/pcdos*/
+/tdlprocessed/
+/win21-*/
+
+# Build artifacts and test outputs
+/build/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local VHD / floppy images and install archives (large binary artifacts)
+*.vhd
+*.img
+*.ima
+*.7z
+*.zip

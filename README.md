@@ -22,6 +22,7 @@ with optional boot/system file staging for FreeDOS and legacy MS-DOS families.
   - Compaq DOS 3.31
 - Automatic DOS boot-template extraction from install images when possible
 - Mount + open in file manager from TUI and CLI (`.vhd`, `.img`, `.ima`)
+- Optional custom payload directory copy into created media (`--custom-payload-path`)
 
 ## Supported image modes
 
@@ -144,6 +145,31 @@ vhdmaker create \
   --boot-mode pcdos7 \
   --boot-assets-path ./pcdos7
 
+# Create DOS disk with core \DOS utilities + startup files
+vhdmaker create \
+  --path ~/vhd/msdos622-full.vhd \
+  --size 512M \
+  --format fat16 \
+  --boot-mode msdos622 \
+  --boot-assets-path ./msdos622 \
+  --dos-install-profile full
+
+# Create VHD from a custom payload directory (auto-sizes VHD to fit payload + buffer)
+vhdmaker create \
+  --path ~/vhd/apps.vhd \
+  --format fat16 \
+  --custom-payload-path ./payload
+
+# Add payload files while system-formatting a floppy IMG (fails if payload won't fit)
+vhdmaker create \
+  --path ~/floppy/custom-dos.img \
+  --media-type img \
+  --floppy-type 1440k \
+  --img-system-format \
+  --boot-mode msdos622 \
+  --boot-assets-path ./msdos622 \
+  --custom-payload-path ./payload
+
 # Mount + open
 vhdmaker mount --path ~/vhd/demo.vhd --open
 vhdmaker mount --path ~/floppy/tools.img --open
@@ -166,7 +192,15 @@ Either:
 1. direct files (`IO.SYS`, `MSDOS.SYS`, `COMMAND.COM`, `HIMEM.SYS`, `IFSHLP.SYS`, boot template), or
 2. install disk images (`*.img` / `*.ima` / `*.dsk` / `*.xdf`) containing `DOS71_1S.PAK` (+ optional `DOS71_2S.PAK` for fuller payload)
 
-Supports `minimal` and `full` install profiles.
+Supports `minimal` and `full` install profiles. `full` stages a curated core DOS toolset under `\DOS` (instead of the entire installer payload) so floppy targets remain single-disk friendly.
+
+## Custom payload directory
+
+- Use `--custom-payload-path <directory>` to copy that directory's **contents** into the created filesystem root.
+- Directory structure is preserved recursively, including hidden entries.
+- For **IMG/IMA**, vhdmaker checks available free space on the formatted image and errors if payload does not fit.
+- For **VHD**, if the requested size is too small, vhdmaker automatically grows the VHD size to fit payload + safety buffer.
+- When combined with DOS system-format, boot/system files are installed first, then custom payload content is copied.
 
 ### IBM DOS 3.3 / 5.0
 
@@ -185,6 +219,13 @@ Resolver accepts either:
 
 plus `BOOTSECT_FAT16.BIN` (or `BOOTSECT.BIN`), or install images (`*.img` / `*.ima` / `*.dsk` / `*.xdf`).
 
+For **VHD** targets sourced from install images, vhdmaker keeps DOS mode behavior strict and normalizes legacy floppy-style FAT12 boot sectors to a DOS HDD-compatible FAT16 VBR for `IO.SYS`/`MSDOS.SYS` profiles before boot staging.
+
+`--dos-install-profile` applies to these modes:
+
+- `minimal` (default): stage boot-critical system files only.
+- `full`: stage root `CONFIG.SYS` / `AUTOEXEC.BAT` (from media when available, otherwise generated defaults) plus a curated core DOS utility set under `\DOS` (for example `EDIT`/`QBASIC`, `E`, `CHKDSK`, `SUBST`, `FDISK`, `FORMAT`, `SYS`, `XCOPY`) sized to fit floppy images. Staged startup files are normalized so `CONFIG.SYS` has no `PATH` line and `AUTOEXEC.BAT` is only `@ECHO OFF` + `PATH=A:\DOS`. If install media provides compressed `*_` payload files (for example `EX_`, `CO_`, `SY_`), they are expanded to runnable DOS names when staged. Startup-referenced commands/drivers discovered from `CONFIG.SYS` and `AUTOEXEC.BAT` are prioritized for inclusion.
+
 Subfolder auto-detect:
 
 - `msdos33/`
@@ -201,7 +242,17 @@ Resolver accepts either:
 
 plus `BOOTSECT_FAT16.BIN` (or `BOOTSECT.BIN`), or install images (`*.img` / `*.ima` / `*.dsk` / `*.xdf`).
 
-For PC-DOS 7.0 install sets, SaveDskF-wrapped `.DSK` sources are unpacked to raw floppy payload automatically, and `.XDF` media is used to align IMG creation to 1.84M geometry.
+For **VHD** targets sourced from install images, vhdmaker applies the same strict HDD-VBR normalization for `IO.SYS`/`MSDOS.SYS` system-file profiles.
+
+For PC-DOS 7.0 install sets, SaveDskF-wrapped `.DSK` sources are unpacked to raw floppy payload automatically, and `.XDF` media is supported as an install source and for explicit 1.84M targets.
+When install images are present in the assets directory, PC-DOS 7.0 system files are extracted live at create-time (preferred over stale pre-extracted files).
+In `minimal` profile, installer `AUTOEXEC.BAT`/`CONFIG.SYS` scripts are not staged onto target disks.
+PC-DOS 7.0 system-format keeps the user-selected floppy geometry (for example, 1.44M stays 1.44M).
+
+`--dos-install-profile` also applies to PC-DOS and Compaq DOS modes:
+
+- `minimal` (default): boot files only.
+- `full`: boot files + root startup files + curated core DOS utilities under `\DOS` sized for single-floppy targets, with startup normalization (`CONFIG.SYS` without `PATH`, `AUTOEXEC.BAT` as `@ECHO OFF` + `PATH=A:\DOS`) and compressed `*_` install files expanded when copied.
 
 Subfolder auto-detect:
 
@@ -215,6 +266,95 @@ Subfolder auto-detect:
 - FAT32 VHD: **64 MiB minimum** (up to 2 TiB)
 - IMG mode uses fixed floppy capacities and FAT12 geometry with explicit BPB/media profile checks
 - Legacy DOS profiles enforce FAT16-compatible boot workflows
+
+## Machine targets
+
+For most emulators (86Box, QEMU, etc.) the default `--machine-target generic`
+is correct: vhdmaker writes a standard ATA `16h/63spt` VHD footer that BIOS
+AUTO detects as NORMAL geometry, and the disk size is aligned to that
+cylinder boundary.
+
+### MartyPC IBM/Xebec MFM controller
+
+MartyPC's `IbmXebec` HDC validates the VHD footer against exactly four
+hardcoded drive types and rejects any other geometry. Select the matching
+target so vhdmaker writes the exact CHS the emulator expects:
+
+```bash
+# 20 MiB, Type 2 (615 x 4 x 17) — the most common XT Xebec geometry
+vhdmaker create \
+  --path ~/marty/dos33.vhd \
+  --machine-target martypc-xebec \
+  --martypc-xebec-drive-type type2 \
+  --boot-mode msdos33 \
+  --boot-assets-path ./msdos33
+```
+
+Supported `--martypc-xebec-drive-type` values:
+
+| Drive type | CHS | Capacity | Notes |
+|---|---|---:|---|
+| `type1`  | `306 x 4 x 17` | 10.16 MiB | Requires FAT12 (not yet supported on VHD) |
+| `type16` | `612 x 4 x 17` | 20.32 MiB | FAT16, wpc=0 |
+| `type2`  | `615 x 4 x 17` | 20.42 MiB | FAT16, wpc=300 (most common) |
+| `type13` | `306 x 8 x 17` | 20.32 MiB | FAT16, wpc=128 |
+
+With `--machine-target martypc-xebec`:
+
+- `--size` is ignored — the size is forced to the drive type's exact capacity.
+- The 16h/63spt footer normalization (used for generic targets) is skipped;
+  the footer's CHS is written to match the Xebec drive type byte-for-byte.
+- Only FAT16 + XT-class DOS boot modes are accepted
+  (`none`, `ibm8088`, `msdos33`, `msdos331`, `pcdos`, `compaq331`).
+- Custom payload auto-sizing is disabled (the geometry is fixed); payload
+  must fit within the drive type's capacity.
+
+The MartyPC XT-IDE controller exposes a much larger 127-entry geometry table
+that's shared with the JR-IDE (PCjr sidecar) controller. Both are wired up
+via `--machine-target martypc-xtide` or `--machine-target martypc-jride`,
+selecting the specific entry with `--martypc-at-drive-type <slug>`.
+
+### MartyPC XT-IDE / JR-IDE controllers
+
+Both share MartyPC's 127-entry `AtFormats::vec()` table (`crates/marty_core/src/devices/hdc/at_formats.rs`).
+Slugs follow the pattern `at-<cyl>-<heads>-<spt>` — for example
+`at-1024-16-63` (504 MiB) or `at-306-4-17` (10 MiB).
+
+```bash
+# Print all 127 supported AT/XT-IDE drive type slugs with sizes:
+vhdmaker list-martypc-formats
+
+# 504 MiB DOS 6.22 disk for MartyPC XT-IDE:
+vhdmaker create \
+  --path ~/marty/dos622.vhd \
+  --machine-target martypc-xtide \
+  --martypc-at-drive-type at-1024-16-63 \
+  --boot-mode msdos622 \
+  --boot-assets-path ./msdos622
+
+# 32 MiB DOS 3.3 disk for MartyPC JR-IDE on a PCjr:
+vhdmaker create \
+  --path ~/marty/pcjr-dos33.vhd \
+  --machine-target martypc-jride \
+  --martypc-at-drive-type at-615-4-26 \
+  --boot-mode msdos33 \
+  --boot-assets-path ./msdos33
+```
+
+With `--machine-target martypc-xtide` or `martypc-jride`:
+
+- `--size` is ignored — size is forced to the drive type's exact capacity
+  (`cyl × heads × spt × 512`).
+- The 16h/63spt footer normalization is skipped; the footer's CHS is
+  written byte-for-byte to match the AT table entry.
+- `qemu-img` is invoked with `force_size=on` so `current_size` exactly
+  matches `cyl × heads × spt × 512` (no inaccessible CHS tail).
+- FAT16 is required for entries below 64 MiB; FAT32 is accepted for
+  entries ≥ 64 MiB. Entries below 16 MiB (the first three AT formats)
+  require FAT12 and are rejected for now.
+- When using `--boot-mode ibm8088`, vhdmaker validates the selected drive
+  type fits within the IBM DOS profile's cap (32 MiB for `dos33`,
+  504 MiB for `dos50`).
 
 ## State paths
 
@@ -240,6 +380,36 @@ Run native Linux floppy integration tests (real loop-mount + fsck checks):
 ```bash
 VHDMAKER_RUN_NATIVE_IMG_TESTS=1 pytest -q -m native_linux
 ```
+
+Run native VHD/IMG boot integration matrix tests (QEMU boot-stage + failure-signature probes):
+
+```bash
+# Optional if assets are not in ./freedos
+export VHDMAKER_NATIVE_FREEDOS_ASSETS=/path/to/freedos-assets
+
+pytest -q -m native_boot
+```
+
+Run 86Box parity lane (external command contract):
+
+```bash
+# The command must include {image} and print emulator console/log output to stdout/stderr.
+export VHDMAKER_86BOX_BOOT_COMMAND='86Box --headless --config /path/to/86box.cfg --image {image}'
+pytest -q -m native_86box
+```
+
+### Native boot matrix test plan
+
+1. Create bootable media from a generated matrix:
+   - VHD: all supported boot modes across FAT16/FAT32 where valid.
+   - IMG: system-format floppy combinations across supported boot modes/geometries.
+2. Boot each artifact in QEMU (`qemu-system-i386`) via `-nographic` for a bounded window.
+3. Require expected boot stage (`Booting from Hard Disk` or `Booting from Floppy`) and fail on explicit boot-failure signatures.
+4. Fail immediately if known boot failure signatures appear (for example, `This is not a bootable disk`, `Non-System disk or disk error`, `Disk I/O error`).
+5. Include QEMU output tail in failure details for quick triage.
+6. Persist per-case diagnostics in each test tmp path (`*.command.txt`, `*.returncode.txt`, `*.output.log`).
+
+`native_86box` remains the prompt-proof lane. When `VHDMAKER_86BOX_BOOT_COMMAND` is configured, the test is active and must reach a DOS prompt marker.
 
 ### Optional commit/push trailer cleanup hooks
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 import struct
 from pathlib import Path
 
 import pytest
 
 from vhdmaker.boot import (
+    _BUILTIN_FAT16_BOOT_SECTOR_B64,
     BootAssetResolver,
     normalize_freedos_autoexec_bat,
     normalize_freedos_config_sys,
@@ -20,6 +22,7 @@ from vhdmaker.models import (
     FreeDOSSource,
     IBMDOSVersion,
     MSDOSInstallProfile,
+    MediaType,
 )
 
 
@@ -202,6 +205,31 @@ def test_resolve_freedos_local_adds_fd_startup_aliases(tmp_path: Path) -> None:
     assert assets.system_files["FDAUTO.BAT"] == assets_dir / "AUTOEXEC.BAT"
 
 
+def test_resolve_freedos_local_fat32_falls_back_to_fat16_template_when_fat32_is_non_bootable(tmp_path: Path) -> None:
+    assets_dir = tmp_path / "freedos"
+    _touch(assets_dir / "KERNEL.SYS")
+    _touch(assets_dir / "COMMAND.COM")
+    _touch(assets_dir / "BOOTSECT_FAT16.BIN", _freedos_fat16_boot_sector_bytes())
+    bad_fat32 = bytearray(512)
+    bad_fat32[82:90] = b"FAT32   "
+    bad_fat32[90:90 + len(b"This is not a bootable disk")] = b"This is not a bootable disk"
+    bad_fat32[510:512] = b"\x55\xaa"
+    _touch(assets_dir / "BOOTSECT_FAT32.BIN", bytes(bad_fat32))
+
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=512 * 1024 * 1024,
+        disk_format=DiskFormat.FAT32,
+        boot_mode=BootMode.FREEDOS,
+        freedos_source=FreeDOSSource.LOCAL,
+        boot_assets_path=assets_dir,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+
+    assert assets.boot_sector_template == assets_dir / "BOOTSECT_FAT16.BIN"
+
+
 def test_resolve_freedos_local_prefers_fdos_bin_core_binaries(tmp_path: Path) -> None:
     assets_dir = tmp_path / "freedos"
     _touch(assets_dir / "KERNEL.SYS", b"legacy-kernel")
@@ -361,6 +389,32 @@ def test_resolve_ibm8088_direct_directory(tmp_path: Path) -> None:
 
     assert sorted(assets.system_files) == ["COMMAND.COM", "CONFIG.SYS", "IO.SYS", "MSDOS.SYS"]
     assert assets.boot_sector_template == assets_dir / "BOOTSECT_FAT16.BIN"
+
+
+def test_resolve_ibm8088_direct_directory_normalizes_startup_files(tmp_path: Path) -> None:
+    assets_dir = tmp_path / "ibm"
+    _touch(assets_dir / "IO.SYS", b"io")
+    _touch(assets_dir / "MSDOS.SYS", b"msdos")
+    _touch(assets_dir / "COMMAND.COM", b"command")
+    _touch(assets_dir / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
+    _touch(assets_dir / "CONFIG.SYS", b"FILES=20\r\nPATH=C:\\DOS\r\n")
+    _touch(assets_dir / "AUTOEXEC.BAT", b"@ECHO OFF\r\nPROMPT $P$G\r\nKEYB US\r\n")
+
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        boot_assets_path=assets_dir,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+
+    config_text = assets.system_files["CONFIG.SYS"].read_text(encoding="latin-1")
+    autoexec_text = assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1")
+    assert "PATH=" not in config_text.upper()
+    assert autoexec_text.splitlines() == ["@ECHO OFF", "PATH=A:\\DOS"]
 
 
 def test_resolve_ibm8088_uses_version_subdir(tmp_path: Path) -> None:
@@ -714,6 +768,671 @@ def test_resolve_pcdos7_from_install_images_prefers_xdf_source_size(
     assert len(assets.boot_sector_template.read_bytes()) == 512
 
 
+def test_resolve_pcdos7_prefers_live_install_media_when_images_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets_dir = tmp_path / "pcdos7"
+    assets_dir.mkdir(parents=True)
+    _touch(assets_dir / "IBMBIO.COM", b"direct-bios")
+    _touch(assets_dir / "IBMDOS.COM", b"direct-dos")
+    _touch(assets_dir / "COMMAND.COM", b"direct-command")
+    _touch(assets_dir / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
+
+    disk1 = assets_dir / "disk01.xdf"
+    disk1.write_bytes(_msdos33_boot_sector_bytes() + (b"\0" * (FloppyType.F1840K.size_bytes - 512)))
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    request = CreateRequest(
+        path=tmp_path / "disk.img",
+        size_bytes=FloppyType.F1440K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.PCDOS7,
+        boot_assets_path=assets_dir,
+    )
+    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [disk1]
+        payload_map = {
+            "IBMBIO.COM": b"live-bios",
+            "IBMDOS.COM": b"live-dos",
+            "COMMAND.COM": b"live-command",
+        }
+        payload = payload_map.get(dos_name.upper())
+        if payload is None:
+            if required:
+                raise ValidationError(f"missing {dos_name}")
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+    assets = resolver.resolve(request)
+
+    assert assets.system_files["IBMBIO.COM"].read_bytes() == b"live-bios"
+    assert assets.system_files["IBMDOS.COM"].read_bytes() == b"live-dos"
+    assert assets.system_files["COMMAND.COM"].read_bytes() == b"live-command"
+    assert assets.system_files["IBMBIO.COM"].resolve() != (assets_dir / "IBMBIO.COM").resolve()
+    assert assets.boot_sector_template != assets_dir / "BOOTSECT_FAT16.BIN"
+    assert assets.boot_sector_template.read_bytes() == _msdos33_boot_sector_bytes()
+
+
+def test_resolve_pcdos7_install_media_does_not_stage_installer_startup_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets_dir = tmp_path / "pcdos7"
+    assets_dir.mkdir(parents=True)
+    disk1 = assets_dir / "disk01.xdf"
+    disk1.write_bytes(_msdos33_boot_sector_bytes() + (b"\0" * (FloppyType.F1840K.size_bytes - 512)))
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    request = CreateRequest(
+        path=tmp_path / "disk.img",
+        size_bytes=FloppyType.F1440K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.PCDOS7,
+        boot_assets_path=assets_dir,
+    )
+    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
+
+    requested_names: list[str] = []
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [disk1]
+        requested_names.append(dos_name.upper())
+        payload_map = {
+            "IBMBIO.COM": b"bios",
+            "IBMDOS.COM": b"dos",
+            "COMMAND.COM": b"command",
+            "CONFIG.SYS": b"country=001\r\n",
+            "AUTOEXEC.BAT": b"setup\r\n",
+        }
+        payload = payload_map.get(dos_name.upper())
+        if payload is None:
+            if required:
+                raise ValidationError(f"missing {dos_name}")
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+    assets = resolver.resolve(request)
+
+    assert "CONFIG.SYS" not in assets.system_files
+    assert "AUTOEXEC.BAT" not in assets.system_files
+    assert "CONFIG.SYS" not in requested_names
+    assert "AUTOEXEC.BAT" not in requested_names
+
+
+def test_resolve_pcdos7_full_profile_extracts_payload_and_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets_dir = tmp_path / "pcdos7"
+    assets_dir.mkdir(parents=True)
+    disk1 = assets_dir / "disk01.xdf"
+    disk1.write_bytes(_msdos33_boot_sector_bytes() + (b"\0" * (FloppyType.F1840K.size_bytes - 512)))
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    request = CreateRequest(
+        path=tmp_path / "disk.img",
+        size_bytes=FloppyType.F1440K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.PCDOS7,
+        boot_assets_path=assets_dir,
+        msdos_install_profile=MSDOSInstallProfile.FULL,
+    )
+    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [disk1]
+        payload_map = {
+            "IBMBIO.COM": b"bios",
+            "IBMDOS.COM": b"dos",
+            "COMMAND.COM": b"command",
+        }
+        payload = payload_map.get(dos_name.upper())
+        if payload is None:
+            if required:
+                raise ValidationError(f"missing {dos_name}")
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+
+    captured: dict[str, object] = {}
+
+    def fake_full_payload(
+        *,
+        install_images: list[Path],
+        destination: Path,
+        payload_budget_bytes: int | None = None,
+        startup_files: dict[str, Path] | None = None,
+    ) -> None:
+        captured["install_images"] = install_images
+        captured["destination"] = destination
+        captured["payload_budget_bytes"] = payload_budget_bytes
+        captured["startup_files"] = startup_files
+        _touch(destination / "EDIT.COM", b"edit")
+
+    monkeypatch.setattr(resolver, "_extract_legacy_full_payload_from_images", fake_full_payload)
+    assets = resolver.resolve(request)
+
+    assert assets.payload_target_dir == "DOS"
+    assert assets.fdos_payload_dir is not None
+    assert assets.fdos_payload_dir.name == "DOS"
+    assert captured["install_images"] == [disk1]
+    assert captured["destination"] == assets.fdos_payload_dir
+    assert captured["payload_budget_bytes"] == 512 * 1024
+    assert isinstance(captured["startup_files"], dict)
+    assert (assets.fdos_payload_dir / "EDIT.COM").read_bytes() == b"edit"
+    assert "CONFIG.SYS" in assets.system_files
+    assert "AUTOEXEC.BAT" in assets.system_files
+    assert "PATH=" not in assets.system_files["CONFIG.SYS"].read_text(encoding="latin-1").upper()
+    assert assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1").splitlines()[:2] == [
+        "@ECHO OFF",
+        "PATH=A:\\DOS",
+    ]
+
+
+def test_extract_legacy_full_payload_from_images_uses_core_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    image = tmp_path / "disk1.img"
+    image.write_bytes(b"disk")
+    destination = tmp_path / "DOS"
+    requested_names: list[str] = []
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert required is False
+        assert image_paths == [image]
+        requested_names.append(dos_name.upper())
+        payloads = {
+            "EDIT.COM": b"edit",
+            "QBASIC.EXE": b"qbasic",
+            "CHKDSK.COM": b"check",
+            "SUBST.EXE": b"subst",
+        }
+        payload = payloads.get(dos_name.upper())
+        if payload is None:
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+    resolver._extract_legacy_full_payload_from_images(
+        install_images=[image],
+        destination=destination,
+        payload_budget_bytes=64 * 1024,
+    )
+
+    assert sorted(path.name for path in destination.iterdir()) == [
+        "CHKDSK.COM",
+        "EDIT.COM",
+        "QBASIC.EXE",
+        "SUBST.EXE",
+    ]
+    assert "CHKDSK.EXE" in requested_names
+    assert "CHKDSK.COM" in requested_names
+
+
+def test_extract_core_payload_from_images_respects_budget_with_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    image = tmp_path / "disk1.img"
+    image.write_bytes(b"disk")
+    destination = tmp_path / "DOS"
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert required is False
+        assert image_paths == [image]
+        payloads = {
+            "EDIT.COM": b"edit",  # 4
+            "CHKDSK.EXE": b"x" * 20,  # too large for remaining budget
+            "CHKDSK.COM": b"check",  # fallback candidate
+            "SUBST.EXE": b"subst",  # exceeds remaining budget
+        }
+        payload = payloads.get(dos_name.upper())
+        if payload is None:
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+    resolver._extract_legacy_full_payload_from_images(
+        install_images=[image],
+        destination=destination,
+        payload_budget_bytes=10,
+    )
+
+    assert sorted(path.name for path in destination.iterdir()) == ["CHKDSK.COM", "EDIT.COM"]
+    assert not (destination / "CHKDSK.EXE").exists()
+    assert not (destination / "SUBST.EXE").exists()
+
+
+def test_extract_core_payload_prioritizes_existing_core_before_qbasic_when_budget_is_tight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    image = tmp_path / "disk1.img"
+    image.write_bytes(b"disk")
+    destination = tmp_path / "DOS"
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert required is False
+        assert image_paths == [image]
+        payloads = {
+            "EDIT.COM": b"edit",  # 4
+            "E.EXE": b"eeee",  # 4
+            "CHKDSK.COM": b"check",  # 5
+            "QBASIC.EXE": b"q" * 20,  # too large after core selection
+        }
+        payload = payloads.get(dos_name.upper())
+        if payload is None:
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+    resolver._extract_legacy_full_payload_from_images(
+        install_images=[image],
+        destination=destination,
+        payload_budget_bytes=13,
+    )
+
+    assert sorted(path.name for path in destination.iterdir()) == ["CHKDSK.COM", "E.EXE", "EDIT.COM"]
+    assert not (destination / "QBASIC.EXE").exists()
+
+
+def test_extract_file_from_images_with_compression_fallback_expands_country_sys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    image = tmp_path / "disk1.img"
+    image.write_bytes(b"disk")
+    output_dir = tmp_path / "extract"
+    source = b"COUNTRY"
+    compressed_stream = b"\x7f" + source
+    compressed_payload = b"SZDD\x88\xf0'3" + bytes([0x41, 0x00]) + len(source).to_bytes(4, "little") + compressed_stream
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        destination: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [image]
+        assert required is False
+        if dos_name.upper() == "COUNTRY.SY_":
+            path = destination / dos_name
+            _touch(path, compressed_payload)
+            return path
+        return None
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+    expanded = resolver._extract_file_from_images_with_compression_fallback(
+        [image],
+        output_dir,
+        "COUNTRY.SYS",
+        required=True,
+    )
+
+    assert expanded is not None
+    assert expanded.name == "COUNTRY.SYS"
+    assert expanded.read_bytes() == source
+
+
+def test_extract_legacy_full_payload_from_images_includes_startup_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    image = tmp_path / "disk1.img"
+    image.write_bytes(b"disk")
+    destination = tmp_path / "DOS"
+    config = tmp_path / "CONFIG.SYS"
+    autoexec = tmp_path / "AUTOEXEC.BAT"
+    _touch(config, b"DEVICE=HIMEM.SYS\r\n")
+    _touch(autoexec, b"@ECHO OFF\r\nNLSFUNC\r\nKEYB US\r\nSETUP\r\n")
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert required is False
+        assert image_paths == [image]
+        payloads = {
+            "EDIT.COM": b"edit",
+            "HIMEM.SYS": b"himem",
+            "NLSFUNC.EXE": b"nls",
+            "KEYB.COM": b"keyb",
+            "SETUP.EXE": b"setup",
+        }
+        payload = payloads.get(dos_name.upper())
+        if payload is None:
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+    resolver._extract_legacy_full_payload_from_images(
+        install_images=[image],
+        destination=destination,
+        payload_budget_bytes=256 * 1024,
+        startup_files={"CONFIG.SYS": config, "AUTOEXEC.BAT": autoexec},
+    )
+
+    assert (destination / "HIMEM.SYS").read_bytes() == b"himem"
+    assert (destination / "NLSFUNC.EXE").read_bytes() == b"nls"
+    assert (destination / "KEYB.COM").read_bytes() == b"keyb"
+    assert (destination / "SETUP.EXE").read_bytes() == b"setup"
+    assert (destination / "EDIT.COM").read_bytes() == b"edit"
+
+
+def test_resolve_legacy_full_profile_adds_country_sys_to_root_when_config_requires_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets_dir = tmp_path / "msdos622"
+    assets_dir.mkdir(parents=True)
+    disk1 = assets_dir / "disk1.img"
+    disk1.write_bytes(_msdos33_boot_sector_bytes() + (b"\0" * (FloppyType.F1440K.size_bytes - 512)))
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=256 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS622,
+        boot_assets_path=assets_dir,
+        msdos_install_profile=MSDOSInstallProfile.FULL,
+    )
+
+    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [disk1]
+        payload_map = {
+            "IO.SYS": b"io",
+            "MSDOS.SYS": b"msdos",
+            "COMMAND.COM": b"command",
+            "CONFIG.SYS": b"country=001\r\n",
+            "AUTOEXEC.BAT": b"@ECHO OFF\r\nNLSFUNC\r\n",
+            "COUNTRY.SYS": b"country",
+        }
+        payload = payload_map.get(dos_name.upper())
+        if payload is None:
+            if required:
+                raise ValidationError(f"missing {dos_name}")
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+    monkeypatch.setattr(
+        resolver,
+        "_extract_legacy_full_payload_from_images",
+        lambda *, install_images, destination, payload_budget_bytes=None, startup_files=None: _touch(
+            destination / "EDIT.COM",
+            b"edit",
+        ),
+    )
+
+    assets = resolver.resolve(request)
+    assert assets.system_files["COUNTRY.SYS"].read_bytes() == b"country"
+    assert "COUNTRY.SYS" in assets.system_files
+
+
+def test_resolve_msdos622_vhd_accepts_install_image_bootsector_when_floppy_fat12(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets_dir = tmp_path / "msdos622"
+    assets_dir.mkdir(parents=True)
+    disk1 = assets_dir / "disk1.img"
+    floppy_sector = bytearray(512)
+    floppy_sector[:3] = b"\xeb\x3c\x90"
+    floppy_sector[3:11] = b"MSDOS5.0"
+    floppy_sector[11:13] = struct.pack("<H", 512)
+    floppy_sector[13] = 1
+    floppy_sector[14:16] = struct.pack("<H", 1)
+    floppy_sector[16] = 2
+    floppy_sector[17:19] = struct.pack("<H", 224)
+    floppy_sector[19:21] = struct.pack("<H", 2880)
+    floppy_sector[21] = 0xF0
+    floppy_sector[22:24] = struct.pack("<H", 9)
+    floppy_sector[24:26] = struct.pack("<H", 18)
+    floppy_sector[26:28] = struct.pack("<H", 2)
+    floppy_sector[54:62] = b"FAT12   "
+    floppy_sector[0x180:0x180 + 11] = b"IO      SYS"
+    floppy_sector[0x190:0x190 + 11] = b"MSDOS   SYS"
+    floppy_sector[510:512] = b"\x55\xaa"
+    disk1.write_bytes(bytes(floppy_sector) + (b"\0" * (FloppyType.F1440K.size_bytes - 512)))
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=100 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.VHD,
+        boot_mode=BootMode.MSDOS622,
+        boot_assets_path=assets_dir,
+    )
+    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
+    monkeypatch.setattr(resolver, "_extract_msdos_fat16_boot_sector_from_images", lambda image_paths: bytes(floppy_sector))
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [disk1]
+        payload_map = {
+            "IO.SYS": b"io",
+            "MSDOS.SYS": b"msdos",
+            "COMMAND.COM": b"command",
+        }
+        payload = payload_map.get(dos_name.upper())
+        if payload is None:
+            if required:
+                raise ValidationError(f"missing {dos_name}")
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+
+    assets = resolver.resolve(request)
+    assert assets.boot_sector_template.read_bytes()[:512] == bytes(floppy_sector)
+
+
+def test_resolve_msdos622_vhd_normalizes_kernel_loader_bootsector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assets_dir = tmp_path / "msdos622"
+    assets_dir.mkdir(parents=True)
+    disk1 = assets_dir / "disk1.img"
+    floppy_sector = bytearray(512)
+    floppy_sector[:3] = b"\xeb\x3c\x90"
+    floppy_sector[3:11] = b"FRDOS5.1"
+    floppy_sector[11:13] = struct.pack("<H", 512)
+    floppy_sector[13] = 1
+    floppy_sector[14:16] = struct.pack("<H", 1)
+    floppy_sector[16] = 2
+    floppy_sector[17:19] = struct.pack("<H", 224)
+    floppy_sector[19:21] = struct.pack("<H", 2880)
+    floppy_sector[21] = 0xF0
+    floppy_sector[22:24] = struct.pack("<H", 9)
+    floppy_sector[24:26] = struct.pack("<H", 18)
+    floppy_sector[26:28] = struct.pack("<H", 2)
+    floppy_sector[54:62] = b"FAT12   "
+    floppy_sector[0x1F0 : 0x1F0 + 11] = b"KERNEL  SYS"
+    floppy_sector[510:512] = b"\x55\xaa"
+    disk1.write_bytes(bytes(floppy_sector) + (b"\0" * (FloppyType.F1440K.size_bytes - 512)))
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=100 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        media_type=MediaType.VHD,
+        boot_mode=BootMode.MSDOS622,
+        boot_assets_path=assets_dir,
+    )
+    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
+    monkeypatch.setattr(
+        resolver,
+        "_extract_msdos_fat16_boot_sector_from_images",
+        lambda image_paths: bytes(floppy_sector),
+    )
+
+    def fake_extract_from_images(
+        image_paths: list[Path],
+        output_dir: Path,
+        dos_name: str,
+        *,
+        required: bool,
+    ) -> Path | None:
+        assert image_paths == [disk1]
+        payload_map = {
+            "IO.SYS": b"io",
+            "MSDOS.SYS": b"msdos",
+            "COMMAND.COM": b"command",
+        }
+        payload = payload_map.get(dos_name.upper())
+        if payload is None:
+            if required:
+                raise ValidationError(f"missing {dos_name}")
+            return None
+        path = output_dir / dos_name
+        _touch(path, payload)
+        return path
+
+    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
+
+    assets = resolver.resolve(request)
+    assert assets.boot_sector_template.read_bytes()[:512] == base64.b64decode(_BUILTIN_FAT16_BOOT_SECTOR_B64)
+
+
+def test_trim_payload_to_core_files_prioritizes_startup_references(tmp_path: Path) -> None:
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    payload_dir = tmp_path / "payload"
+    _touch(payload_dir / "NLSFUNC.EXE", b"nls")
+    _touch(payload_dir / "EDIT.COM", b"edit")
+    autoexec = tmp_path / "AUTOEXEC.BAT"
+    _touch(autoexec, b"@ECHO OFF\r\nNLSFUNC\r\n")
+
+    resolver._trim_payload_to_core_files(
+        payload_dir=payload_dir,
+        payload_budget_bytes=4,
+        startup_files={"AUTOEXEC.BAT": autoexec},
+    )
+
+    assert sorted(entry.name for entry in payload_dir.iterdir()) == ["NLSFUNC.EXE"]
+
+
+def test_trim_payload_to_core_files_prioritizes_core_utilities(tmp_path: Path) -> None:
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    payload_dir = tmp_path / "payload"
+    _touch(payload_dir / "EDIT.COM", b"e" * 20)
+    _touch(payload_dir / "E.EXE", b"e" * 25)
+    _touch(payload_dir / "E.EX", b"x" * 10)
+    _touch(payload_dir / "CHKDSK.COM", b"c" * 20)
+    _touch(payload_dir / "SUBST.EXE", b"s" * 20)
+    _touch(payload_dir / "README.TXT", b"r" * 200)
+
+    resolver._trim_payload_to_core_files(payload_dir=payload_dir, payload_budget_bytes=100)
+
+    assert sorted(entry.name for entry in payload_dir.iterdir()) == [
+        "CHKDSK.COM",
+        "E.EX",
+        "E.EXE",
+        "EDIT.COM",
+        "SUBST.EXE",
+    ]
+
+
+def test_dos_core_payload_budget_uses_floppy_bounds(tmp_path: Path) -> None:
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+
+    img_request = CreateRequest(
+        path=tmp_path / "disk.img",
+        size_bytes=FloppyType.F1440K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS622,
+    )
+    tiny_img_request = CreateRequest(
+        path=tmp_path / "tiny.img",
+        size_bytes=FloppyType.F160K.size_bytes,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS622,
+    )
+    vhd_request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=64 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS622,
+    )
+
+    assert resolver._dos_core_payload_budget(img_request) == 512 * 1024
+    assert resolver._dos_core_payload_budget(tiny_img_request) == 80 * 1024
+    assert resolver._dos_core_payload_budget(vhd_request) is None
+
+
 def test_resolve_msdos71_direct_directory(tmp_path: Path) -> None:
     assets_dir = tmp_path / "msdos"
     _touch(assets_dir / "IO.SYS", b"io")
@@ -746,9 +1465,8 @@ def test_resolve_msdos71_direct_directory(tmp_path: Path) -> None:
     assert "SHELL=COMMAND.COM /P /E:640" in assets.system_files["CONFIG.SYS"].read_text(encoding="latin-1")
     config_text = assets.system_files["CONFIG.SYS"].read_text(encoding="latin-1")
     autoexec_text = assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1")
-    assert "SET PATH=C:\\DOS;..;." in config_text
-    assert "PROMPT $P$G" in autoexec_text
-    assert autoexec_text.splitlines()[:2] == ["@ECHO OFF", "PATH=C:\\DOS;..;."]
+    assert "PATH=" not in config_text.upper()
+    assert autoexec_text.splitlines() == ["@ECHO OFF", "PATH=A:\\DOS"]
 
 
 def test_resolve_msdos71_direct_directory_fat16(tmp_path: Path) -> None:
@@ -811,11 +1529,10 @@ def test_resolve_msdos71_normalizes_startup_files_for_install_profile(tmp_path: 
 
     config_text = assets.system_files["CONFIG.SYS"].read_text(encoding="latin-1")
     autoexec_text = assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1")
-    assert "DEVICE=C:\\DOS\\HIMEM.SYS" in config_text
-    assert "DEVICEHIGH=C:\\DOS\\SETVER.EXE" in config_text
-    assert "SET PATH=C:\\DOS;..;." in config_text
-    assert autoexec_text.splitlines()[:2] == ["@ECHO OFF", "PATH=C:\\DOS;..;."]
-    assert "LH DOSLFN /Z:C:\\DOS\\CP437UNI.TBL" in autoexec_text
+    assert "DEVICE=A:\\DOS\\HIMEM.SYS" in config_text
+    assert "DEVICEHIGH=A:\\DOS\\SETVER.EXE" in config_text
+    assert "PATH=" not in config_text.upper()
+    assert autoexec_text.splitlines() == ["@ECHO OFF", "PATH=A:\\DOS"]
 
 
 def test_resolve_msdos71_direct_directory_full_uses_dos_payload(tmp_path: Path) -> None:
@@ -894,7 +1611,7 @@ def test_resolve_msdos71_from_install_images(tmp_path: Path, monkeypatch: pytest
     assert "AUTOEXEC.BAT" in assets.system_files
     assert assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1").splitlines()[:2] == [
         "@ECHO OFF",
-        "PATH=C:\\DOS;..;.",
+        "PATH=A:\\DOS",
     ]
     template = assets.boot_sector_template.read_bytes()
     assert len(template) == 512
@@ -944,9 +1661,18 @@ def test_resolve_msdos71_from_install_images_full_profile(tmp_path: Path, monkey
 
     monkeypatch.setattr(resolver, "_extract_msdos71_pak_files", fake_extract)
 
-    def fake_full_payload(*, install_images: list[Path], extraction_root: Path, destination: Path) -> None:
+    def fake_full_payload(
+        *,
+        install_images: list[Path],
+        extraction_root: Path,
+        destination: Path,
+        payload_budget_bytes: int | None = None,
+        startup_files: dict[str, Path] | None = None,
+    ) -> None:
         assert install_images == [disk1]
         assert extraction_root.name.startswith("msdos71-")
+        assert payload_budget_bytes is None
+        assert isinstance(startup_files, dict)
         _touch(destination / "DOSGUI" / "EDIT.COM", b"edit")
 
     monkeypatch.setattr(resolver, "_extract_msdos71_full_payload", fake_full_payload)
@@ -1016,7 +1742,7 @@ def test_resolve_msdos71_from_install_images_fat16(tmp_path: Path, monkeypatch: 
     assert "AUTOEXEC.BAT" in assets.system_files
     assert assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1").splitlines()[:2] == [
         "@ECHO OFF",
-        "PATH=C:\\DOS;..;.",
+        "PATH=A:\\DOS",
     ]
     template = assets.boot_sector_template.read_bytes()
     assert len(template) == 512

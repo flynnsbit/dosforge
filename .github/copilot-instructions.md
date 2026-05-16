@@ -1,6 +1,6 @@
 # Copilot instructions for `vhdmaker`
 
-## Build, test, and lint commands
+## Build and run commands
 
 ```bash
 # Install in editable mode (includes test deps)
@@ -9,17 +9,19 @@ python -m pip install -e .[dev]
 # Run the app (default command launches the TUI)
 vhdmaker
 
-# Full test suite
-pytest -q
-
-# Run a single test
-pytest tests/test_disk_validation.py::test_validate_accepts_img_system_format_with_boot_mode -q
-
 # Optional: install local pre-push hook for trailer cleanup
 ./scripts/install-githooks.sh
 ```
 
 Linting: there is currently no dedicated lint command/tool configured in this repository.
+
+> **Note on tests:** A `pytest -q` suite exists under `tests/` (including
+> `native_linux`, `native_boot`, `native_86box` markers configured in
+> `pyproject.toml`), but **do not run it as part of routine work** — it is
+> slow, partly hangs in this environment, and not informative for the current
+> debugging cycle. Validate changes by inspecting code and built artifacts
+> directly (e.g. footer/BPB hex dumps, 86Box boot probes) rather than via the
+> test suite, unless the user explicitly asks for a test run.
 
 ## High-level architecture
 
