@@ -57,10 +57,10 @@ def _native_boot_test_ready() -> tuple[bool, str]:
 
 
 def _freedos_assets_root() -> Path:
-    configured = (os.environ.get("DOSFORGE_NATIVE_FREEDOS_ASSETS") or os.environ.get("VHDMAKER_NATIVE_FREEDOS_ASSETS"))
+    configured = os.environ.get("DOSFORGE_NATIVE_FREEDOS_ASSETS")
     if configured:
         return Path(configured).expanduser().resolve()
-    return (Path.cwd() / "freedos").resolve()
+    return (Path.cwd() / "dosassets" / "freedos").resolve()
 
 
 class _VhdBootCase(NamedTuple):

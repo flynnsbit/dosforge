@@ -14,7 +14,7 @@ from dosforge.models import BootMode, FloppyType
 
 
 def _native_test_ready() -> tuple[bool, str]:
-    if (os.environ.get("DOSFORGE_RUN_NATIVE_IMG_TESTS") or os.environ.get("VHDMAKER_RUN_NATIVE_IMG_TESTS")) != "1":
+    if os.environ.get("DOSFORGE_RUN_NATIVE_IMG_TESTS") != "1":
         return (False, "Set DOSFORGE_RUN_NATIVE_IMG_TESTS=1 to run native Linux mount integration tests.")
 
     required_commands = ("sudo", "mkfs.fat", "fsck.fat", "mount", "umount", "mcopy", "mattrib", "dd")

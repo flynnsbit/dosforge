@@ -54,6 +54,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+*.egg-info/
 
 # Local VHD / floppy images and install archives (large binary
 # artifacts that aren't part of the open-source DOS tree).

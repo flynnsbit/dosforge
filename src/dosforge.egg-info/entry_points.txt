@@ -1,3 +1,0 @@
-[console_scripts]
-dosforge = dosforge.cli:main
-vhdmaker = dosforge.cli:_legacy_vhdmaker_entrypoint

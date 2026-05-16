@@ -21,10 +21,6 @@ dev = [
 
 [project.scripts]
 dosforge = "dosforge.cli:main"
-# Legacy CLI name for users who installed the project as `vhdmaker`.
-# Prints a deprecation notice and forwards to the `dosforge` entry point.
-# Plan to drop in a future release once users have migrated.
-vhdmaker = "dosforge.cli:_legacy_vhdmaker_entrypoint"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

@@ -200,17 +200,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    # One-shot migration of the pre-rename ``~/.local/state/vhdmaker/``
-    # directory into ``~/.local/state/dosforge/`` so existing users
-    # don't lose their state.json across the rename.
-    from .paths import migrate_legacy_state_dir
-    migrated = migrate_legacy_state_dir()
-    if migrated is not None:
-        sys.stderr.write(
-            f"dosforge: migrated state from ~/.local/state/vhdmaker/ "
-            f"to {migrated}\n"
-        )
-
     try:
         if args.command in (None, "tui"):
             ensure_startup_sudo_auth()
@@ -327,20 +316,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser.print_help(sys.stderr)
     return 2
-
-
-def _legacy_vhdmaker_entrypoint(argv: Sequence[str] | None = None) -> int:
-    """Legacy `vhdmaker` console-script shim.
-
-    The project was renamed from ``vhdmaker`` to ``dosforge``. Users who
-    installed the package as ``vhdmaker`` still get a working CLI for
-    one deprecation cycle: this entry point prints a one-time warning
-    and forwards to :func:`main`. Drop in a future release once usage
-    has migrated.
-    """
-    sys.stderr.write(
-        "vhdmaker has been renamed to 'dosforge'. "
-        "Please run 'dosforge ...' instead — the 'vhdmaker' command "
-        "will be removed in a future release.\n"
-    )
-    return main(argv)
