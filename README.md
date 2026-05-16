@@ -20,6 +20,9 @@ with optional boot/system file staging for FreeDOS and legacy MS-DOS families.
   - MS-DOS 3.3 / 3.31 / 5.0 / 6.22
   - PC-DOS / PC-DOS 7.0 (XDF)
   - Compaq DOS 3.31
+- **Emulator-specific machine targets** — generic (86Box / QEMU) plus
+  MartyPC IBM/Xebec, MartyPC XT-IDE, and MartyPC JR-IDE with the exact
+  CHS geometries each controller validates against
 - Automatic DOS boot-template extraction from install images when possible
 - Mount + open in file manager from TUI and CLI (`.vhd`, `.img`, `.ima`)
 - Optional custom payload directory copy into created media (`--custom-payload-path`)
@@ -30,6 +33,15 @@ with optional boot/system file staging for FreeDOS and legacy MS-DOS families.
 |---|---|---|---|
 | VHD | FAT16 / FAT32 | Fixed bytes (for example `512M`) | FreeDOS, MS-DOS 7.1, IBM DOS, MS-DOS 3.x/5.0/6.22, PC-DOS, Compaq DOS |
 | IMG/IMA | FAT12 | Fixed floppy presets | FreeDOS, MS-DOS 7.1, IBM DOS, MS-DOS 3.x/5.0/6.22, PC-DOS/PC-DOS 7.0, Compaq DOS (system-format toggle) |
+
+VHD machine-target presets (see [Machine targets](#machine-targets)):
+
+| `--machine-target` | Controller validated against | Geometry source |
+|---|---|---|
+| `generic` (default) | 86Box / QEMU / SeaBIOS AUTO | Canonical ATA `16 × 63`, cap-aware aligned to 504 MiB cylinder boundary |
+| `martypc-xebec` | MartyPC IBM/Xebec MFM HDC (XT-class) | Exactly **3 usable** legacy Xebec drive types (10 MiB + 2× 20 MiB; a 4th type1 = 10 MiB FAT12 is recognized but FAT12 VHDs aren't supported yet) |
+| `martypc-xtide` | MartyPC XT-IDE (Rev 2 PIO) | One of MartyPC's **127** `AtFormats` entries (10 MiB → 519 MiB) |
+| `martypc-jride` | MartyPC JR-IDE (PCjr sidecar) | Shares the same 127-entry table as `martypc-xtide` |
 
 Floppy presets: `160K`, `180K`, `360K`, `720K`, `1.84M (XDF)`, `1.2M`, `1.44M`, `2.88M`.
 
@@ -274,14 +286,30 @@ is correct: vhdmaker writes a standard ATA `16h/63spt` VHD footer that BIOS
 AUTO detects as NORMAL geometry, and the disk size is aligned to that
 cylinder boundary.
 
-### MartyPC IBM/Xebec MFM controller
+For [MartyPC](https://github.com/dbalsom/martypc) — which emulates the
+IBM PC, XT, PCJr, and Tandy 1000 — the emulated hard-disk controller
+strictly validates the VHD footer's CHS against a small fixed table.
+Mismatched geometries are rejected with `UnsupportedVHD` at mount time.
+Pick the matching `--machine-target` so vhdmaker writes the exact CHS
+MartyPC expects.
 
-MartyPC's `IbmXebec` HDC validates the VHD footer against exactly four
-hardcoded drive types and rejects any other geometry. Select the matching
-target so vhdmaker writes the exact CHS the emulator expects:
+### MartyPC IBM/Xebec MFM (native XT controller)
+
+MartyPC's `IbmXebec` HDC (used by `ibm5160_hdd` and similar XT-class
+machine configs) hard-codes **four** drive geometries, but only the
+**three FAT16-compatible 20 MiB types** are produced by vhdmaker today.
+The 10 MiB Type 1 requires FAT12, which vhdmaker doesn't yet write on
+VHD targets:
+
+| `--martypc-xebec-drive-type` | CHS | Capacity | DIP code | wpc | vhdmaker support |
+|---|---|---:|:---:|---:|:---:|
+| `type1`  | `306 × 4 × 17` | 10.16 MiB | `0b00` | 0   | ✗ (FAT12) |
+| `type16` | `612 × 4 × 17` | 20.32 MiB | `0b01` | 0   | ✓ FAT16 |
+| `type2`  | `615 × 4 × 17` | 20.42 MiB | `0b10` | 300 | ✓ FAT16 (most common) |
+| `type13` | `306 × 8 × 17` | 20.32 MiB | `0b11` | 128 | ✓ FAT16 |
 
 ```bash
-# 20 MiB, Type 2 (615 x 4 x 17) — the most common XT Xebec geometry
+# 20 MiB, Type 2 (615 × 4 × 17) — the most common XT Xebec geometry
 vhdmaker create \
   --path ~/marty/dos33.vhd \
   --machine-target martypc-xebec \
@@ -290,35 +318,51 @@ vhdmaker create \
   --boot-assets-path ./msdos33
 ```
 
-Supported `--martypc-xebec-drive-type` values:
-
-| Drive type | CHS | Capacity | Notes |
-|---|---|---:|---|
-| `type1`  | `306 x 4 x 17` | 10.16 MiB | Requires FAT12 (not yet supported on VHD) |
-| `type16` | `612 x 4 x 17` | 20.32 MiB | FAT16, wpc=0 |
-| `type2`  | `615 x 4 x 17` | 20.42 MiB | FAT16, wpc=300 (most common) |
-| `type13` | `306 x 8 x 17` | 20.32 MiB | FAT16, wpc=128 |
-
 With `--machine-target martypc-xebec`:
 
-- `--size` is ignored — the size is forced to the drive type's exact capacity.
+- `--size` is ignored — size is forced to the drive type's exact capacity.
 - The 16h/63spt footer normalization (used for generic targets) is skipped;
   the footer's CHS is written to match the Xebec drive type byte-for-byte.
 - Only FAT16 + XT-class DOS boot modes are accepted
   (`none`, `ibm8088`, `msdos33`, `msdos331`, `pcdos`, `compaq331`).
+- `--boot-mode ibm8088` is forced to `--ibm-dos-version dos33`
+  (20 MiB is well under the DOS 5.0 504 MiB cap, and DOS 3.3 is the
+  era-appropriate choice for XT-class Xebec disks).
 - Custom payload auto-sizing is disabled (the geometry is fixed); payload
   must fit within the drive type's capacity.
 
-The MartyPC XT-IDE controller exposes a much larger 127-entry geometry table
-that's shared with the JR-IDE (PCjr sidecar) controller. Both are wired up
-via `--machine-target martypc-xtide` or `--machine-target martypc-jride`,
-selecting the specific entry with `--martypc-at-drive-type <slug>`.
+### MartyPC XT-IDE (Rev 2 PIO) and JR-IDE (PCjr sidecar)
 
-### MartyPC XT-IDE / JR-IDE controllers
-
-Both share MartyPC's 127-entry `AtFormats::vec()` table (`crates/marty_core/src/devices/hdc/at_formats.rs`).
+Both controllers share MartyPC's 127-entry `AtFormats::vec()` table.
 Slugs follow the pattern `at-<cyl>-<heads>-<spt>` — for example
-`at-1024-16-63` (504 MiB) or `at-306-4-17` (10 MiB).
+`at-1024-16-63` (504 MiB) or `at-306-4-17` (10 MiB). Run
+`vhdmaker list-martypc-formats` to see the full set with sizes.
+
+Useful entries by capacity (a representative subset of the 127):
+
+| Slug | CHS | Capacity | Notes |
+|---|---|---:|---|
+| `at-306-4-17`    | `306 × 4 × 17`    | 10.16 MiB | smallest entry (FAT12 territory) |
+| `at-306-8-26`    | `306 × 8 × 26`    | 31.08 MiB | DOS 3.3 friendly (≤ 32 MiB) |
+| `at-615-4-26`    | `615 × 4 × 26`    | 31.29 MiB | DOS 3.3 friendly (≤ 32 MiB) |
+| `at-1024-4-17`   | `1024 × 4 × 17`   | 34.00 MiB | first FAT16B entry (> 32 MiB) |
+| `at-820-4-26`    | `820 × 4 × 26`    | 41.64 MiB | |
+| `at-1024-5-17`   | `1024 × 5 × 17`   | 42.50 MiB | |
+| `at-1024-8-17`   | `1024 × 8 × 17`   | 68.00 MiB | |
+| `at-1024-9-17`   | `1024 × 9 × 17`   | 76.50 MiB | |
+| `at-1024-10-17`  | `1024 × 10 × 17`  | 85.00 MiB | |
+| `at-1024-12-17`  | `1024 × 12 × 17`  | 102.00 MiB | |
+| `at-1024-15-17`  | `1024 × 15 × 17`  | 127.50 MiB | |
+| `at-1024-16-17`  | `1024 × 16 × 17`  | 136.00 MiB | |
+| `at-1024-8-26`   | `1024 × 8 × 26`   | 104.00 MiB | |
+| `at-1024-9-26`   | `1024 × 9 × 26`   | 117.00 MiB | |
+| `at-1024-14-17`  | `1024 × 14 × 17`  | 119.00 MiB | |
+| `at-967-16-31`   | `967 × 16 × 31`   | 234.10 MiB | |
+| `at-1013-10-63`  | `1013 × 10 × 63`  | 311.66 MiB | |
+| `at-854-16-63`   | `854 × 16 × 63`   | 420.41 MiB | |
+| `at-1024-16-63`  | `1024 × 16 × 63`  | **504.00 MiB** | standard BIOS NORMAL cap (default) |
+| `at-1036-16-63`  | `1036 × 16 × 63`  | 509.91 MiB | LBA territory |
+| `at-1054-16-63`  | `1054 × 16 × 63`  | 518.77 MiB | largest entry |
 
 ```bash
 # Print all 127 supported AT/XT-IDE drive type slugs with sizes:
@@ -349,12 +393,22 @@ With `--machine-target martypc-xtide` or `martypc-jride`:
   written byte-for-byte to match the AT table entry.
 - `qemu-img` is invoked with `force_size=on` so `current_size` exactly
   matches `cyl × heads × spt × 512` (no inaccessible CHS tail).
-- FAT16 is required for entries below 64 MiB; FAT32 is accepted for
-  entries ≥ 64 MiB. Entries below 16 MiB (the first three AT formats)
-  require FAT12 and are rejected for now.
+- **FAT16** is required for entries < 64 MiB; **FAT32** is accepted for
+  entries ≥ 64 MiB. The first three AT entries (< 16 MiB) require FAT12
+  and are rejected for now.
 - When using `--boot-mode ibm8088`, vhdmaker validates the selected drive
   type fits within the IBM DOS profile's cap (32 MiB for `dos33`,
   504 MiB for `dos50`).
+
+### Picking the right MartyPC target
+
+| You want… | `--machine-target` | Pick drive type |
+|---|---|---|
+| Original IBM XT (5160 + Xebec MFM ROM), 20 MiB DOS 3.3 | `martypc-xebec` | `type2` (615 × 4 × 17) |
+| XT clone with XT-IDE BIOS, 32 MiB DOS 3.3 | `martypc-xtide` | `at-615-4-26` or `at-306-8-26` |
+| XT clone with XT-IDE, larger DOS 5+ disk (>32 MiB up to ~504 MiB) | `martypc-xtide` | `at-1024-16-63` (504 MiB max, standard NORMAL boundary) |
+| IBM PCjr with JR-IDE sidecar | `martypc-jride` | same AT slugs as `martypc-xtide` |
+| Anything else (86Box, QEMU, real hardware) | `generic` (default) | n/a — pick any size via `--size` |
 
 ## State paths
 

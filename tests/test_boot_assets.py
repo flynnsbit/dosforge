@@ -374,6 +374,9 @@ def test_resolve_ibm8088_direct_directory(tmp_path: Path) -> None:
     _touch(assets_dir / "MSDOS.SYS", b"msdos")
     _touch(assets_dir / "COMMAND.COM", b"command")
     _touch(assets_dir / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
+    # Even with CONFIG.SYS available in the asset dir, MINIMAL profile
+    # (the default) must NOT stage CONFIG.SYS / AUTOEXEC.BAT — they
+    # would add A:\DOS-flavoured defaults on a boot-files-only build.
     _touch(assets_dir / "CONFIG.SYS", b"FILES=20\r\n")
 
     request = CreateRequest(
@@ -387,7 +390,9 @@ def test_resolve_ibm8088_direct_directory(tmp_path: Path) -> None:
     resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
     assets = resolver.resolve(request)
 
-    assert sorted(assets.system_files) == ["COMMAND.COM", "CONFIG.SYS", "IO.SYS", "MSDOS.SYS"]
+    assert sorted(assets.system_files) == ["COMMAND.COM", "IO.SYS", "MSDOS.SYS"]
+    assert "CONFIG.SYS" not in assets.system_files
+    assert "AUTOEXEC.BAT" not in assets.system_files
     assert assets.boot_sector_template == assets_dir / "BOOTSECT_FAT16.BIN"
 
 
@@ -397,6 +402,7 @@ def test_resolve_ibm8088_direct_directory_normalizes_startup_files(tmp_path: Pat
     _touch(assets_dir / "MSDOS.SYS", b"msdos")
     _touch(assets_dir / "COMMAND.COM", b"command")
     _touch(assets_dir / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
+    (assets_dir / "DOS").mkdir(parents=True, exist_ok=True)
     _touch(assets_dir / "CONFIG.SYS", b"FILES=20\r\nPATH=C:\\DOS\r\n")
     _touch(assets_dir / "AUTOEXEC.BAT", b"@ECHO OFF\r\nPROMPT $P$G\r\nKEYB US\r\n")
 
@@ -407,6 +413,7 @@ def test_resolve_ibm8088_direct_directory_normalizes_startup_files(tmp_path: Pat
         boot_mode=BootMode.IBM8088,
         boot_assets_path=assets_dir,
         ibm_dos_version=IBMDOSVersion.DOS33,
+        msdos_install_profile=MSDOSInstallProfile.FULL,
     )
     resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
     assets = resolver.resolve(request)
@@ -414,7 +421,8 @@ def test_resolve_ibm8088_direct_directory_normalizes_startup_files(tmp_path: Pat
     config_text = assets.system_files["CONFIG.SYS"].read_text(encoding="latin-1")
     autoexec_text = assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1")
     assert "PATH=" not in config_text.upper()
-    assert autoexec_text.splitlines() == ["@ECHO OFF", "PATH=A:\\DOS"]
+    # VHD target → C:\DOS (was A:\DOS for floppy-only legacy behavior).
+    assert autoexec_text.splitlines() == ["@ECHO OFF", "PATH=C:\\DOS"]
 
 
 def test_resolve_ibm8088_uses_version_subdir(tmp_path: Path) -> None:
@@ -894,6 +902,7 @@ def test_resolve_pcdos7_full_profile_extracts_payload_and_startup(
         boot_mode=BootMode.PCDOS7,
         boot_assets_path=assets_dir,
         msdos_install_profile=MSDOSInstallProfile.FULL,
+        media_type=MediaType.IMG,
     )
     monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
 
@@ -1452,21 +1461,45 @@ def test_resolve_msdos71_direct_directory(tmp_path: Path) -> None:
     resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
     assets = resolver.resolve(request)
 
+    # MINIMAL profile must not stage CONFIG.SYS / AUTOEXEC.BAT.
     assert sorted(assets.system_files) == [
-        "AUTOEXEC.BAT",
         "COMMAND.COM",
-        "CONFIG.SYS",
         "HIMEM.SYS",
         "IFSHLP.SYS",
         "IO.SYS",
         "MSDOS.SYS",
     ]
+    assert "CONFIG.SYS" not in assets.system_files
+    assert "AUTOEXEC.BAT" not in assets.system_files
     assert assets.boot_sector_template == assets_dir / "BOOTSECT_FAT32.BIN"
-    assert "SHELL=COMMAND.COM /P /E:640" in assets.system_files["CONFIG.SYS"].read_text(encoding="latin-1")
-    config_text = assets.system_files["CONFIG.SYS"].read_text(encoding="latin-1")
+
+
+def test_resolve_msdos71_direct_directory_full_targets_c_drive(tmp_path: Path) -> None:
+    """FULL profile on VHD must stage CONFIG.SYS/AUTOEXEC.BAT pointing at C:\\DOS."""
+    assets_dir = tmp_path / "msdos"
+    _touch(assets_dir / "IO.SYS", b"io")
+    _touch(assets_dir / "MSDOS.SYS", b"msdos")
+    _touch(assets_dir / "COMMAND.COM", b"command")
+    _touch(assets_dir / "HIMEM.SYS", b"himem")
+    _touch(assets_dir / "IFSHLP.SYS", b"ifshlp")
+    _touch(assets_dir / "BOOTSECT_FAT32.BIN", _msdos_fat32_boot_sector_bytes())
+    (assets_dir / "DOS").mkdir(parents=True, exist_ok=True)
+
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=512 * 1024 * 1024,
+        disk_format=DiskFormat.FAT32,
+        boot_mode=BootMode.MSDOS71,
+        boot_assets_path=assets_dir,
+        msdos_install_profile=MSDOSInstallProfile.FULL,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+
+    assert "CONFIG.SYS" in assets.system_files
+    assert "AUTOEXEC.BAT" in assets.system_files
     autoexec_text = assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1")
-    assert "PATH=" not in config_text.upper()
-    assert autoexec_text.splitlines() == ["@ECHO OFF", "PATH=A:\\DOS"]
+    assert autoexec_text.splitlines() == ["@ECHO OFF", "PATH=C:\\DOS"]
 
 
 def test_resolve_msdos71_direct_directory_fat16(tmp_path: Path) -> None:
@@ -1488,10 +1521,9 @@ def test_resolve_msdos71_direct_directory_fat16(tmp_path: Path) -> None:
     resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
     assets = resolver.resolve(request)
 
+    # MINIMAL: only boot/system files, no startup files.
     assert sorted(assets.system_files) == [
-        "AUTOEXEC.BAT",
         "COMMAND.COM",
-        "CONFIG.SYS",
         "HIMEM.SYS",
         "IFSHLP.SYS",
         "IO.SYS",
@@ -1516,6 +1548,7 @@ def test_resolve_msdos71_normalizes_startup_files_for_install_profile(tmp_path: 
         assets_dir / "AUTOEXEC.BAT",
         b"@ECHO OFF\r\nPROMPT $P$G\r\nLH DOSLFN /Z:CP437UNI.TBL\r\n",
     )
+    (assets_dir / "DOS").mkdir(parents=True, exist_ok=True)
 
     request = CreateRequest(
         path=tmp_path / "disk.vhd",
@@ -1523,16 +1556,18 @@ def test_resolve_msdos71_normalizes_startup_files_for_install_profile(tmp_path: 
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS71,
         boot_assets_path=assets_dir,
+        msdos_install_profile=MSDOSInstallProfile.FULL,
     )
     resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
     assets = resolver.resolve(request)
 
     config_text = assets.system_files["CONFIG.SYS"].read_text(encoding="latin-1")
     autoexec_text = assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1")
-    assert "DEVICE=A:\\DOS\\HIMEM.SYS" in config_text
-    assert "DEVICEHIGH=A:\\DOS\\SETVER.EXE" in config_text
+    # VHD target → C:\DOS paths.
+    assert "DEVICE=C:\\DOS\\HIMEM.SYS" in config_text
+    assert "DEVICEHIGH=C:\\DOS\\SETVER.EXE" in config_text
     assert "PATH=" not in config_text.upper()
-    assert autoexec_text.splitlines() == ["@ECHO OFF", "PATH=A:\\DOS"]
+    assert autoexec_text.splitlines() == ["@ECHO OFF", "PATH=C:\\DOS"]
 
 
 def test_resolve_msdos71_direct_directory_full_uses_dos_payload(tmp_path: Path) -> None:
@@ -1607,12 +1642,10 @@ def test_resolve_msdos71_from_install_images(tmp_path: Path, monkeypatch: pytest
     assert assets.system_files["COMMAND.COM"].read_bytes() == b"command"
     assert assets.system_files["HIMEM.SYS"].read_bytes() == b"himem"
     assert assets.system_files["IFSHLP.SYS"].read_bytes() == b"ifshlp"
-    assert "CONFIG.SYS" in assets.system_files
-    assert "AUTOEXEC.BAT" in assets.system_files
-    assert assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1").splitlines()[:2] == [
-        "@ECHO OFF",
-        "PATH=A:\\DOS",
-    ]
+    assert assets.source_image_size_bytes == disk1.stat().st_size
+    # MINIMAL profile (default) must not stage CONFIG.SYS or AUTOEXEC.BAT.
+    assert "CONFIG.SYS" not in assets.system_files
+    assert "AUTOEXEC.BAT" not in assets.system_files
     template = assets.boot_sector_template.read_bytes()
     assert len(template) == 512
     assert template[82:90] == b"FAT32   "
@@ -1738,12 +1771,9 @@ def test_resolve_msdos71_from_install_images_fat16(tmp_path: Path, monkeypatch: 
     assert assets.system_files["HIMEM.SYS"].read_bytes() == b"himem"
     assert assets.system_files["IFSHLP.SYS"].read_bytes() == b"ifshlp"
     assert assets.source_image_size_bytes == disk1.stat().st_size
-    assert "CONFIG.SYS" in assets.system_files
-    assert "AUTOEXEC.BAT" in assets.system_files
-    assert assets.system_files["AUTOEXEC.BAT"].read_text(encoding="latin-1").splitlines()[:2] == [
-        "@ECHO OFF",
-        "PATH=A:\\DOS",
-    ]
+    # MINIMAL: startup files are NOT staged.
+    assert "CONFIG.SYS" not in assets.system_files
+    assert "AUTOEXEC.BAT" not in assets.system_files
     template = assets.boot_sector_template.read_bytes()
     assert len(template) == 512
     assert template[54:62] in (b"FAT16   ", b"FAT12   ")

@@ -64,10 +64,6 @@ _MSDOS71_ROOT_FILES_EXCLUDED_FROM_DOS_DIR = {
     "CONFIG.SYS",
     "AUTOEXEC.BAT",
 }
-_MSDOS71_DEFAULT_AUTOEXEC_BAT = (
-    "@ECHO OFF\r\n"
-    "PATH=A:\\DOS\r\n"
-)
 _FREEDOS_USERSPACE_TOOLS = (
     "assign",
     "attrib",
@@ -208,6 +204,21 @@ _SAVE_DSKF_HEADER_MIN = 0x2A
 _SAVE_DSKF_SIGNATURE = b"\xAA\x59"
 _SAVE_DSKF_SECTOR_COUNT_OFFSET = 0x22
 _SAVE_DSKF_FIRST_SECTOR_OFFSET = 0x26
+
+
+def _msdos_install_dir_for_media(media_type: "MediaType") -> str:
+    """Pick the AUTOEXEC.BAT / CONFIG.SYS install directory for a target.
+
+    VHD targets keep their DOS tools at ``C:\\DOS`` (the disk the user
+    boots from). Floppy IMG targets historically reference ``A:\\DOS``
+    because that's the drive letter the floppy occupies at boot. Pass
+    the chosen ``install_dir`` to ``normalize_msdos_*`` and
+    ``_ensure_msdos_startup_files`` so PATH / DEVICE references end up
+    on the right drive.
+    """
+    if media_type is MediaType.IMG:
+        return r"A:\DOS"
+    return r"C:\DOS"
 
 
 def normalize_msdos_config_sys(text: str, *, install_dir: str = r"A:\DOS") -> str:
@@ -703,6 +714,7 @@ class BootAssetResolver:
             directory,
             request.disk_format,
             install_profile=request.msdos_install_profile,
+            media_type=request.media_type,
         )
         if direct_assets is not None:
             return direct_assets
@@ -716,6 +728,7 @@ class BootAssetResolver:
             disk_format=request.disk_format,
             install_profile=request.msdos_install_profile,
             payload_budget_bytes=payload_budget_bytes,
+            media_type=request.media_type,
         )
 
     def _resolve_ibm8088(self, request: CreateRequest) -> BootAssets:
@@ -871,6 +884,7 @@ class BootAssetResolver:
                 direct_assets = self._try_resolve_legacy_dos_from_directory(
                     candidate,
                     install_profile=install_profile,
+                    media_type=request.media_type,
                 )
                 if direct_assets is not None:
                     return direct_assets
@@ -878,6 +892,7 @@ class BootAssetResolver:
                 direct_assets = self._try_resolve_legacy_dos_from_directory(
                     candidate,
                     install_profile=install_profile,
+                    media_type=request.media_type,
                 )
                 if direct_assets is not None:
                     if (
@@ -932,22 +947,30 @@ class BootAssetResolver:
         directory: Path,
         *,
         install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL,
+        media_type: MediaType = MediaType.VHD,
     ) -> BootAssets | None:
         files = self._collect_legacy_system_files_from_directory(directory)
         if files is None:
             return None
-        for name in _OPTIONAL_MSDOS_STARTUP_FILES:
-            located = self._find_file_case_insensitive(directory, name)
-            if located is not None:
-                files[name] = located
-        startup_defaults_root = self.cache_root / f"legacy-startup-{self._hash_value(str(directory.resolve()))}"
-        if any(name in files for name in _OPTIONAL_MSDOS_STARTUP_FILES):
-            self._normalize_msdos_startup_files(files, defaults_root=startup_defaults_root)
+        install_dir = _msdos_install_dir_for_media(media_type)
+        # MINIMAL profile: don't stage CONFIG.SYS/AUTOEXEC.BAT — they would
+        # add files that drag in A:\DOS-flavoured PATH lines on a build the
+        # user explicitly asked for "boot files only".
+        if install_profile is MSDOSInstallProfile.FULL:
+            for name in _OPTIONAL_MSDOS_STARTUP_FILES:
+                located = self._find_file_case_insensitive(directory, name)
+                if located is not None:
+                    files[name] = located
+            startup_defaults_root = self.cache_root / f"legacy-startup-{self._hash_value(str(directory.resolve()))}"
+            self._ensure_msdos_startup_files(
+                files, defaults_root=startup_defaults_root, install_dir=install_dir
+            )
+            self._normalize_msdos_startup_files(
+                files, defaults_root=startup_defaults_root, install_dir=install_dir
+            )
         payload_dir: Path | None = None
         payload_target_dir = "FDOS"
         if install_profile is MSDOSInstallProfile.FULL:
-            self._ensure_msdos_startup_files(files, defaults_root=startup_defaults_root)
-            self._normalize_msdos_startup_files(files, defaults_root=startup_defaults_root)
             payload_dir = self._find_directory_case_insensitive(directory, "DOS")
             if payload_dir is not None:
                 payload_target_dir = "DOS"
@@ -991,8 +1014,13 @@ class BootAssetResolver:
                 if extracted is not None:
                     files[name] = extracted
             startup_defaults_root = extraction_root / "startup-defaults"
-            self._ensure_msdos_startup_files(files, defaults_root=startup_defaults_root)
-            self._normalize_msdos_startup_files(files, defaults_root=startup_defaults_root)
+            install_dir = _msdos_install_dir_for_media(media_type)
+            self._ensure_msdos_startup_files(
+                files, defaults_root=startup_defaults_root, install_dir=install_dir
+            )
+            self._normalize_msdos_startup_files(
+                files, defaults_root=startup_defaults_root, install_dir=install_dir
+            )
         self._ensure_country_sys_from_install_images(files, install_images, extraction_root=extraction_root)
         for name in _IBM_DOS_BOOTSECTOR_SOURCES:
             self._extract_file_from_images(install_images, extraction_root, name, required=False)
@@ -1487,6 +1515,7 @@ class BootAssetResolver:
         disk_format: DiskFormat,
         *,
         install_profile: MSDOSInstallProfile,
+        media_type: MediaType = MediaType.VHD,
     ) -> BootAssets | None:
         files: dict[str, Path] = {}
         for name in (*_REQUIRED_MSDOS_FILES, *_REQUIRED_MSDOS_SUPPORT_FILES):
@@ -1494,19 +1523,28 @@ class BootAssetResolver:
             if located is None:
                 return None
             files[name] = located
-        for name in _OPTIONAL_MSDOS_STARTUP_FILES:
-            located = self._find_file_case_insensitive(directory, name)
-            if located is not None:
-                files[name] = located
 
-        self._ensure_msdos_startup_files(
-            files,
-            defaults_root=self.cache_root / "msdos71-default-startup",
-        )
-        self._normalize_msdos_startup_files(
-            files,
-            defaults_root=self.cache_root / "msdos71-default-startup",
-        )
+        # MINIMAL profile: only the boot/system files. Skip CONFIG.SYS /
+        # AUTOEXEC.BAT entirely so we don't stage files referencing A:\DOS
+        # on what's supposed to be a boot-files-only build. FULL profile
+        # picks them up + ensures defaults + normalizes paths.
+        if install_profile is MSDOSInstallProfile.FULL:
+            for name in _OPTIONAL_MSDOS_STARTUP_FILES:
+                located = self._find_file_case_insensitive(directory, name)
+                if located is not None:
+                    files[name] = located
+
+            install_dir = _msdos_install_dir_for_media(media_type)
+            self._ensure_msdos_startup_files(
+                files,
+                defaults_root=self.cache_root / "msdos71-default-startup",
+                install_dir=install_dir,
+            )
+            self._normalize_msdos_startup_files(
+                files,
+                defaults_root=self.cache_root / "msdos71-default-startup",
+                install_dir=install_dir,
+            )
         self._ensure_country_sys_from_directory(files, directory)
 
         try:
@@ -1534,6 +1572,7 @@ class BootAssetResolver:
         disk_format: DiskFormat,
         install_profile: MSDOSInstallProfile,
         payload_budget_bytes: int | None = None,
+        media_type: MediaType = MediaType.VHD,
     ) -> BootAssets:
         install_images = self._collect_msdos71_install_images(directory)
         if not install_images:
@@ -1561,20 +1600,29 @@ class BootAssetResolver:
             name: self._require_file_case_insensitive(extraction_root, name)
             for name in (*_REQUIRED_MSDOS_FILES, *_REQUIRED_MSDOS_SUPPORT_FILES)
         }
-        for name in _OPTIONAL_MSDOS_STARTUP_FILES:
-            optional = self._find_file_case_insensitive(extraction_root, name)
-            if optional is not None:
-                files[name] = optional
+        # MINIMAL profile: only the boot/system files. Skip CONFIG.SYS /
+        # AUTOEXEC.BAT so a "Boot files only" build doesn't carry
+        # A:\DOS-flavoured defaults onto a VHD. FULL profile stages
+        # them + ensures defaults + normalizes paths to the right
+        # install_dir for the target media type.
+        if install_profile is MSDOSInstallProfile.FULL:
+            for name in _OPTIONAL_MSDOS_STARTUP_FILES:
+                optional = self._find_file_case_insensitive(extraction_root, name)
+                if optional is not None:
+                    files[name] = optional
 
-        self._ensure_msdos_startup_files(
-            files,
-            defaults_root=extraction_root,
-        )
-        self._normalize_msdos_startup_files(
-            files,
-            defaults_root=extraction_root,
-        )
-        self._ensure_country_sys_from_install_images(files, install_images, extraction_root=extraction_root)
+            install_dir = _msdos_install_dir_for_media(media_type)
+            self._ensure_msdos_startup_files(
+                files,
+                defaults_root=extraction_root,
+                install_dir=install_dir,
+            )
+            self._normalize_msdos_startup_files(
+                files,
+                defaults_root=extraction_root,
+                install_dir=install_dir,
+            )
+            self._ensure_country_sys_from_install_images(files, install_images, extraction_root=extraction_root)
 
         template: Path | None = None
         template_candidates = (
@@ -1753,7 +1801,13 @@ class BootAssetResolver:
         except (OSError, zipfile.BadZipFile) as exc:
             raise ValidationError(f"Unable to read MS-DOS install archive: {pak_path}") from exc
 
-    def _ensure_msdos_startup_files(self, files: dict[str, Path], *, defaults_root: Path) -> None:
+    def _ensure_msdos_startup_files(
+        self,
+        files: dict[str, Path],
+        *,
+        defaults_root: Path,
+        install_dir: str = r"A:\DOS",
+    ) -> None:
         defaults_root.mkdir(parents=True, exist_ok=True)
         for name in _OPTIONAL_MSDOS_STARTUP_FILES:
             if name in files and files[name].exists():
@@ -1763,15 +1817,21 @@ class BootAssetResolver:
                 if name == "CONFIG.SYS":
                     content = self._default_msdos_config_sys(has_himem="HIMEM.SYS" in files)
                 else:
-                    content = _MSDOS71_DEFAULT_AUTOEXEC_BAT
+                    content = f"@ECHO OFF\r\nPATH={install_dir}\r\n"
                 _write_dos_text(default_path, _as_dos_text(content))
             files[name] = default_path
 
-    def _normalize_msdos_startup_files(self, files: dict[str, Path], *, defaults_root: Path) -> None:
+    def _normalize_msdos_startup_files(
+        self,
+        files: dict[str, Path],
+        *,
+        defaults_root: Path,
+        install_dir: str = r"A:\DOS",
+    ) -> None:
         defaults_root.mkdir(parents=True, exist_ok=True)
         startup_normalizers = {
-            "CONFIG.SYS": normalize_msdos_config_sys,
-            "AUTOEXEC.BAT": normalize_msdos_autoexec_bat,
+            "CONFIG.SYS": lambda text: normalize_msdos_config_sys(text, install_dir=install_dir),
+            "AUTOEXEC.BAT": lambda text: normalize_msdos_autoexec_bat(text, install_dir=install_dir),
         }
         for name, normalizer in startup_normalizers.items():
             source = files.get(name)
