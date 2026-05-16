@@ -89,6 +89,58 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
 }
 
 
+# Standard PC-DOS / MS-DOS 3.3-compatible MBR boot loader (bytes 0..439,
+# 440 bytes total). The NT-style disk signature area (offsets 440-443) and
+# the 2-byte reserved area (444-445) are written separately as zeros. The
+# 0x55AA boot signature lives at MBR offset 510-511 and is also written
+# separately so this constant stays exactly 440 bytes.
+#
+# Extracted verbatim from a real MS-DOS 3.30 install performed inside 86Box
+# on an MFM/RLL drive (the user's 86Box-MFM-20M-Option3.vhd reference). The
+# boot loader uses CHS reads only (INT 13h AH=02), which is essential for
+# pre-LBA XT-class BIOSes (the MartyPC Xebec controller and 86Box's MFM/RLL
+# controller both fall in that category). Modern Linux MBRs that parted
+# writes use INT 13h AH=42 LBA reads and silently fail on these BIOSes
+# (POST OK, then the boot sector load returns CF=1 and the MBR error path
+# either prints "Error loading operating system" if string offsets line up,
+# or just leaves a blinking cursor if the boot code returned to BIOS).
+_LEGACY_DOS_MBR_BOOT_CODE_PRE_SIG: bytes = bytes.fromhex(
+    "fa33c08ed0bc007c8bf45007501ffbfcbf0006b90001f2a5ea1d060000bebe07"
+    "b304803c80740e803c00751c83c610fecb75efcd188b148b4c028bee83c610fe"
+    "cb741a803c0074f4be8b06ac3c00740b56bb0700b40ecd105eebf0ebfebf0500"
+    "bb007cb8010257cd135f730c33c0cd134f75edbea306ebd3bec206bffe7d813d"
+    "55aa75c78bf5ea007c0000496e76616c696420706172746974696f6e20746162"
+    "6c65004572726f72206c6f6164696e67206f7065726174696e67207379737465"
+    "6d004d697373696e67206f7065726174696e672073797374656d000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "000000000000000000000000000000000000000000000000"
+)
+assert len(_LEGACY_DOS_MBR_BOOT_CODE_PRE_SIG) == 440
+
+
+def _chs_to_partition_table_bytes(*, cyl: int, head: int, sector: int) -> bytes:
+    """Encode a CHS triple in MBR-partition-entry byte format.
+
+    Layout: ``[head, ((sector & 0x3F) | ((cyl >> 2) & 0xC0)), cyl & 0xFF]``.
+    Caller is responsible for keeping ``cyl <= 1023`` (XT-class drives
+    never exceed this so no clamping is needed here).
+    """
+    cyl_low = cyl & 0xFF
+    cyl_high = (cyl >> 8) & 0x3
+    return bytes(
+        [
+            head & 0xFF,
+            (sector & 0x3F) | (cyl_high << 6),
+            cyl_low,
+        ]
+    )
+
+
 def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
     """Return True for boot modes whose install step is driven by QEMU.
 
@@ -145,6 +197,41 @@ def _uses_msdos33_filesystem_layout(request: CreateRequest) -> bool:
     ):
         return True
     return False
+
+
+def _needs_xt_class_mbr_rewrite(request: CreateRequest) -> bool:
+    """Return True when the VHD must use a CHS-only DOS-3.3 MBR.
+
+    parted's modern MBR boot loader uses INT 13h AH=42 LBA reads and
+    invents a BIOS-canonical (head=31+) start CHS in the partition
+    entry — both fatal on pre-LBA XT-class BIOSes like MartyPC's
+    Xebec MFM controller. For these targets we overwrite parted's
+    MBR with a standard DOS-3.3 MBR boot loader (CHS reads only) and
+    a track-aligned partition entry (start_LBA = spt, real CHS
+    values for start/end) AFTER NBD detaches.
+
+    Other targets (86Box AUTO IDE, etc.) keep parted's MBR — it's
+    fine when the BIOS exposes LBA-aware INT 13h extensions.
+    """
+    return (
+        request.machine_target is MachineTarget.MARTYPC_XEBEC
+        and _uses_msdos33_filesystem_layout(request)
+    )
+
+
+def _partition_offset_bytes_for(request: CreateRequest) -> int:
+    """Return the byte offset of the FAT partition inside the VHD.
+
+    parted's default layout puts the partition at LBA 63 for legacy
+    boot mode. The XT-class MBR rewrite (see ``_needs_xt_class_mbr_rewrite``)
+    moves the partition to LBA = spt (one full track from the disk start
+    — track-aligned for MFM drives, matching what real DOS 3.3 FDISK
+    produces).
+    """
+    if _needs_xt_class_mbr_rewrite(request):
+        spec = request.martypc_xebec_drive_type.spec
+        return spec.sectors_per_track * 512
+    return 63 * 512
 
 
 @dataclass(slots=True)
@@ -266,12 +353,37 @@ class DiskManager:
 
         self._with_connected_nbd(target_path, configure, image_format="vpc")
 
+        # XT-class machine targets (MartyPC Xebec on msdos33-layout) need
+        # an MS-DOS 3.3-style MBR + a track-aligned partition entry.
+        # parted's MBR uses LBA INT 13h reads and invents BIOS-canonical
+        # start CHS, both of which silently fail on pre-LBA XT BIOSes.
+        # Rewrite the MBR here, while QEMU isn't running and we have
+        # exclusive file access. The new partition entry points the
+        # subsequent FORMAT C: /S at LBA = spt, which is exactly the
+        # layout real DOS 3.3 FDISK produces on MFM controllers.
+        if _needs_xt_class_mbr_rewrite(request):
+            spec = request.martypc_xebec_drive_type.spec
+            fs_type = 0x01 if request.disk_format is DiskFormat.FAT12 else 0x04
+            self._rewrite_mbr_for_xt_class(
+                vhd_path=target_path,
+                cylinders=spec.cylinders,
+                heads=spec.heads,
+                sectors_per_track=spec.sectors_per_track,
+                fs_type=fs_type,
+            )
+
+        partition_offset_bytes = _partition_offset_bytes_for(request)
+
         # Legacy DOS modes: after NBD detaches, drive the DOS's own SYS step
         # inside QEMU. This writes an authentic boot sector and copies
         # IO.SYS/IBMBIO.COM, MSDOS.SYS/IBMDOS.COM, COMMAND.COM with correct
         # attributes — exactly the workflow used on real hardware.
         if _uses_legacy_dos_qemu_install(request):
-            self._install_legacy_dos_via_qemu(request=request, vhd_path=target_path)
+            self._install_legacy_dos_via_qemu(
+                request=request,
+                vhd_path=target_path,
+                partition_offset_bytes=partition_offset_bytes,
+            )
             # QEMU's SeaBIOS exposes BIOS-canonical translation (16h/63s)
             # to the guest, so when DOS's FORMAT.COM writes the partition
             # BPB it picks up 16/63 for heads/spt. For targets whose
@@ -284,7 +396,7 @@ class DiskManager:
             # emulator's hard-disk controller will report.
             self._patch_partition_bpb_to_footer_geometry(
                 vhd_path=target_path,
-                partition_offset_bytes=63 * 512,
+                partition_offset_bytes=partition_offset_bytes,
             )
             # Custom payload (for these modes) is copied via mtools after
             # the QEMU SYS step, since the NBD path is no longer active.
@@ -292,7 +404,7 @@ class DiskManager:
             if custom_payload is not None:
                 self._copy_custom_payload_to_vhd_via_mtools(
                     vhd_path=target_path,
-                    partition_offset_bytes=63 * 512,
+                    partition_offset_bytes=partition_offset_bytes,
                     source_dir=custom_payload,
                 )
 
@@ -1047,6 +1159,7 @@ class DiskManager:
         *,
         request: CreateRequest,
         vhd_path: Path,
+        partition_offset_bytes: int | None = None,
     ) -> None:
         """Boot the appropriate legacy DOS in QEMU and run SYS C: on the VHD.
 
@@ -1054,6 +1167,9 @@ class DiskManager:
         image + profile (Compaq DOS 3.31 vs MS-DOS 3.30). Produces an
         authentic DOS boot sector and copies system files exactly the way
         installing on real hardware would.
+
+        ``partition_offset_bytes`` defaults to ``_partition_offset_bytes_for(request)``
+        when not provided so callers don't have to thread it through.
         """
         descriptor = _legacy_dos_install_descriptor(request)
         if descriptor is None:
@@ -1086,12 +1202,16 @@ class DiskManager:
             cache_root=cache_root,
         )
         profile = descriptor.profile_builder(install_image)
-        # MBR partition starts at LBA 63 (legacy DOS-style layout). The
-        # partition byte offset is what mtools needs for "@@<offset>".
+        # MBR partition usually starts at LBA 63 (parted's legacy DOS
+        # layout). XT-class targets (MartyPC Xebec on msdos33) get a
+        # track-aligned partition at LBA = spt instead — see
+        # ``_partition_offset_bytes_for``.
+        if partition_offset_bytes is None:
+            partition_offset_bytes = _partition_offset_bytes_for(request)
         installer.install_system(
             vhd_path=vhd_path,
             profile=profile,
-            partition_offset_bytes=63 * 512,
+            partition_offset_bytes=partition_offset_bytes,
         )
 
     def _resolve_legacy_dos_assets_dir(
@@ -1762,6 +1882,76 @@ class DiskManager:
         with vhd_path.open("r+b") as handle:
             handle.seek(partition_offset_bytes + 24)
             handle.write(struct.pack("<HH", sectors_per_track, heads))
+
+    def _rewrite_mbr_for_xt_class(
+        self,
+        *,
+        vhd_path: Path,
+        cylinders: int,
+        heads: int,
+        sectors_per_track: int,
+        fs_type: int,
+    ) -> None:
+        """Overwrite the VHD's MBR with a DOS-3.3-style boot loader and
+        a track-aligned partition entry.
+
+        Used for MartyPC Xebec targets whose XT-class BIOS only supports
+        INT 13h AH=02 (CHS) reads. The partition is placed at LBA = spt
+        (one track in, exactly what real DOS 3.3 FDISK produces on an
+        MFM drive) with start CHS = (cyl=0, head=1, sec=1) and end CHS
+        = (cyl=cylinders-2, head=heads-1, sec=spt), leaving the last
+        cylinder unused (the same allocation DOS 3.3 FDISK makes).
+
+        Args:
+            vhd_path: VHD file to rewrite (must be a fixed VHD with a
+                512-byte conectix footer).
+            cylinders / heads / sectors_per_track: drive CHS that the
+                target's BIOS will report via INT 13h AH=08.
+            fs_type: MBR partition type byte (0x04 for FAT16 <32 MiB,
+                0x01 for FAT12 <32 MiB).
+        """
+        if cylinders < 3 or heads < 1 or sectors_per_track < 1:
+            raise ValidationError(
+                f"XT-class MBR rewrite needs cyl>=3, heads>=1, spt>=1; "
+                f"got {cylinders}x{heads}x{sectors_per_track}."
+            )
+
+        # Reserve the entire first track for the MBR (LBA 0 .. spt-1),
+        # and skip the final cylinder. This matches what DOS 3.3 FDISK
+        # produces on MFM controllers — verified byte-identical with the
+        # user's 86Box-MFM-20M-Option3.vhd reference.
+        start_lba = sectors_per_track
+        usable_cyls = cylinders - 1  # leave last cylinder unused
+        partition_sectors = usable_cyls * heads * sectors_per_track - start_lba
+
+        start_chs = _chs_to_partition_table_bytes(cyl=0, head=1, sector=1)
+        end_chs = _chs_to_partition_table_bytes(
+            cyl=usable_cyls - 1,
+            head=heads - 1,
+            sector=sectors_per_track,
+        )
+        entry = (
+            bytes([0x80])  # bootable flag
+            + start_chs
+            + bytes([fs_type & 0xFF])
+            + end_chs
+            + struct.pack("<II", start_lba, partition_sectors)
+        )
+        assert len(entry) == 16, len(entry)
+
+        with vhd_path.open("r+b") as handle:
+            # Boot code (0..439).
+            handle.seek(0)
+            handle.write(_LEGACY_DOS_MBR_BOOT_CODE_PRE_SIG)
+            # NT disk signature area (440..443) — DOS 3.3 keeps this 0.
+            handle.write(b"\x00\x00\x00\x00")
+            # Reserved (444..445).
+            handle.write(b"\x00\x00")
+            # Partition table entries (446..509) — entry 1 active, 2-4 zeroed.
+            handle.write(entry)
+            handle.write(b"\x00" * 16 * 3)
+            # Boot signature.
+            handle.write(b"\x55\xaa")
 
     def _ensure_sudo_ready(self) -> None:
         result = self.runner.run(["true"], sudo=True, check=False)

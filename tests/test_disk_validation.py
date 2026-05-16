@@ -914,3 +914,142 @@ def test_patch_partition_bpb_to_footer_geometry_noop_for_canonical_chs(
         spt, heads = _struct.unpack("<HH", f.read(4))
     assert spt == 63
     assert heads == 16
+
+
+# --- XT-class MBR rewrite (MartyPC Xebec) ---
+
+
+def _make_minimal_vhd_with_footer_and_parted_mbr(
+    path: Path,
+    *,
+    cyl: int,
+    heads: int,
+    spt: int,
+) -> None:
+    """Build a fake VHD: zeroed data area + footer + a parted-style MBR."""
+    import struct as _struct
+
+    total_sectors = cyl * heads * spt
+    size = total_sectors * 512
+    path.write_bytes(b"\x00" * (size + 512))
+    with path.open("r+b") as f:
+        # Write a parted-style MBR (LBA-aware boot code + bogus 31/63 CHS).
+        parted_mbr = bytes.fromhex(
+            "33c0fa8ed88ed0bc007c89e606578ec0fbfcbf0006b90001f3a5ea1f06000052"
+        )
+        f.seek(0)
+        f.write(parted_mbr)
+        # Random NT signature
+        f.seek(440)
+        f.write(b"\xaa\xbb\xcc\xdd")
+        # parted partition entry at LBA 63, bogus CHS (head=31).
+        entry = bytes([
+            0x80, 0x1f, 0x02, 0x00, 0x04, 0xfe, 0x02, 0x51,
+            0x3f, 0x00, 0x00, 0x00, 0x1d, 0xa3, 0x00, 0x00,
+        ])
+        f.seek(446)
+        f.write(entry)
+        f.seek(510)
+        f.write(b"\x55\xaa")
+        # Footer with given CHS
+        f.seek(-512, 2)
+        footer = bytearray(512)
+        footer[:8] = b"conectix"
+        footer[56:58] = _struct.pack(">H", cyl)
+        footer[58] = heads
+        footer[59] = spt
+        f.write(footer)
+
+
+def test_rewrite_mbr_for_xt_class_matches_dos33_fdisk_layout(tmp_path: Path) -> None:
+    import struct as _struct
+
+    manager = DiskManager()
+    vhd = tmp_path / "fake.vhd"
+    # MartyPC Xebec Type 2 geometry — 615 × 4 × 17.
+    _make_minimal_vhd_with_footer_and_parted_mbr(vhd, cyl=615, heads=4, spt=17)
+
+    manager._rewrite_mbr_for_xt_class(
+        vhd_path=vhd,
+        cylinders=615,
+        heads=4,
+        sectors_per_track=17,
+        fs_type=0x04,
+    )
+
+    mbr = vhd.read_bytes()[:512]
+    # Boot signature preserved.
+    assert mbr[510:512] == b"\x55\xaa"
+    # NT signature area zeroed (DOS 3.3 doesn't write one).
+    assert mbr[440:444] == b"\x00\x00\x00\x00"
+    assert mbr[444:446] == b"\x00\x00"
+    # Partition entry at MBR offset 446.
+    e = mbr[446:462]
+    assert e[0] == 0x80  # bootable flag
+    assert e[4] == 0x04  # FAT16 <32 MiB partition type
+    # Start CHS = (cyl=0, head=1, sec=1) -> bytes [01, 01, 00].
+    assert e[1:4] == b"\x01\x01\x00", e[1:4].hex()
+    # End CHS = (cyl=613, head=3, sec=17). Encoding:
+    #   head=3, sector=17, cyl=613 → bytes [03, 0x91, 0x65].
+    assert e[5:8] == b"\x03\x91\x65", e[5:8].hex()
+    # Start LBA = spt = 17; count = (cyl-1)*heads*spt - spt = 41735.
+    assert _struct.unpack("<I", e[8:12])[0] == 17
+    assert _struct.unpack("<I", e[12:16])[0] == 41735
+    # Partition entries 2-4 zeroed.
+    assert mbr[462:510] == b"\x00" * 48
+    # MBR boot code uses CHS reads — first 8 bytes match DOS 3.3 standard
+    # ("fa 33 c0 8e d0 bc 00 7c").
+    assert mbr[:8] == bytes.fromhex("fa33c08ed0bc007c")
+
+
+def test_rewrite_mbr_for_xt_class_fat12_type1(tmp_path: Path) -> None:
+    import struct as _struct
+
+    manager = DiskManager()
+    vhd = tmp_path / "fake.vhd"
+    # MartyPC Xebec Type 1 — 306 × 4 × 17 = 10 MiB MFM.
+    _make_minimal_vhd_with_footer_and_parted_mbr(vhd, cyl=306, heads=4, spt=17)
+
+    manager._rewrite_mbr_for_xt_class(
+        vhd_path=vhd,
+        cylinders=306,
+        heads=4,
+        sectors_per_track=17,
+        fs_type=0x01,  # FAT12
+    )
+
+    mbr = vhd.read_bytes()[:512]
+    e = mbr[446:462]
+    assert e[4] == 0x01  # FAT12 partition type
+    assert _struct.unpack("<I", e[8:12])[0] == 17  # start LBA
+    # count = (306-1)*4*17 - 17 = 20740 - 17 = 20723
+    assert _struct.unpack("<I", e[12:16])[0] == 20723
+
+
+def test_partition_offset_bytes_for_xebec_type2() -> None:
+    from vhdmaker.disk import _partition_offset_bytes_for
+
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=21411840,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+    )
+    # Type 2 spt = 17 → partition starts at LBA 17.
+    assert _partition_offset_bytes_for(request) == 17 * 512
+
+
+def test_partition_offset_bytes_for_generic_msdos33() -> None:
+    from vhdmaker.disk import _partition_offset_bytes_for
+
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        machine_target=MachineTarget.GENERIC,
+    )
+    # Generic targets use the conventional LBA 63 layout.
+    assert _partition_offset_bytes_for(request) == 63 * 512
