@@ -171,7 +171,11 @@ class VhdMakerApp(App[None]):
                     yield Button("📁", id="browse-create-path-btn")
                 yield Input(value="512M", placeholder="Static size (for example: 512M)", id="create-size")
                 yield Select(
-                    options=[("FAT16", DiskFormat.FAT16.value), ("FAT32", DiskFormat.FAT32.value)],
+                    options=[
+                        ("FAT12 (MartyPC Xebec Type 1 only)", DiskFormat.FAT12.value),
+                        ("FAT16", DiskFormat.FAT16.value),
+                        ("FAT32", DiskFormat.FAT32.value),
+                    ],
                     value=DiskFormat.FAT16.value,
                     id="create-format",
                 )
@@ -326,8 +330,15 @@ class VhdMakerApp(App[None]):
         if event.select.id == "machine-target":
             target = MachineTarget(str(event.value))
             if target is MachineTarget.MARTYPC_XEBEC:
-                # Xebec is FAT16-only and XT-class boot only.
-                self.query_one("#create-format", Select).value = DiskFormat.FAT16.value
+                # Xebec drive type drives the disk format: Type 1 is 10 MiB
+                # FAT12, Types 2 / 13 / 16 are 20 MiB FAT16.
+                drive_type = MartyPCXebecDriveType(
+                    cast(str, self.query_one("#martypc-xebec-drive-type", Select).value)
+                )
+                if drive_type is MartyPCXebecDriveType.TYPE1:
+                    self.query_one("#create-format", Select).value = DiskFormat.FAT12.value
+                else:
+                    self.query_one("#create-format", Select).value = DiskFormat.FAT16.value
                 boot_value = cast(str, self.query_one("#boot-mode", Select).value)
                 xt_modes = {
                     BootMode.NONE.value,
@@ -337,13 +348,43 @@ class VhdMakerApp(App[None]):
                     BootMode.PCDOS.value,
                     BootMode.COMPAQ331.value,
                 }
-                if boot_value not in xt_modes:
+                # FAT12 requires the msdos33-style FORMAT install pipeline;
+                # snap incompatible boot modes to msdos33.
+                if drive_type is MartyPCXebecDriveType.TYPE1:
+                    if boot_value not in (
+                        BootMode.MSDOS33.value,
+                        BootMode.IBM8088.value,
+                        BootMode.NONE.value,
+                    ):
+                        self.query_one("#boot-mode", Select).value = BootMode.MSDOS33.value
+                elif boot_value not in xt_modes:
                     self.query_one("#boot-mode", Select).value = BootMode.MSDOS33.value
-                # Force DOS 3.3 since 20 MiB is well under the 5.0 cap.
+                # Force DOS 3.3 since the Xebec drive sizes are all well
+                # under the DOS 5.0 cap and FAT12 only works with DOS 3.3.
                 self.query_one("#ibm-dos-version", Select).value = IBMDOSVersion.DOS33.value
             self._sync_create_form_visibility()
             return
         if event.select.id == "martypc-xebec-drive-type":
+            # Drive-type change can flip FAT12 ↔ FAT16 for MartyPC Xebec
+            # targets. Reapply the same rule as the machine-target handler.
+            target = MachineTarget(cast(str, self.query_one("#machine-target", Select).value))
+            if target is MachineTarget.MARTYPC_XEBEC:
+                drive_type = MartyPCXebecDriveType(str(event.value))
+                if drive_type is MartyPCXebecDriveType.TYPE1:
+                    self.query_one("#create-format", Select).value = DiskFormat.FAT12.value
+                    boot_value = cast(str, self.query_one("#boot-mode", Select).value)
+                    if boot_value not in (
+                        BootMode.MSDOS33.value,
+                        BootMode.IBM8088.value,
+                        BootMode.NONE.value,
+                    ):
+                        self.query_one("#boot-mode", Select).value = BootMode.MSDOS33.value
+                else:
+                    if (
+                        cast(str, self.query_one("#create-format", Select).value)
+                        == DiskFormat.FAT12.value
+                    ):
+                        self.query_one("#create-format", Select).value = DiskFormat.FAT16.value
             self._sync_create_form_visibility()
             return
         if event.select.id == "martypc-at-drive-type":
@@ -612,10 +653,15 @@ class VhdMakerApp(App[None]):
             size_bytes = floppy_type.size_bytes
         request_boot_mode = BootMode(boot_value) if (media_type is MediaType.VHD or img_system_format) else BootMode.NONE
         disk_format = DiskFormat(format_value) if media_type is MediaType.VHD else DiskFormat.FAT16
-        # MartyPC Xebec is FAT16-only; enforce here in case the format
-        # widget was missed by visibility sync.
+        # MartyPC Xebec drive-type dictates the disk format:
+        # Type 1 = 10 MiB FAT12, Types 2 / 13 / 16 = 20 MiB FAT16. Force
+        # the right value here in case widget sync was missed.
         if machine_target is MachineTarget.MARTYPC_XEBEC:
-            disk_format = DiskFormat.FAT16
+            disk_format = (
+                DiskFormat.FAT12
+                if martypc_xebec_drive_type is MartyPCXebecDriveType.TYPE1
+                else DiskFormat.FAT16
+            )
 
         return CreateRequest(
             path=Path(path_text).expanduser(),
