@@ -23,6 +23,27 @@ Linting: there is currently no dedicated lint command/tool configured in this re
 > directly (e.g. footer/BPB hex dumps, 86Box boot probes) rather than via the
 > test suite, unless the user explicitly asks for a test run.
 
+## Push workflow (REQUIRED)
+
+**Always run `./scripts/strip-copilot-coauthor.sh` before pushing to GitHub.**
+This repository must never publish the `Co-authored-by: Copilot ...`
+trailer on `origin`. The expected order before any `git push` is:
+
+```bash
+# Verify no trailer survives on the commits about to be pushed
+./scripts/strip-copilot-coauthor.sh --range origin/main..HEAD --dry-run
+
+# If the dry-run reports any trailers, strip them in place
+./scripts/strip-copilot-coauthor.sh --range origin/main..HEAD --apply
+
+# Then push
+git push origin main
+```
+
+The local pre-push hook (`./scripts/install-githooks.sh`) runs the strip
+script automatically, but the rule applies whether or not the hook is
+installed: **never push without the strip step.**
+
 ## High-level architecture
 
 - **Entry points (`src/vhdmaker/cli.py`)**
