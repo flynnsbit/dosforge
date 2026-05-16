@@ -584,3 +584,166 @@ def test_find_compaq331_startup_image_missing(tmp_path: Path) -> None:
     assets.mkdir()
     (assets / "readme.txt").write_text("nothing here")
     assert manager._find_compaq331_startup_image(assets) is None
+
+
+# --- IBM 8088 + DOS 3.3 routing through QEMU FORMAT install ---
+
+
+def test_uses_legacy_dos_qemu_install_msdos33() -> None:
+    from vhdmaker.disk import _uses_legacy_dos_qemu_install
+
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+    )
+    assert _uses_legacy_dos_qemu_install(request) is True
+
+
+def test_uses_legacy_dos_qemu_install_compaq331() -> None:
+    from vhdmaker.disk import _uses_legacy_dos_qemu_install
+
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.COMPAQ331,
+    )
+    assert _uses_legacy_dos_qemu_install(request) is True
+
+
+def test_uses_legacy_dos_qemu_install_ibm8088_dos33() -> None:
+    from vhdmaker.disk import _uses_legacy_dos_qemu_install
+
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+    )
+    assert _uses_legacy_dos_qemu_install(request) is True
+
+
+def test_uses_legacy_dos_qemu_install_ibm8088_dos50_skipped() -> None:
+    from vhdmaker.disk import _uses_legacy_dos_qemu_install
+
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS50,
+    )
+    # DOS 5.0 static-template boot works fine — don't reroute through QEMU.
+    assert _uses_legacy_dos_qemu_install(request) is False
+
+
+def test_uses_legacy_dos_qemu_install_other_modes_false() -> None:
+    from vhdmaker.disk import _uses_legacy_dos_qemu_install
+
+    for mode in (
+        BootMode.NONE,
+        BootMode.FREEDOS,
+        BootMode.MSDOS71,
+        BootMode.MSDOS5,
+        BootMode.MSDOS622,
+        BootMode.PCDOS7,
+    ):
+        request = CreateRequest(
+            path=Path("/tmp/x.vhd"),
+            size_bytes=64 * 1024 * 1024,
+            disk_format=DiskFormat.FAT16,
+            boot_mode=mode,
+        )
+        assert _uses_legacy_dos_qemu_install(request) is False, mode
+
+
+def test_legacy_dos_install_descriptor_ibm8088_dos33_uses_msdos33() -> None:
+    from vhdmaker.disk import _legacy_dos_install_descriptor
+
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+    )
+    descriptor = _legacy_dos_install_descriptor(request)
+    assert descriptor is not None
+    assert descriptor.label == "MS-DOS 3.30"
+    assert "msdos33" in descriptor.asset_fallback_dirs
+
+
+def test_uses_msdos33_filesystem_layout_ibm8088_dos33() -> None:
+    from vhdmaker.disk import _uses_msdos33_filesystem_layout
+
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+    )
+    assert _uses_msdos33_filesystem_layout(request) is True
+
+
+def test_uses_msdos33_filesystem_layout_ibm8088_dos50_false() -> None:
+    from vhdmaker.disk import _uses_msdos33_filesystem_layout
+
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS50,
+    )
+    assert _uses_msdos33_filesystem_layout(request) is False
+
+
+def test_resolve_legacy_dos_assets_dir_ibm8088_dos33_descends_into_version_subdir(
+    tmp_path: Path,
+) -> None:
+    manager = DiskManager()
+    root = tmp_path / "ibm-pc"
+    versioned = root / "dos33"
+    versioned.mkdir(parents=True)
+    (versioned / "DISK01.IMG").write_bytes(b"\0" * 1024)
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+        boot_assets_path=root,
+    )
+    resolved = manager._resolve_legacy_dos_assets_dir(
+        request=request,
+        fallback_dirs=("msdos33",),
+        label="MS-DOS 3.30",
+    )
+    assert resolved == versioned.resolve()
+
+
+def test_resolve_legacy_dos_assets_dir_ibm8088_dos33_uses_root_when_no_subdir(
+    tmp_path: Path,
+) -> None:
+    manager = DiskManager()
+    root = tmp_path / "ibm-pc"
+    root.mkdir(parents=True)
+    (root / "DISK01.IMG").write_bytes(b"\0" * 1024)
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+        boot_assets_path=root,
+    )
+    resolved = manager._resolve_legacy_dos_assets_dir(
+        request=request,
+        fallback_dirs=("msdos33",),
+        label="MS-DOS 3.30",
+    )
+    assert resolved == root.resolve()

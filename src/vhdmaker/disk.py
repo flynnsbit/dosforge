@@ -89,6 +89,64 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
 }
 
 
+def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
+    """Return True for boot modes whose install step is driven by QEMU.
+
+    Currently three flows go through ``_install_legacy_dos_via_qemu``:
+
+    - ``BootMode.COMPAQ331`` — Compaq DOS 3.31 (FAT16B + SYS C:).
+    - ``BootMode.MSDOS33`` — MS-DOS 3.30 (FORMAT C: /S from scratch).
+    - ``BootMode.IBM8088`` with ``ibm_dos_version == DOS33`` — same
+      MS-DOS 3.30 install media + the same FORMAT-from-scratch flow.
+      The static-template install path produced an unbootable VHD
+      (DOS 3.30 boot sectors are floppy-flavoured and reject a generic
+      hard-disk BPB), so we redirect through the proven QEMU path.
+
+    Other ``IBM8088`` versions (DOS 5.0) still use the regular
+    ``make_partition_bootable`` flow because their static template is
+    known to boot.
+    """
+    if request.boot_mode in (BootMode.COMPAQ331, BootMode.MSDOS33):
+        return True
+    if (
+        request.boot_mode is BootMode.IBM8088
+        and request.ibm_dos_version is IBMDOSVersion.DOS33
+    ):
+        return True
+    return False
+
+
+def _legacy_dos_install_descriptor(request: CreateRequest) -> _LegacyDosInstallDescriptor | None:
+    """Pick the QEMU install descriptor for ``request``.
+
+    IBM8088 + DOS33 reuses the MSDOS33 descriptor (same install media,
+    same FORMAT C: /S flow).
+    """
+    if (
+        request.boot_mode is BootMode.IBM8088
+        and request.ibm_dos_version is IBMDOSVersion.DOS33
+    ):
+        return _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.MSDOS33]
+    return _LEGACY_DOS_INSTALL_DESCRIPTORS.get(request.boot_mode)
+
+
+def _uses_msdos33_filesystem_layout(request: CreateRequest) -> bool:
+    """Return True when DOS 3.30's FORMAT lays out the FAT itself.
+
+    Partition-table prep for these requests must:
+    - set MBR partition type 0x04 (FAT16 <32 MiB, pre-FAT16B), and
+    - skip mformat (FORMAT C: /S writes its own BPB from scratch).
+    """
+    if request.boot_mode is BootMode.MSDOS33:
+        return True
+    if (
+        request.boot_mode is BootMode.IBM8088
+        and request.ibm_dos_version is IBMDOSVersion.DOS33
+    ):
+        return True
+    return False
+
+
 @dataclass(slots=True)
 class PrivilegeCheck:
     name: str
@@ -165,16 +223,18 @@ class DiskManager:
                 disk_format=request.disk_format,
                 label=normalize_label(request.label),
                 boot_mode=request.boot_mode,
+                use_msdos33_layout=_uses_msdos33_filesystem_layout(request),
             )
-            # Legacy DOS modes (compaq331, msdos33) produce an authentic
-            # boot sector by running the DOS's own SYS.COM or FORMAT.COM
-            # inside QEMU AFTER NBD detaches (QEMU needs exclusive file
-            # access). Here we only write the MBR boot code AND (for
-            # mformat-based installs) patch the BPB heads/spt to match
-            # the VHD's footer geometry so DOS's INT 13h reads line up.
-            # msdos33 uses the FORMAT-from-scratch install method and
-            # there's no BPB to patch yet (FORMAT writes its own).
-            if request.boot_mode in (BootMode.COMPAQ331, BootMode.MSDOS33):
+            # Legacy DOS modes (compaq331, msdos33, ibm8088+dos33)
+            # produce an authentic boot sector by running the DOS's own
+            # SYS.COM or FORMAT.COM inside QEMU AFTER NBD detaches (QEMU
+            # needs exclusive file access). Here we only write the MBR
+            # boot code AND (for mformat-based installs) patch the BPB
+            # heads/spt to match the VHD's footer geometry so DOS's
+            # INT 13h reads line up. msdos33 / ibm8088+dos33 use the
+            # FORMAT-from-scratch install method and there's no BPB to
+            # patch yet (FORMAT writes its own).
+            if _uses_legacy_dos_qemu_install(request):
                 self.boot_installer.write_mbr_only(disk_device=nbd_device)
                 if (
                     request.boot_mode is BootMode.COMPAQ331
@@ -195,10 +255,7 @@ class DiskManager:
                     boot_mode=request.boot_mode,
                 )
             custom_payload = self._resolve_custom_payload_path(request)
-            if custom_payload is not None and request.boot_mode not in (
-                BootMode.COMPAQ331,
-                BootMode.MSDOS33,
-            ):
+            if custom_payload is not None and not _uses_legacy_dos_qemu_install(request):
                 self._copy_custom_payload_to_filesystem(
                     partition_device=partition_device,
                     source_dir=custom_payload,
@@ -211,7 +268,7 @@ class DiskManager:
         # inside QEMU. This writes an authentic boot sector and copies
         # IO.SYS/IBMBIO.COM, MSDOS.SYS/IBMDOS.COM, COMMAND.COM with correct
         # attributes — exactly the workflow used on real hardware.
-        if request.boot_mode in (BootMode.COMPAQ331, BootMode.MSDOS33):
+        if _uses_legacy_dos_qemu_install(request):
             self._install_legacy_dos_via_qemu(request=request, vhd_path=target_path)
             # Custom payload (for these modes) is copied via mtools after
             # the QEMU SYS step, since the NBD path is no longer active.
@@ -947,7 +1004,7 @@ class DiskManager:
         authentic DOS boot sector and copies system files exactly the way
         installing on real hardware would.
         """
-        descriptor = _LEGACY_DOS_INSTALL_DESCRIPTORS.get(request.boot_mode)
+        descriptor = _legacy_dos_install_descriptor(request)
         if descriptor is None:
             raise ValidationError(
                 f"No QEMU SYS install descriptor for boot mode {request.boot_mode.value}."
@@ -993,11 +1050,33 @@ class DiskManager:
         fallback_dirs: tuple[str, ...],
         label: str,
     ) -> Path:
+        # IBM8088 mode keeps version-specific assets under a versioned
+        # subdir (e.g. <root>/dos33/DISK01.IMG, mirroring the directory
+        # layout used by the BootAssetResolver). Try that first so users
+        # who organize their boot assets that way don't get a confusing
+        # "no install diskette found" error.
+        version_subdir = (
+            "dos33"
+            if (
+                request.boot_mode is BootMode.IBM8088
+                and request.ibm_dos_version is IBMDOSVersion.DOS33
+            )
+            else None
+        )
         if request.boot_assets_path is not None:
-            return request.boot_assets_path.expanduser().resolve()
+            root = request.boot_assets_path.expanduser().resolve()
+            if version_subdir is not None:
+                versioned = (root / version_subdir).resolve()
+                if versioned.is_dir():
+                    return versioned
+            return root
         for fallback in fallback_dirs:
             candidate = (Path.cwd() / fallback).resolve()
             if candidate.is_dir():
+                if version_subdir is not None:
+                    versioned = (candidate / version_subdir).resolve()
+                    if versioned.is_dir():
+                        return versioned
                 return candidate
         raise ValidationError(
             f"{label} boot mode requires a local boot assets directory "
@@ -1340,6 +1419,7 @@ class DiskManager:
         disk_format: DiskFormat,
         label: str | None,
         boot_mode: BootMode = BootMode.NONE,
+        use_msdos33_layout: bool = False,
     ) -> str:
         legacy_boot_layout = boot_mode is not BootMode.NONE
         partition_start = "63s" if legacy_boot_layout else "1MiB"
@@ -1376,9 +1456,10 @@ class DiskManager:
         # ``_install_legacy_dos_via_qemu``). Some need mformat to lay out
         # the FAT16 BPB with DOS-3-compatible defaults (compaq331); others
         # let DOS's own FORMAT.COM lay out everything from scratch
-        # (msdos33). msdos33 also requires partition type 0x04 (FAT16
-        # <32 MiB) because DOS 3.30 predates FAT16B / partition type 0x06.
-        if boot_mode is BootMode.MSDOS33:
+        # (msdos33, ibm8088+dos33 — same install media). The MS-DOS 3.30
+        # layout also requires partition type 0x04 (FAT16 <32 MiB)
+        # because DOS 3.30 predates FAT16B / partition type 0x06.
+        if use_msdos33_layout:
             self._set_mbr_partition_type(nbd_device, partition_index=1, fs_type=0x04)
             # No mformat: FORMAT C: /S inside DOS will write the FS from
             # scratch with DOS 3.30's exact expected layout. Zero the
