@@ -51,6 +51,7 @@
 
 # Build artifacts and test outputs
 /build/
+/dist/
 __pycache__/
 *.pyc
 .pytest_cache/
