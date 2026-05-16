@@ -1993,3 +1993,119 @@ def test_normalize_freedos_autoexec_converts_lf_to_crlf() -> None:
     out = normalize_freedos_autoexec_bat(src)
     assert "\r\n" in out
     assert "\n" not in out.replace("\r\n", "")
+
+
+# --- pre-DOS-5 CONFIG.SYS defaults ---
+
+
+def test_default_msdos_config_sys_pre_dos5_minimal(tmp_path: Path) -> None:
+    """MSDOS 3.x must get a CONFIG.SYS that DOS 3.3 actually understands.
+
+    DOS=HIGH, BUFFERS=N,M, LASTDRIVE=<number>, and DEVICE=HIMEM.SYS all
+    trip "Unrecognized command in CONFIG.SYS" lines on DOS 3.3.
+    """
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    text = resolver._default_msdos_config_sys(has_himem=False, pre_dos5=True)
+    assert "DOS=" not in text.upper()
+    assert "LASTDRIVE" not in text.upper()
+    assert "HIMEM.SYS" not in text.upper()
+    # BUFFERS=20 (single arg) is fine; BUFFERS=20,0 (two-arg) is not.
+    assert ",0" not in text
+    lines = [line for line in text.replace("\r\n", "\n").splitlines() if line.strip()]
+    assert lines == ["FILES=30", "BUFFERS=20"]
+
+
+def test_default_msdos_config_sys_modern_keeps_dos_high(tmp_path: Path) -> None:
+    """Modern DOS (5.0+) gets the full DOS=HIGH/UMB/AUTO stack."""
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    text = resolver._default_msdos_config_sys(has_himem=True, pre_dos5=False)
+    assert "DEVICE=HIMEM.SYS" in text
+    assert "DOS=HIGH,UMB,AUTO" in text
+    assert "BUFFERS=20,0" in text
+    assert "LASTDRIVE=26" in text
+
+
+def test_use_pre_dos5_config_sys_legacy_dos_modes() -> None:
+    from vhdmaker.boot import _use_pre_dos5_config_sys
+
+    for mode in (BootMode.MSDOS33, BootMode.MSDOS331, BootMode.COMPAQ331, BootMode.PCDOS):
+        request = CreateRequest(
+            path=Path("/tmp/x.vhd"),
+            size_bytes=32 * 1024 * 1024,
+            disk_format=DiskFormat.FAT16,
+            boot_mode=mode,
+        )
+        assert _use_pre_dos5_config_sys(request) is True, mode
+
+
+def test_use_pre_dos5_config_sys_ibm8088_dos33_vs_dos50() -> None:
+    from vhdmaker.boot import _use_pre_dos5_config_sys
+
+    dos33 = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+    )
+    dos50 = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS50,
+    )
+    assert _use_pre_dos5_config_sys(dos33) is True
+    assert _use_pre_dos5_config_sys(dos50) is False
+
+
+def test_use_pre_dos5_config_sys_modern_dos_modes() -> None:
+    from vhdmaker.boot import _use_pre_dos5_config_sys
+
+    for mode in (
+        BootMode.MSDOS5,
+        BootMode.MSDOS622,
+        BootMode.PCDOS7,
+        BootMode.MSDOS71,
+        BootMode.FREEDOS,
+    ):
+        request = CreateRequest(
+            path=Path("/tmp/x.vhd"),
+            size_bytes=128 * 1024 * 1024,
+            disk_format=DiskFormat.FAT16,
+            boot_mode=mode,
+        )
+        assert _use_pre_dos5_config_sys(request) is False, mode
+
+
+def test_resolve_msdos33_full_profile_writes_pre_dos5_config_sys(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: msdos33 FULL profile must stage a DOS-3.3-compatible CONFIG.SYS."""
+    assets_dir = tmp_path / "msdos33-assets"
+    _touch(assets_dir / "IO.SYS", b"io")
+    _touch(assets_dir / "MSDOS.SYS", b"msdos")
+    _touch(assets_dir / "COMMAND.COM", b"command")
+    _touch(assets_dir / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
+    # Provide a DOS dir so the resolver can pick the FULL payload path.
+    (assets_dir / "DOS" / "FDISK.COM").parent.mkdir(parents=True, exist_ok=True)
+    (assets_dir / "DOS" / "FDISK.COM").write_bytes(b"fdisk")
+
+    request = CreateRequest(
+        path=tmp_path / "x.vhd",
+        size_bytes=20 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        boot_assets_path=assets_dir,
+        msdos_install_profile=MSDOSInstallProfile.FULL,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+
+    config_path = assets.system_files["CONFIG.SYS"]
+    config_text = config_path.read_text(encoding="latin-1")
+    # No DOS 5+ directives.
+    assert "DOS=" not in config_text.upper()
+    assert "LASTDRIVE" not in config_text.upper()
+    assert "HIMEM" not in config_text.upper()
+    assert ",0" not in config_text  # rule out BUFFERS=20,0

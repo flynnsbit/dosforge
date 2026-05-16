@@ -221,6 +221,30 @@ def _msdos_install_dir_for_media(media_type: "MediaType") -> str:
     return r"C:\DOS"
 
 
+def _use_pre_dos5_config_sys(request: "CreateRequest") -> bool:
+    """Return True when the target DOS predates the DOS 5+ CONFIG.SYS dialect.
+
+    MS-DOS 3.x / Compaq DOS 3.31 / IBM PC DOS 3.x do not understand
+    DOS=HIGH, BUFFERS=N,M, LASTDRIVE=<number>, or DEVICE=HIMEM.SYS.
+    Feeding them a DOS-7.1-style CONFIG.SYS prints "Unrecognized
+    command in CONFIG.SYS" lines at boot. For these boot modes we
+    write a minimal, universally-compatible CONFIG.SYS instead.
+    """
+    if request.boot_mode in (
+        BootMode.MSDOS33,
+        BootMode.MSDOS331,
+        BootMode.COMPAQ331,
+        BootMode.PCDOS,  # legacy PC-DOS family (pre-PC-DOS 7).
+    ):
+        return True
+    if (
+        request.boot_mode is BootMode.IBM8088
+        and request.ibm_dos_version is IBMDOSVersion.DOS33
+    ):
+        return True
+    return False
+
+
 def normalize_msdos_config_sys(text: str, *, install_dir: str = r"A:\DOS") -> str:
     normalized = _as_dos_text(text).replace("\r\n", "\n")
     output: list[str] = []
@@ -850,8 +874,10 @@ class BootAssetResolver:
         prefer_directory_boot_template: bool = True,
         install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL,
     ) -> BootAssets:
-        if request.disk_format is not DiskFormat.FAT16:
-            raise ValidationError(f"{profile_label} boot mode requires FAT16 format.")
+        if request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12):
+            raise ValidationError(
+                f"{profile_label} boot mode requires FAT16 (or FAT12 for the MartyPC Xebec Type 1 preset)."
+            )
         directory = self._resolve_legacy_assets_directory(request=request, fallback_dirs=default_asset_dirs)
         if not directory.is_dir():
             raise ValidationError(f"{profile_label} asset path must be a directory: {directory}")
@@ -860,6 +886,7 @@ class BootAssetResolver:
             if install_profile is MSDOSInstallProfile.FULL
             else None
         )
+        pre_dos5 = _use_pre_dos5_config_sys(request)
 
         candidate_directories: list[Path] = [directory]
         if version_subdir_name:
@@ -877,6 +904,7 @@ class BootAssetResolver:
                     install_profile=install_profile,
                     payload_budget_bytes=payload_budget_bytes,
                     media_type=request.media_type,
+                    pre_dos5=pre_dos5,
                 )
                 if image_assets is not None:
                     return image_assets
@@ -885,6 +913,7 @@ class BootAssetResolver:
                     candidate,
                     install_profile=install_profile,
                     media_type=request.media_type,
+                    pre_dos5=pre_dos5,
                 )
                 if direct_assets is not None:
                     return direct_assets
@@ -893,6 +922,7 @@ class BootAssetResolver:
                     candidate,
                     install_profile=install_profile,
                     media_type=request.media_type,
+                    pre_dos5=pre_dos5,
                 )
                 if direct_assets is not None:
                     if (
@@ -907,6 +937,7 @@ class BootAssetResolver:
                             install_profile=install_profile,
                             payload_budget_bytes=payload_budget_bytes,
                             media_type=request.media_type,
+                            pre_dos5=pre_dos5,
                         )
                         if image_assets is not None:
                             return image_assets
@@ -920,6 +951,7 @@ class BootAssetResolver:
                     install_profile=install_profile,
                     payload_budget_bytes=payload_budget_bytes,
                     media_type=request.media_type,
+                    pre_dos5=pre_dos5,
                 )
                 if image_assets is not None:
                     return image_assets
@@ -948,6 +980,7 @@ class BootAssetResolver:
         *,
         install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL,
         media_type: MediaType = MediaType.VHD,
+        pre_dos5: bool = False,
     ) -> BootAssets | None:
         files = self._collect_legacy_system_files_from_directory(directory)
         if files is None:
@@ -963,7 +996,10 @@ class BootAssetResolver:
                     files[name] = located
             startup_defaults_root = self.cache_root / f"legacy-startup-{self._hash_value(str(directory.resolve()))}"
             self._ensure_msdos_startup_files(
-                files, defaults_root=startup_defaults_root, install_dir=install_dir
+                files,
+                defaults_root=startup_defaults_root,
+                install_dir=install_dir,
+                pre_dos5=pre_dos5,
             )
             self._normalize_msdos_startup_files(
                 files, defaults_root=startup_defaults_root, install_dir=install_dir
@@ -996,6 +1032,7 @@ class BootAssetResolver:
         install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL,
         payload_budget_bytes: int | None = None,
         media_type: MediaType = MediaType.VHD,
+        pre_dos5: bool = False,
     ) -> BootAssets | None:
         install_images = self._collect_msdos71_install_images(directory)
         if not install_images:
@@ -1016,7 +1053,10 @@ class BootAssetResolver:
             startup_defaults_root = extraction_root / "startup-defaults"
             install_dir = _msdos_install_dir_for_media(media_type)
             self._ensure_msdos_startup_files(
-                files, defaults_root=startup_defaults_root, install_dir=install_dir
+                files,
+                defaults_root=startup_defaults_root,
+                install_dir=install_dir,
+                pre_dos5=pre_dos5,
             )
             self._normalize_msdos_startup_files(
                 files, defaults_root=startup_defaults_root, install_dir=install_dir
@@ -1807,6 +1847,7 @@ class BootAssetResolver:
         *,
         defaults_root: Path,
         install_dir: str = r"A:\DOS",
+        pre_dos5: bool = False,
     ) -> None:
         defaults_root.mkdir(parents=True, exist_ok=True)
         for name in _OPTIONAL_MSDOS_STARTUP_FILES:
@@ -1815,7 +1856,10 @@ class BootAssetResolver:
             default_path = defaults_root / name
             if not default_path.exists() or default_path.stat().st_size == 0:
                 if name == "CONFIG.SYS":
-                    content = self._default_msdos_config_sys(has_himem="HIMEM.SYS" in files)
+                    content = self._default_msdos_config_sys(
+                        has_himem="HIMEM.SYS" in files,
+                        pre_dos5=pre_dos5,
+                    )
                 else:
                     content = f"@ECHO OFF\r\nPATH={install_dir}\r\n"
                 _write_dos_text(default_path, _as_dos_text(content))
@@ -1848,7 +1892,20 @@ class BootAssetResolver:
                 _write_dos_text(target, normalized)
             files[name] = target
 
-    def _default_msdos_config_sys(self, *, has_himem: bool) -> str:
+    def _default_msdos_config_sys(
+        self,
+        *,
+        has_himem: bool,
+        pre_dos5: bool = False,
+    ) -> str:
+        # Pre-DOS 5 (MS-DOS 3.x / Compaq DOS 3.31 / IBM PC DOS 3.x):
+        # write the minimal subset of CONFIG.SYS directives that DOS 3.3
+        # actually understands. DOS=HIGH/UMB/AUTO, BUFFERS=N,M, and
+        # LASTDRIVE=<number> all trip "Unrecognized command" lines and
+        # leave no XMS/UMB benefit on these versions anyway.
+        if pre_dos5:
+            return "FILES=30\r\nBUFFERS=20\r\n"
+
         lines = []
         if has_himem:
             lines.append("DEVICE=HIMEM.SYS")
