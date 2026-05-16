@@ -4,22 +4,49 @@
 # readme.txt is tracked. The open-source folders (freedos, msdos125,
 # msdos2, msdos4 — Microsoft / FreeDOS licensed for redistribution)
 # are NOT listed here so their contents stay tracked.
+/dosassets/compaq2/*
+!/dosassets/compaq2/readme.txt
+/dosassets/compaq3/*
+!/dosassets/compaq3/readme.txt
 /dosassets/compaq331/*
 !/dosassets/compaq331/readme.txt
+/dosassets/drdos5/*
+!/dosassets/drdos5/readme.txt
+/dosassets/drdos6/*
+!/dosassets/drdos6/readme.txt
+/dosassets/drdos7/*
+!/dosassets/drdos7/readme.txt
 /dosassets/ibmpcdos401/*
 !/dosassets/ibmpcdos401/readme.txt
+/dosassets/msdos1/*
+!/dosassets/msdos1/readme.txt
+/dosassets/msdos3/*
+!/dosassets/msdos3/readme.txt
 /dosassets/msdos33/*
 !/dosassets/msdos33/readme.txt
 /dosassets/msdos5/*
 !/dosassets/msdos5/readme.txt
+/dosassets/msdos6/*
+!/dosassets/msdos6/readme.txt
 /dosassets/msdos622/*
 !/dosassets/msdos622/readme.txt
 /dosassets/msdos71/*
 !/dosassets/msdos71/readme.txt
+/dosassets/pcdos1/*
+!/dosassets/pcdos1/readme.txt
+/dosassets/pcdos2/*
+!/dosassets/pcdos2/readme.txt
+/dosassets/pcdos3/*
+!/dosassets/pcdos3/readme.txt
+/dosassets/pcdos5/*
+!/dosassets/pcdos5/readme.txt
+/dosassets/pcdos6/*
+!/dosassets/pcdos6/readme.txt
 /dosassets/pcdos7/*
 !/dosassets/pcdos7/readme.txt
 
-/tdlprocessed/
+/payload/
+/to-do/
 /win21-*/
 
 # Build artifacts and test outputs
