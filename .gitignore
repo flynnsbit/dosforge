@@ -1,9 +1,7 @@
-# Local DOS media folders (keep FreeDOS tracked)
-/dos*/
-/compaq*/
-/ibmpcdos*/
-/msdos*/
-/pcdos*/
+# Local DOS asset folders — keep the structure + readme.txt tracked,
+# but ignore the install media payload the user drops inside.
+/dosassets/*/*
+!/dosassets/*/readme.txt
 /tdlprocessed/
 /win21-*/
 
@@ -19,3 +17,4 @@ __pycache__/
 *.ima
 *.7z
 *.zip
+testing-notes.md

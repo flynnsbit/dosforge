@@ -39,7 +39,13 @@ from .models import (
     MountRecord,
     lookup_martypc_at_format,
 )
-from .paths import app_cache_dir, app_mount_root
+from .paths import (
+    DOS_ASSETS_SUBDIR,
+    app_cache_dir,
+    app_mount_root,
+    describe_dos_asset_locations,
+    resolve_dos_asset_dir,
+)
 from .size import (
     FAT16_MAX_BYTES,
     FAT16_MIN_BYTES,
@@ -781,7 +787,10 @@ class DiskManager:
             return
 
         if request.boot_assets_path is not None:
-            resolved_boot_assets = request.boot_assets_path.expanduser().resolve()
+            resolved_boot_assets = (
+                resolve_dos_asset_dir(request.boot_assets_path)
+                or request.boot_assets_path.expanduser().resolve()
+            )
             if (
                 resolved_boot_assets == custom_payload
                 or resolved_boot_assets.is_dir() and custom_payload == resolved_boot_assets
@@ -1316,23 +1325,32 @@ class DiskManager:
             else None
         )
         if request.boot_assets_path is not None:
-            root = request.boot_assets_path.expanduser().resolve()
+            # Bare names (e.g. "msdos33") map to ./dosassets/msdos33/.
+            resolved = resolve_dos_asset_dir(request.boot_assets_path)
+            root = resolved if resolved is not None else request.boot_assets_path.expanduser().resolve()
             if version_subdir is not None:
                 versioned = (root / version_subdir).resolve()
                 if versioned.is_dir():
                     return versioned
             return root
         for fallback in fallback_dirs:
-            candidate = (Path.cwd() / fallback).resolve()
-            if candidate.is_dir():
-                if version_subdir is not None:
-                    versioned = (candidate / version_subdir).resolve()
-                    if versioned.is_dir():
-                        return versioned
-                return candidate
+            candidate = resolve_dos_asset_dir(fallback)
+            if candidate is None:
+                continue
+            if version_subdir is not None:
+                versioned = (candidate / version_subdir).resolve()
+                if versioned.is_dir():
+                    return versioned
+            return candidate
+        searched = ", ".join(
+            describe_dos_asset_locations(name) for name in fallback_dirs
+        )
         raise ValidationError(
-            f"{label} boot mode requires a local boot assets directory "
-            f"(default lookups: {', '.join('./' + d + '/' for d in fallback_dirs)})."
+            f"{label} boot mode requires a local boot assets directory. "
+            f"Searched: {searched or '(no defaults configured)'}. "
+            f"Drop the install media into ./{DOS_ASSETS_SUBDIR}/<name>/ "
+            "(see ./dosassets/readme.txt for the expected layout) or pass "
+            "--boot-assets-path /full/path/to/dir."
         )
 
     def _find_legacy_dos_install_image(

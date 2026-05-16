@@ -29,7 +29,13 @@ from .models import (
     MSDOSInstallProfile,
     MediaType,
 )
-from .paths import app_cache_dir, app_mount_root
+from .paths import (
+    DOS_ASSETS_SUBDIR,
+    app_cache_dir,
+    app_mount_root,
+    describe_dos_asset_locations,
+    resolve_dos_asset_dir,
+)
 
 FREEDOS_DEFAULT_IMAGE_URL = (
     "https://raw.githubusercontent.com/codercowboy/freedosbootdisks/master/bootdisks/freedos.boot.disk.1.4MB.img"
@@ -964,14 +970,27 @@ class BootAssetResolver:
 
     def _resolve_legacy_assets_directory(self, *, request: CreateRequest, fallback_dirs: tuple[str, ...]) -> Path:
         if request.boot_assets_path is not None:
+            # Honor an absolute / "../foo"-style path verbatim; treat a bare
+            # name (e.g. "msdos33") as a DOS asset folder under ./dosassets/.
+            resolved = resolve_dos_asset_dir(request.boot_assets_path)
+            if resolved is not None:
+                return resolved
+            # Fall through with the user's literal path so the resulting
+            # error message points at the right thing.
             return request.boot_assets_path.expanduser().resolve()
         for directory_name in fallback_dirs:
-            candidate = (Path.cwd() / directory_name).resolve()
-            if candidate.is_dir():
+            candidate = resolve_dos_asset_dir(directory_name)
+            if candidate is not None:
                 return candidate
+        searched = ", ".join(
+            describe_dos_asset_locations(name) for name in fallback_dirs
+        )
         raise ValidationError(
             "This DOS boot mode requires a local boot assets path. "
-            f"Checked defaults under current directory: {', '.join(fallback_dirs) if fallback_dirs else '(none)'}"
+            f"Searched: {searched or '(no defaults configured)'}. "
+            f"Drop the install media into ./{DOS_ASSETS_SUBDIR}/<name>/ "
+            "(see ./dosassets/readme.txt) or pass --boot-assets-path "
+            "/full/path/to/dir."
         )
 
     def _try_resolve_legacy_dos_from_directory(

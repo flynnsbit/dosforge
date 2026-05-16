@@ -91,7 +91,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[source.value for source in FreeDOSSource],
         default=FreeDOSSource.LOCAL.value,
     )
-    create.add_argument("--boot-assets-path", default=None, help="Path to local boot assets dir or image.")
+    create.add_argument(
+        "--boot-assets-path",
+        default=None,
+        help=(
+            "Path to local boot assets dir, or a bare name like 'msdos33' "
+            "(resolved as ./dosassets/msdos33/; see ./dosassets/readme.txt)."
+        ),
+    )
     create.add_argument("--freedos-download-url", default=None, help="Override FreeDOS auto-download URL.")
     create.add_argument(
         "--dos-install-profile",

@@ -192,6 +192,29 @@ vhdmaker unmount --mount-point ~/.local/state/vhdmaker/mounts/demo-xxxxxxxx
 
 ## Boot assets (local media)
 
+vhdmaker looks for install media under a top-level `dosassets/` folder. Each
+boot mode has its own subdirectory with a `readme.txt` documenting which
+diskette images to drop in:
+
+```
+dosassets/
+├── compaq331/      # boot-mode=compaq331    (STARTUP.IMG + ...)
+├── ibmpcdos401/    # boot-mode=pcdos
+├── msdos33/        # boot-mode=msdos33  /  ibm8088+dos33
+├── msdos5/         # boot-mode=msdos5   /  ibm8088+dos50
+├── msdos622/       # boot-mode=msdos622
+├── msdos71/        # boot-mode=msdos71
+└── pcdos7/         # boot-mode=pcdos7   (XDF media)
+```
+
+Pass `--boot-assets-path <name>` (a bare name like `msdos33`) and vhdmaker
+will resolve it to `./dosassets/<name>/`. Pass a full path (`./foo/bar` or
+`/abs/path`) to use any other location. Omit the flag entirely and vhdmaker
+auto-resolves the boot mode's default subdirectory under `./dosassets/`.
+
+Typical workflow: download the WinWorldPC `.7z` for the DOS version,
+extract it into the matching subdirectory, run vhdmaker.
+
 ### FreeDOS
 
 - Local dir or image with `KERNEL.SYS`, `COMMAND.COM`, boot template (`BOOTSECT_FAT16.BIN` / `BOOTSECT_FAT32.BIN`)

@@ -222,7 +222,10 @@ class VhdMakerApp(App[None]):
                 )
                 with Horizontal(classes="path-row", id="boot-assets-row"):
                     yield Input(
-                        placeholder="Boot assets path (dir of DOS install disks, or a single .img)",
+                        placeholder=(
+                            "Boot assets: bare name like 'msdos33' (looks in ./dosassets/), "
+                            "or full path to a dir of install disks"
+                        ),
                         id="boot-assets",
                     )
                     yield Button("📁", id="browse-boot-assets-btn")

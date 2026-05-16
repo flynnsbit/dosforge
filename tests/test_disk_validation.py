@@ -1276,3 +1276,119 @@ def test_apply_custom_payload_generic_still_autogrows(tmp_path: Path) -> None:
     manager._apply_custom_payload_autosizing(request)
     # Generic VHD should have grown to fit the payload.
     assert request.size_bytes > 100 * 1024 * 1024
+
+
+# --- dosassets/ folder resolution ---
+
+
+def test_resolve_dos_asset_dir_prefers_dosassets_subdir(tmp_path: Path, monkeypatch) -> None:
+    from vhdmaker.paths import resolve_dos_asset_dir
+
+    monkeypatch.chdir(tmp_path)
+    legacy = tmp_path / "msdos33"
+    legacy.mkdir()
+    nested = tmp_path / "dosassets" / "msdos33"
+    nested.mkdir(parents=True)
+    # When both exist, the dosassets/ one wins.
+    resolved = resolve_dos_asset_dir("msdos33")
+    assert resolved == nested.resolve()
+
+
+def test_resolve_dos_asset_dir_falls_back_to_legacy_layout(tmp_path: Path, monkeypatch) -> None:
+    from vhdmaker.paths import resolve_dos_asset_dir
+
+    monkeypatch.chdir(tmp_path)
+    legacy = tmp_path / "msdos33"
+    legacy.mkdir()
+    # No dosassets/msdos33 here, so the bare name resolves to the legacy
+    # location for back-compat with existing user setups.
+    resolved = resolve_dos_asset_dir("msdos33")
+    assert resolved == legacy.resolve()
+
+
+def test_resolve_dos_asset_dir_full_path_used_verbatim(tmp_path: Path) -> None:
+    from vhdmaker.paths import resolve_dos_asset_dir
+
+    target = tmp_path / "elsewhere" / "msdos33"
+    target.mkdir(parents=True)
+    resolved = resolve_dos_asset_dir(str(target))
+    assert resolved == target.resolve()
+
+
+def test_resolve_dos_asset_dir_returns_none_for_missing(tmp_path: Path, monkeypatch) -> None:
+    from vhdmaker.paths import resolve_dos_asset_dir
+
+    monkeypatch.chdir(tmp_path)
+    assert resolve_dos_asset_dir("missing-bootmode") is None
+
+
+def test_legacy_dos_assets_dir_resolves_bare_name_under_dosassets(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assets = tmp_path / "dosassets" / "msdos33"
+    assets.mkdir(parents=True)
+    (assets / "DISK01.IMG").write_bytes(b"\x00" * 1024)
+
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "x.vhd",
+        size_bytes=20 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        # Bare name — should be auto-resolved to dosassets/msdos33/.
+        boot_assets_path=Path("msdos33"),
+    )
+    resolved = manager._resolve_legacy_dos_assets_dir(
+        request=request,
+        fallback_dirs=("msdos33",),
+        label="MS-DOS 3.30",
+    )
+    assert resolved == assets.resolve()
+
+
+def test_legacy_dos_assets_dir_uses_dosassets_fallback_when_no_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assets = tmp_path / "dosassets" / "msdos33"
+    assets.mkdir(parents=True)
+    (assets / "DISK01.IMG").write_bytes(b"\x00" * 1024)
+
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "x.vhd",
+        size_bytes=20 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        # No explicit boot_assets_path — fallback names should be searched
+        # under dosassets/ first.
+    )
+    resolved = manager._resolve_legacy_dos_assets_dir(
+        request=request,
+        fallback_dirs=("msdos33",),
+        label="MS-DOS 3.30",
+    )
+    assert resolved == assets.resolve()
+
+
+def test_legacy_dos_assets_dir_error_mentions_dosassets(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "x.vhd",
+        size_bytes=20 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+    )
+    with pytest.raises(ValidationError, match=r"dosassets/<name>/"):
+        manager._resolve_legacy_dos_assets_dir(
+            request=request,
+            fallback_dirs=("msdos33",),
+            label="MS-DOS 3.30",
+        )
