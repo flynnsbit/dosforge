@@ -6,18 +6,18 @@ from types import SimpleNamespace
 
 from textual.widgets import Button, Checkbox, DirectoryTree, Input, Select
 
-from vhdmaker.app import VhdMakerApp
-from vhdmaker.errors import VhdMakerError
-from vhdmaker.models import BootMode, DiskFormat, FloppyType, FreeDOSSource, IBMDOSVersion, MSDOSInstallProfile, MediaType
+from dosforge.app import DosForgeApp
+from dosforge.errors import DosForgeError
+from dosforge.models import BootMode, DiskFormat, FloppyType, FreeDOSSource, IBMDOSVersion, MSDOSInstallProfile, MediaType
 
 
 def test_app_has_q_quit_binding() -> None:
-    assert any(binding[0] == "q" and binding[1] == "quit" for binding in VhdMakerApp.BINDINGS)
+    assert any(binding[0] == "q" and binding[1] == "quit" for binding in DosForgeApp.BINDINGS)
 
 
 def test_create_defaults_to_choose_and_hides_boot_specific_fields() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -41,7 +41,7 @@ def test_create_defaults_to_choose_and_hides_boot_specific_fields() -> None:
 
 def test_request_from_form_python314_safe_select_lookup() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -65,7 +65,7 @@ def test_request_from_form_python314_safe_select_lookup() -> None:
 
 def test_fetch_freedos_button_updates_boot_assets_path(tmp_path) -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         def fake_fetch(destination=None, download_url=None):
@@ -88,7 +88,7 @@ def test_fetch_freedos_button_updates_boot_assets_path(tmp_path) -> None:
 
 def test_progressive_disclosure_for_boot_modes() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -145,7 +145,7 @@ def test_progressive_disclosure_for_boot_modes() -> None:
 
 def test_request_from_form_reads_ibm_dos_profile() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -164,7 +164,7 @@ def test_request_from_form_reads_ibm_dos_profile() -> None:
 
 def test_ibm_boot_mode_sets_default_size_to_32m() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -179,7 +179,7 @@ def test_ibm_boot_mode_sets_default_size_to_32m() -> None:
 
 def test_request_from_form_img_sets_floppy_size_and_system_mode() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -202,7 +202,7 @@ def test_request_from_form_img_sets_floppy_size_and_system_mode() -> None:
 
 def test_request_from_form_img_without_system_mode_forces_non_bootable() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -221,7 +221,7 @@ def test_request_from_form_img_without_system_mode_forces_non_bootable() -> None
 
 def test_request_from_form_img_supports_2880k_floppy() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -240,7 +240,7 @@ def test_request_from_form_img_supports_2880k_floppy() -> None:
 
 def test_request_from_form_img_supports_1840k_pcdos7_floppy() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -261,7 +261,7 @@ def test_request_from_form_img_supports_1840k_pcdos7_floppy() -> None:
 
 def test_request_from_form_vhd_supports_full_profile_for_legacy_mode() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -280,7 +280,7 @@ def test_request_from_form_vhd_supports_full_profile_for_legacy_mode() -> None:
 
 def test_request_from_form_vhd_allows_missing_size_with_custom_payload() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -299,7 +299,7 @@ def test_request_from_form_vhd_allows_missing_size_with_custom_payload() -> None
 
 def test_selecting_vhd_sets_create_path_and_size(monkeypatch, tmp_path) -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
         vhd_path = tmp_path / "selected.vhd"
         vhd_path.write_bytes(b"\0" * (256 * 1024**2))
@@ -315,7 +315,7 @@ def test_selecting_vhd_sets_create_path_and_size(monkeypatch, tmp_path) -> None:
 
 def test_selecting_img_sets_media_type_and_floppy(monkeypatch, tmp_path) -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
         img_path = tmp_path / "selected.img"
         img_path.write_bytes(b"\0" * FloppyType.F1440K.size_bytes)
@@ -332,7 +332,7 @@ def test_selecting_img_sets_media_type_and_floppy(monkeypatch, tmp_path) -> None
 
 def test_selecting_directory_sets_boot_assets_when_picker_is_visible(tmp_path) -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
         assets_dir = tmp_path / "dos33"
         assets_dir.mkdir(parents=True, exist_ok=True)
@@ -349,7 +349,7 @@ def test_selecting_directory_sets_boot_assets_when_picker_is_visible(tmp_path) -
 def test_browser_starts_in_current_working_directory(monkeypatch, tmp_path) -> None:
     async def run() -> None:
         monkeypatch.chdir(tmp_path)
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -361,7 +361,7 @@ def test_browser_starts_in_current_working_directory(monkeypatch, tmp_path) -> N
 
 def test_create_controls_share_horizontal_alignment() -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -381,7 +381,7 @@ def test_create_controls_share_horizontal_alignment() -> None:
 
 def test_browse_buttons_start_path_picker_and_apply_selection(tmp_path) -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
         payload_dir = tmp_path / "payload"
         payload_dir.mkdir(parents=True, exist_ok=True)
@@ -407,7 +407,7 @@ def test_browse_buttons_start_path_picker_and_apply_selection(tmp_path) -> None:
 
 def test_browse_buttons_apply_dialog_selection_directly(tmp_path) -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
         payload_dir = tmp_path / "payload"
         payload_dir.mkdir(parents=True, exist_ok=True)
@@ -439,7 +439,7 @@ def test_tree_parent_entry_moves_browser_root_up(tmp_path, monkeypatch) -> None:
         child.mkdir(parents=True, exist_ok=True)
         monkeypatch.chdir(child)
 
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -459,7 +459,7 @@ def test_parent_entry_is_only_added_at_tree_root(tmp_path, monkeypatch) -> None:
         child.mkdir(parents=True, exist_ok=True)
         monkeypatch.chdir(child)
 
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
@@ -478,7 +478,7 @@ def test_parent_entry_is_only_added_at_tree_root(tmp_path, monkeypatch) -> None:
 
 def test_create_refreshes_browser_tree(monkeypatch, tmp_path) -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         def fake_create(request) -> None:
@@ -504,14 +504,14 @@ def test_create_refreshes_browser_tree(monkeypatch, tmp_path) -> None:
 
 def test_create_reauthenticates_and_retries_when_sudo_expires(monkeypatch, tmp_path) -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
         attempts = {"count": 0}
 
         def fake_create(request) -> None:
             attempts["count"] += 1
             if attempts["count"] == 1:
-                raise VhdMakerError(
+                raise DosForgeError(
                     "Sudo authentication is required for disk operations. Details: sudo: a password is required"
                 )
             request.path.parent.mkdir(parents=True, exist_ok=True)
@@ -534,14 +534,14 @@ def test_create_reauthenticates_and_retries_when_sudo_expires(monkeypatch, tmp_p
 
 def test_create_shows_error_when_sudo_reauth_fails(tmp_path) -> None:
     async def run() -> None:
-        app = VhdMakerApp()
+        app = DosForgeApp()
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
         attempts = {"count": 0}
 
         def fake_create(request) -> None:
             del request
             attempts["count"] += 1
-            raise VhdMakerError(
+            raise DosForgeError(
                 "Sudo authentication is required for disk operations. Details: sudo: a password is required"
             )
 

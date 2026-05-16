@@ -1,18 +1,25 @@
-# dosforge
+Metadata-Version: 2.4
+Name: dosforge
+Version: 0.1.0
+Summary: Textual TUI for creating and managing DOS-compatible VHD and floppy IMG files on Linux.
+Author: Shawn
+License: MIT
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: textual>=0.65.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
 
-> **Note:** `dosforge` is the new name for what used to be `vhdmaker`. The
-> `vhdmaker` CLI command still works as a deprecation shim, and the
-> previous `~/.local/state/vhdmaker/` state directory is auto-migrated
-> on first run. See the bottom of this README for migration details.
+# dosforge
 
 `dosforge` is a DOS-focused image utility for Linux (Omarchy-friendly) with both a Textual TUI and CLI.
 
 It can create, mount, browse, and unmount:
 
-- fixed-size **VHD** images (FAT12/FAT16/FAT32)
+- fixed-size **VHD** images (FAT16/FAT32)
 - floppy **IMG/IMA** images (FAT12)
 
-with optional boot/system file staging for FreeDOS and legacy MS-DOS / PC-DOS / Compaq DOS families.
+with optional boot/system file staging for FreeDOS and legacy MS-DOS families.
 
 ## Highlights
 
@@ -506,21 +513,3 @@ Manual dry-run check:
 ```bash
 ./scripts/strip-copilot-coauthor.sh --range HEAD --dry-run
 ```
-
-## Migration from `vhdmaker`
-
-This project was renamed from `vhdmaker` to `dosforge`. For one
-deprecation cycle:
-
-- The `vhdmaker` CLI command still works as a thin shim that prints a
-  one-line warning and forwards to `dosforge`. Plan to switch your
-  scripts to `dosforge` at your convenience; the shim will be removed
-  in a future release.
-- The state directory `~/.local/state/vhdmaker/` is auto-migrated to
-  `~/.local/state/dosforge/` on first run (no manual action needed).
-- Environment variables that started with `VHDMAKER_` are still
-  honoured as a fallback (with a deprecation warning). Prefer the new
-  `DOSFORGE_` names going forward — e.g. `DOSFORGE_86BOX_BOOT_COMMAND`
-  instead of `VHDMAKER_86BOX_BOOT_COMMAND`.
-
-The on-disk asset layout (`dosassets/<bootmode>/...`) is unchanged.

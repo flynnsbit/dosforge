@@ -9,7 +9,7 @@ support) — has its own folder (dosassets/compaq331/).
 Expected files: 5.25" DS/DD floppy images (360 KiB) or 3.5" DS/DD
 (720 KiB) per the version.
 
-Status: vhdmaker does not yet ship a boot-mode=compaq3. Drop install
+Status: dosforge does not yet ship a boot-mode=compaq3. Drop install
 media here so it's ready when support lands. Until then the tool
 will report "no install images found" if anyone points it at this
 folder.

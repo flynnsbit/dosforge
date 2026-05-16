@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from vhdmaker.disk import DiskManager
-from vhdmaker.errors import ValidationError
-from vhdmaker.models import (
+from dosforge.disk import DiskManager
+from dosforge.errors import ValidationError
+from dosforge.models import (
     BootMode,
     CreateRequest,
     DiskFormat,
@@ -98,7 +98,7 @@ def test_validate_accepts_ibm8088_dos50_504mb() -> None:
 
 
 def test_fetch_freedos_assets_uses_working_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("vhdmaker.disk.find_missing", lambda commands: [])
+    monkeypatch.setattr("dosforge.disk.find_missing", lambda commands: [])
     monkeypatch.chdir(tmp_path)
     manager = DiskManager()
 
@@ -365,7 +365,7 @@ def test_normalize_vhd_size_for_chs_returns_xebec_size(tmp_path: Path) -> None:
 
 
 def test_validate_martypc_xtide_accepts_504mib_with_fat16(tmp_path: Path) -> None:
-    from vhdmaker.models import lookup_martypc_at_format, DEFAULT_MARTYPC_AT_FORMAT_SLUG
+    from dosforge.models import lookup_martypc_at_format, DEFAULT_MARTYPC_AT_FORMAT_SLUG
 
     manager = DiskManager()
     request = CreateRequest(
@@ -410,7 +410,7 @@ def test_validate_martypc_jride_rejects_oversize_for_dos33(tmp_path: Path) -> No
 
 
 def test_normalize_vhd_size_for_chs_returns_at_drive_size(tmp_path: Path) -> None:
-    from vhdmaker.models import MARTYPC_AT_FORMATS_BY_SLUG
+    from dosforge.models import MARTYPC_AT_FORMATS_BY_SLUG
 
     manager = DiskManager()
     for slug in ("at-1024-16-63", "at-1218-15-36", "at-1054-16-63"):
@@ -426,7 +426,7 @@ def test_normalize_vhd_size_for_chs_returns_at_drive_size(tmp_path: Path) -> Non
 
 
 def test_lookup_martypc_at_format_rejects_unknown_slug() -> None:
-    from vhdmaker.models import lookup_martypc_at_format
+    from dosforge.models import lookup_martypc_at_format
 
     with pytest.raises(ValueError, match="Unknown MartyPC"):
         lookup_martypc_at_format("at-nonsense-1-2-3")
@@ -590,7 +590,7 @@ def test_find_compaq331_startup_image_missing(tmp_path: Path) -> None:
 
 
 def test_uses_legacy_dos_qemu_install_msdos33() -> None:
-    from vhdmaker.disk import _uses_legacy_dos_qemu_install
+    from dosforge.disk import _uses_legacy_dos_qemu_install
 
     request = CreateRequest(
         path=Path("/tmp/x.vhd"),
@@ -602,7 +602,7 @@ def test_uses_legacy_dos_qemu_install_msdos33() -> None:
 
 
 def test_uses_legacy_dos_qemu_install_compaq331() -> None:
-    from vhdmaker.disk import _uses_legacy_dos_qemu_install
+    from dosforge.disk import _uses_legacy_dos_qemu_install
 
     request = CreateRequest(
         path=Path("/tmp/x.vhd"),
@@ -614,7 +614,7 @@ def test_uses_legacy_dos_qemu_install_compaq331() -> None:
 
 
 def test_uses_legacy_dos_qemu_install_ibm8088_dos33() -> None:
-    from vhdmaker.disk import _uses_legacy_dos_qemu_install
+    from dosforge.disk import _uses_legacy_dos_qemu_install
 
     request = CreateRequest(
         path=Path("/tmp/x.vhd"),
@@ -627,7 +627,7 @@ def test_uses_legacy_dos_qemu_install_ibm8088_dos33() -> None:
 
 
 def test_uses_legacy_dos_qemu_install_ibm8088_dos50_skipped() -> None:
-    from vhdmaker.disk import _uses_legacy_dos_qemu_install
+    from dosforge.disk import _uses_legacy_dos_qemu_install
 
     request = CreateRequest(
         path=Path("/tmp/x.vhd"),
@@ -641,7 +641,7 @@ def test_uses_legacy_dos_qemu_install_ibm8088_dos50_skipped() -> None:
 
 
 def test_uses_legacy_dos_qemu_install_other_modes_false() -> None:
-    from vhdmaker.disk import _uses_legacy_dos_qemu_install
+    from dosforge.disk import _uses_legacy_dos_qemu_install
 
     for mode in (
         BootMode.NONE,
@@ -661,7 +661,7 @@ def test_uses_legacy_dos_qemu_install_other_modes_false() -> None:
 
 
 def test_legacy_dos_install_descriptor_ibm8088_dos33_uses_msdos33() -> None:
-    from vhdmaker.disk import _legacy_dos_install_descriptor
+    from dosforge.disk import _legacy_dos_install_descriptor
 
     request = CreateRequest(
         path=Path("/tmp/x.vhd"),
@@ -677,7 +677,7 @@ def test_legacy_dos_install_descriptor_ibm8088_dos33_uses_msdos33() -> None:
 
 
 def test_uses_msdos33_filesystem_layout_ibm8088_dos33() -> None:
-    from vhdmaker.disk import _uses_msdos33_filesystem_layout
+    from dosforge.disk import _uses_msdos33_filesystem_layout
 
     request = CreateRequest(
         path=Path("/tmp/x.vhd"),
@@ -690,7 +690,7 @@ def test_uses_msdos33_filesystem_layout_ibm8088_dos33() -> None:
 
 
 def test_uses_msdos33_filesystem_layout_ibm8088_dos50_false() -> None:
-    from vhdmaker.disk import _uses_msdos33_filesystem_layout
+    from dosforge.disk import _uses_msdos33_filesystem_layout
 
     request = CreateRequest(
         path=Path("/tmp/x.vhd"),
@@ -1027,7 +1027,7 @@ def test_rewrite_mbr_for_xt_class_fat12_type1(tmp_path: Path) -> None:
 
 
 def test_partition_offset_bytes_for_xebec_type2() -> None:
-    from vhdmaker.disk import _partition_offset_bytes_for
+    from dosforge.disk import _partition_offset_bytes_for
 
     request = CreateRequest(
         path=Path("/tmp/x.vhd"),
@@ -1042,7 +1042,7 @@ def test_partition_offset_bytes_for_xebec_type2() -> None:
 
 
 def test_partition_offset_bytes_for_generic_msdos33() -> None:
-    from vhdmaker.disk import _partition_offset_bytes_for
+    from dosforge.disk import _partition_offset_bytes_for
 
     request = CreateRequest(
         path=Path("/tmp/x.vhd"),
@@ -1061,9 +1061,9 @@ def test_partition_offset_bytes_for_generic_msdos33() -> None:
 def test_stage_legacy_dos_full_profile_payload_minimal_is_noop(tmp_path: Path) -> None:
     """MINIMAL profile must not call mtools at all; FORMAT C: /S already
     produced a complete boot disk and there's nothing else to stage."""
-    from vhdmaker.commands import CommandRunner
-    from vhdmaker import disk as _disk
-    from vhdmaker.models import MSDOSInstallProfile
+    from dosforge.commands import CommandRunner
+    from dosforge import disk as _disk
+    from dosforge.models import MSDOSInstallProfile
 
     calls: list[list[str]] = []
 
@@ -1095,10 +1095,10 @@ def test_stage_legacy_dos_full_profile_payload_minimal_is_noop(tmp_path: Path) -
 def test_stage_legacy_dos_full_profile_payload_full_copies_tools_and_startup(
     tmp_path: Path,
 ) -> None:
-    from vhdmaker.commands import CommandRunner
-    from vhdmaker import disk as _disk
-    from vhdmaker.boot import BootAssets
-    from vhdmaker.models import MSDOSInstallProfile
+    from dosforge.commands import CommandRunner
+    from dosforge import disk as _disk
+    from dosforge.boot import BootAssets
+    from dosforge.models import MSDOSInstallProfile
 
     payload_dir = tmp_path / "payload"
     (payload_dir / "FDISK.COM").parent.mkdir(parents=True, exist_ok=True)
@@ -1250,7 +1250,7 @@ def test_apply_custom_payload_full_profile_reserves_more_overhead(tmp_path: Path
         martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
         custom_payload_path=payload,
     )
-    from vhdmaker.models import MSDOSInstallProfile
+    from dosforge.models import MSDOSInstallProfile
     minimal_req = CreateRequest(**common, msdos_install_profile=MSDOSInstallProfile.MINIMAL)
     full_req = CreateRequest(**common, msdos_install_profile=MSDOSInstallProfile.FULL)
     # MINIMAL passes
@@ -1282,7 +1282,7 @@ def test_apply_custom_payload_generic_still_autogrows(tmp_path: Path) -> None:
 
 
 def test_resolve_dos_asset_dir_prefers_dosassets_subdir(tmp_path: Path, monkeypatch) -> None:
-    from vhdmaker.paths import resolve_dos_asset_dir
+    from dosforge.paths import resolve_dos_asset_dir
 
     monkeypatch.chdir(tmp_path)
     legacy = tmp_path / "msdos33"
@@ -1295,7 +1295,7 @@ def test_resolve_dos_asset_dir_prefers_dosassets_subdir(tmp_path: Path, monkeypa
 
 
 def test_resolve_dos_asset_dir_falls_back_to_legacy_layout(tmp_path: Path, monkeypatch) -> None:
-    from vhdmaker.paths import resolve_dos_asset_dir
+    from dosforge.paths import resolve_dos_asset_dir
 
     monkeypatch.chdir(tmp_path)
     legacy = tmp_path / "msdos33"
@@ -1307,7 +1307,7 @@ def test_resolve_dos_asset_dir_falls_back_to_legacy_layout(tmp_path: Path, monke
 
 
 def test_resolve_dos_asset_dir_full_path_used_verbatim(tmp_path: Path) -> None:
-    from vhdmaker.paths import resolve_dos_asset_dir
+    from dosforge.paths import resolve_dos_asset_dir
 
     target = tmp_path / "elsewhere" / "msdos33"
     target.mkdir(parents=True)
@@ -1316,7 +1316,7 @@ def test_resolve_dos_asset_dir_full_path_used_verbatim(tmp_path: Path) -> None:
 
 
 def test_resolve_dos_asset_dir_returns_none_for_missing(tmp_path: Path, monkeypatch) -> None:
-    from vhdmaker.paths import resolve_dos_asset_dir
+    from dosforge.paths import resolve_dos_asset_dir
 
     monkeypatch.chdir(tmp_path)
     assert resolve_dos_asset_dir("missing-bootmode") is None

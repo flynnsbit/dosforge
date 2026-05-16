@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-import vhdmaker.cli as cli
-from vhdmaker.commands import RunResult
-from vhdmaker.errors import ValidationError
-from vhdmaker.models import BootMode, FloppyType, IBMDOSVersion, MSDOSInstallProfile, MediaType
+import dosforge.cli as cli
+from dosforge.commands import RunResult
+from dosforge.errors import ValidationError
+from dosforge.models import BootMode, FloppyType, IBMDOSVersion, MSDOSInstallProfile, MediaType
 
 
 def test_main_tui_primes_sudo_before_running_app(monkeypatch) -> None:
@@ -19,7 +19,7 @@ def test_main_tui_primes_sudo_before_running_app(monkeypatch) -> None:
             calls["run"] += 1
 
     monkeypatch.setattr(cli, "ensure_startup_sudo_auth", fake_auth)
-    monkeypatch.setattr(cli, "VhdMakerApp", FakeApp)
+    monkeypatch.setattr(cli, "DosForgeApp", FakeApp)
 
     assert cli.main(["tui"]) == 0
     assert calls == {"auth": 1, "run": 1}

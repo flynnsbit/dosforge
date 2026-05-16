@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from vhdmaker.errors import ValidationError
-from vhdmaker.models import DiskFormat, FloppyType, IBMDOSVersion
-from vhdmaker.size import (
+from dosforge.errors import ValidationError
+from dosforge.models import DiskFormat, FloppyType, IBMDOSVersion
+from dosforge.size import (
     FAT16_MAX_BYTES,
     FAT16_MIN_BYTES,
     FAT32_MIN_BYTES,

@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from vhdmaker.boot import BootAssets, BootInstaller
-from vhdmaker.commands import CommandRunner
-from vhdmaker.disk import DiskManager
-from vhdmaker.models import BootMode, FloppyType
+from dosforge.boot import BootAssets, BootInstaller
+from dosforge.commands import CommandRunner
+from dosforge.disk import DiskManager
+from dosforge.models import BootMode, FloppyType
 
 
 def _native_test_ready() -> tuple[bool, str]:
-    if os.environ.get("VHDMAKER_RUN_NATIVE_IMG_TESTS") != "1":
-        return (False, "Set VHDMAKER_RUN_NATIVE_IMG_TESTS=1 to run native Linux mount integration tests.")
+    if (os.environ.get("DOSFORGE_RUN_NATIVE_IMG_TESTS") or os.environ.get("VHDMAKER_RUN_NATIVE_IMG_TESTS")) != "1":
+        return (False, "Set DOSFORGE_RUN_NATIVE_IMG_TESTS=1 to run native Linux mount integration tests.")
 
     required_commands = ("sudo", "mkfs.fat", "fsck.fat", "mount", "umount", "mcopy", "mattrib", "dd")
     missing = [command for command in required_commands if shutil.which(command) is None]

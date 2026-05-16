@@ -12,7 +12,7 @@ install media stays gitignored.
 
 Expected files: 3.5" 1.44 MiB install diskettes.
 
-Status: vhdmaker does not yet ship a boot-mode=drdos7. Drop install
+Status: dosforge does not yet ship a boot-mode=drdos7. Drop install
 media here so it's ready when support lands. Until then the tool
 will report "no install images found" if anyone points it at this
 folder.

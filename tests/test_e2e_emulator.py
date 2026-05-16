@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from vhdmaker.e2e_emulator import qemu_boot_probe
+from dosforge.e2e_emulator import qemu_boot_probe
 
 
 def test_qemu_boot_probe_reports_boot_failure_marker(monkeypatch: Any, tmp_path: Path) -> None:

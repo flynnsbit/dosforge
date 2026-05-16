@@ -14,11 +14,11 @@ Expected files (matching the Microsoft open-source release):
   - The 5.25" / 3.5" floppy image(s) extracted from `v4.0/`
     in the MS-DOS GitHub repo.
 
-vhdmaker does not yet ship a `boot-mode=msdos4` resolver; this
+dosforge does not yet ship a `boot-mode=msdos4` resolver; this
 directory is a staging area for upcoming support. Drop the
 official Microsoft .img files here so they are available when
 support lands. Note that MS-DOS 4.0 introduced FAT16B
-(>32 MiB partitions) — so any future vhdmaker support for this
+(>32 MiB partitions) — so any future dosforge support for this
 boot mode will likely route through the QEMU FORMAT install
 flow (similar to msdos33), not the static-template flow.
 

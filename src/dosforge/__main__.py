@@ -1,4 +1,4 @@
-"""Allow `python -m vhdmaker` execution."""
+"""Allow `python -m dosforge` execution."""
 
 from .cli import main
 

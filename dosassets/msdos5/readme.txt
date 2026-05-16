@@ -11,7 +11,7 @@ Used by:
   - boot-mode=ibm8088 +dos50    (same media, IBM-PC variant)
 
 MS-DOS 5.0 introduced the modern CONFIG.SYS dialect (DOS=HIGH,
-LASTDRIVE=letter, BUFFERS=N,M) so vhdmaker writes a full
+LASTDRIVE=letter, BUFFERS=N,M) so dosforge writes a full
 CONFIG.SYS template here.
 
 Typical source: WinWorldPC.com — "Microsoft MS-DOS 5.00 (3.5-720k)"

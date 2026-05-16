@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from vhdmaker.errors import ValidationError
-from vhdmaker.mscompress import compressed_variant_name, expand_dos_compressed_payload, expanded_name_from_compressed
+from dosforge.errors import ValidationError
+from dosforge.mscompress import compressed_variant_name, expand_dos_compressed_payload, expanded_name_from_compressed
 
 
 def _encode_literal_lzss_stream(payload: bytes) -> bytes:

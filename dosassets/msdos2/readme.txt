@@ -13,7 +13,7 @@ Expected files (matching the Microsoft open-source release):
   - The 5.25" floppy image(s) extracted from `v2.0/bin/`
     in the MS-DOS GitHub repo.
 
-vhdmaker does not yet ship a `boot-mode=msdos2` resolver; this
+dosforge does not yet ship a `boot-mode=msdos2` resolver; this
 directory is a staging area for upcoming support. Drop the
 official Microsoft .img files here so they are available when
 support lands.

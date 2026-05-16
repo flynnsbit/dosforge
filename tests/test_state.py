@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from vhdmaker.errors import ValidationError
-from vhdmaker.models import MountRecord
-from vhdmaker.state import StateStore
+from dosforge.errors import ValidationError
+from dosforge.models import MountRecord
+from dosforge.state import StateStore
 
 
 def _record(vhd: str, mount: str, nbd: str = "/dev/nbd0") -> MountRecord:

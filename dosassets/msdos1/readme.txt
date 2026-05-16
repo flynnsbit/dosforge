@@ -8,7 +8,7 @@ later open-sourced by Microsoft.
 
 Expected files: 5.25" SS/DD floppy images (160 KiB or 180 KiB).
 
-Status: vhdmaker does not yet ship a boot-mode for MS-DOS 1.x.
+Status: dosforge does not yet ship a boot-mode for MS-DOS 1.x.
 Drop install media here so it's ready when support lands. Until
 then the tool will report "no install images found" if anyone
 points it at this folder.

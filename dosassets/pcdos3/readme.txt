@@ -10,7 +10,7 @@ Staging area for IBM PC-DOS 3.x releases:
 Expected files: 5.25" DS/DD (360 KiB) or 3.5" DS/DD (720 KiB)
 floppy images per the version.
 
-Status: vhdmaker does not yet ship a boot-mode=pcdos3. The
+Status: dosforge does not yet ship a boot-mode=pcdos3. The
 existing generic boot-mode=pcdos can be pointed here, but the
 default pcdos resolver is tuned for PC-DOS 4.01+ and may not
 produce a working result without further work. Until dedicated

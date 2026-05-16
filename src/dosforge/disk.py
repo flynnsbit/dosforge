@@ -440,7 +440,7 @@ class DiskManager:
     def unmount(self, mount_point: Path) -> MountRecord:
         record = self.state_store.find_mount(mount_point.expanduser().resolve())
         if record is None:
-            raise ValidationError(f"Mount point is not tracked by vhdmaker: {mount_point}")
+            raise ValidationError(f"Mount point is not tracked by dosforge: {mount_point}")
 
         self.preflight(media_type=MediaType.VHD if self._is_nbd_record(record) else MediaType.IMG)
         self.runner.run(["umount", str(record.mount_point)], sudo=True)
@@ -888,7 +888,7 @@ class DiskManager:
             raise ValidationError(
                 f"MartyPC {controller_label} drive type {fmt.slug} "
                 f"({fmt.description}) is below the 16 MiB FAT16 minimum and requires FAT12, "
-                "which vhdmaker does not yet produce for VHD targets. "
+                "which dosforge does not yet produce for VHD targets. "
                 "Pick an AT drive type that is at least 16 MiB."
             )
         if request.disk_format is DiskFormat.FAT32 and size_bytes < FAT32_MIN_BYTES:
@@ -2139,6 +2139,6 @@ class DiskManager:
         raise ValidationError(
             "Sudo authentication is required for disk operations. "
             "Run `sudo -v` in a terminal, then retry. "
-            "If this still fails after authentication, run `vhdmaker sudo-check` to detect sudo policy issues.\n"
+            "If this still fails after authentication, run `dosforge sudo-check` to detect sudo policy issues.\n"
             f"Details: {detail}"
         )

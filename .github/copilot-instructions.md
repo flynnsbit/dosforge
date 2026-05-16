@@ -1,4 +1,4 @@
-# Copilot instructions for `vhdmaker`
+# Copilot instructions for `dosforge`
 
 ## Build and run commands
 
@@ -7,7 +7,7 @@
 python -m pip install -e .[dev]
 
 # Run the app (default command launches the TUI)
-vhdmaker
+dosforge
 
 # Optional: install local pre-push hook for trailer cleanup
 ./scripts/install-githooks.sh
@@ -46,16 +46,16 @@ installed: **never push without the strip step.**
 
 ## High-level architecture
 
-- **Entry points (`src/vhdmaker/cli.py`)**
-  - `vhdmaker` CLI builds a `CreateRequest` and delegates all disk operations to `DiskManager`.
-  - Running `vhdmaker` (or `vhdmaker tui`) performs startup sudo auth (`sudo -v`) before launching Textual UI.
+- **Entry points (`src/dosforge/cli.py`)**
+  - `dosforge` CLI builds a `CreateRequest` and delegates all disk operations to `DiskManager`.
+  - Running `dosforge` (or `dosforge tui`) performs startup sudo auth (`sudo -v`) before launching Textual UI.
 
-- **UI layer (`src/vhdmaker/app.py`)**
-  - `VhdMakerApp` owns the interactive workflow and dynamic form behavior.
+- **UI layer (`src/dosforge/app.py`)**
+  - `DosForgeApp` owns the interactive workflow and dynamic form behavior.
   - The create form is driven by `media-type` + `boot-mode`; `_sync_create_form_visibility()` is the central visibility gate.
   - Directory tree selection is dual-purpose: image selection and boot-assets directory selection.
 
-- **Orchestration layer (`src/vhdmaker/disk.py`)**
+- **Orchestration layer (`src/dosforge/disk.py`)**
   - `DiskManager.create_and_prepare()` is the main workflow split:
     - **VHD**: fixed VPC image creation -> NBD attach -> partition/format -> optional boot install.
     - **IMG**: fixed floppy size + FAT12 format -> optional system-format install.
@@ -65,15 +65,15 @@ installed: **never push without the strip step.**
     - IMG via loop-mounted file.
   - Active mounts are persisted through `StateStore`.
 
-- **Boot subsystem (`src/vhdmaker/boot.py`)**
+- **Boot subsystem (`src/dosforge/boot.py`)**
   - `BootAssetResolver` resolves boot assets per boot mode (FreeDOS/MS-DOS 7.1/IBM DOS/PC-DOS/Compaq) from either directories or install images.
-  - Resolved/extracted assets are cached under `~/.local/state/vhdmaker/cache/boot-assets`.
+  - Resolved/extracted assets are cached under `~/.local/state/dosforge/cache/boot-assets`.
   - `BootInstaller` writes MBR/VBR boot code with `dd`, stages DOS system files via `mcopy`, and sets system/hidden attributes with `mattrib`.
   - DOS 3.3 IMG system-format uses installer-derived boot assets and stages only core system files; floppy geometry is aligned to source install media size.
 
-- **State and paths (`src/vhdmaker/state.py`, `src/vhdmaker/paths.py`)**
-  - Persistent state file: `~/.local/state/vhdmaker/state.json`
-  - Mount root: `~/.local/state/vhdmaker/mounts`
+- **State and paths (`src/dosforge/state.py`, `src/dosforge/paths.py`)**
+  - Persistent state file: `~/.local/state/dosforge/state.json`
+  - Mount root: `~/.local/state/dosforge/mounts`
 
 ## Key repository conventions
 

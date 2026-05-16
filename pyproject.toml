@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vhdmaker"
+name = "dosforge"
 version = "0.1.0"
 description = "Textual TUI for creating and managing DOS-compatible VHD and floppy IMG files on Linux."
 readme = "README.md"
@@ -20,7 +20,11 @@ dev = [
 ]
 
 [project.scripts]
-vhdmaker = "vhdmaker.cli:main"
+dosforge = "dosforge.cli:main"
+# Legacy CLI name for users who installed the project as `vhdmaker`.
+# Prints a deprecation notice and forwards to the `dosforge` entry point.
+# Plan to drop in a future release once users have migrated.
+vhdmaker = "dosforge.cli:_legacy_vhdmaker_entrypoint"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

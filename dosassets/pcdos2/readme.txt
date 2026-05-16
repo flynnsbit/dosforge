@@ -7,7 +7,7 @@ with subdirectory support and hard-disk capability) and PC-DOS 2.10
 
 Expected files: 5.25" DS/DD floppy images (320 KiB or 360 KiB).
 
-Status: vhdmaker does not yet ship a boot-mode=pcdos2. Drop install
+Status: dosforge does not yet ship a boot-mode=pcdos2. Drop install
 media here so it's ready when support lands. Until then the tool
 will report "no install images found" if anyone points it at this
 folder.

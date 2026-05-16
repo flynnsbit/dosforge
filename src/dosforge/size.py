@@ -36,7 +36,7 @@ IBM_DOS33_MAX_BYTES: Final[int] = 32 * 1024**2
 IBM_DOS50_MAX_BYTES: Final[int] = 504 * 1024**2
 FLOPPY_IMG_SIZES_BYTES: Final[set[int]] = {floppy_type.size_bytes for floppy_type in FloppyType}
 
-# A "cylinder" in the BIOS-friendly canonical ATA geometry vhdmaker writes
+# A "cylinder" in the BIOS-friendly canonical ATA geometry dosforge writes
 # into VHD footers (16 heads × 63 sectors-per-track × 512 bytes per sector).
 # Used to align disk sizes so footer CHS exactly maps to total_sectors.
 NORMAL_CHS_CYLINDER_BYTES: Final[int] = 16 * 63 * 512  # 516096

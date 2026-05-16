@@ -9,7 +9,7 @@ Expected files (case insensitive):
   - IBMBIO.COM / IBMDOS.COM / COMMAND.COM (optional, pre-extracted)
 
 PC-DOS 7.0 uses IBM's "XDF" extended-density floppy format on most
-disks. vhdmaker reads them with mtools' XDF support transparently.
+disks. dosforge reads them with mtools' XDF support transparently.
 
 Used by: boot-mode=pcdos7.
 

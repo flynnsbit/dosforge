@@ -7,12 +7,12 @@ from typing import Callable, Sequence
 
 import pytest
 
-from vhdmaker.boot import BootAssetResolver, BootAssets, BootInstaller
-from vhdmaker.commands import RunResult
-from vhdmaker.disk import DiskManager
-from vhdmaker.errors import ValidationError
-from vhdmaker.models import BootMode, CreateRequest, DiskFormat, FloppyType, IBMDOSVersion, MediaType
-from vhdmaker.state import StateStore
+from dosforge.boot import BootAssetResolver, BootAssets, BootInstaller
+from dosforge.commands import RunResult
+from dosforge.disk import DiskManager
+from dosforge.errors import ValidationError
+from dosforge.models import BootMode, CreateRequest, DiskFormat, FloppyType, IBMDOSVersion, MediaType
+from dosforge.state import StateStore
 
 
 class FakeRunner:
@@ -119,7 +119,7 @@ def test_preflight_requires_sudo_auth(monkeypatch: pytest.MonkeyPatch, tmp_path:
             )
         return RunResult(command=tuple(command), returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("vhdmaker.disk.assert_dependencies", lambda **_: None)
+    monkeypatch.setattr("dosforge.disk.assert_dependencies", lambda **_: None)
     manager = _manager(tmp_path, FakeRunner(on_run=on_run))
     with pytest.raises(ValidationError, match="sudo -v"):
         manager.preflight()
@@ -298,7 +298,7 @@ def test_privilege_diagnostics_fail_when_noninteractive_sudo_unavailable(
             )
         return RunResult(command=tuple(command), returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("vhdmaker.disk.find_missing", lambda commands: [])
+    monkeypatch.setattr("dosforge.disk.find_missing", lambda commands: [])
     manager = _manager(tmp_path, FakeRunner(on_run=on_run))
 
     ok, summary = manager.privilege_diagnostics_summary()
@@ -314,7 +314,7 @@ def test_privilege_diagnostics_warn_when_nbd_not_present(
     (tmp_path / "sys-class-block").mkdir(parents=True)
     (tmp_path / "dev").mkdir(parents=True)
 
-    monkeypatch.setattr("vhdmaker.disk.find_missing", lambda commands: [])
+    monkeypatch.setattr("dosforge.disk.find_missing", lambda commands: [])
     manager = _manager(tmp_path, FakeRunner())
 
     ok, summary = manager.privilege_diagnostics_summary()

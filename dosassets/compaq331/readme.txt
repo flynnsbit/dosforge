@@ -5,14 +5,14 @@ Drop the Compaq DOS 3.31 install diskette images into THIS folder
 (not a sub-folder).
 
 Expected files:
-  - STARTUP.IMG   (required — vhdmaker boots this floppy in QEMU
+  - STARTUP.IMG   (required — dosforge boots this floppy in QEMU
                    and runs `SYS C:` on the target VHD)
   - OPER.IMG      (optional — operations diskette)
   - FASTART.IMG   (optional — fast-startup diskette)
 
-vhdmaker also accepts .ima extensions and is case-insensitive on
+dosforge also accepts .ima extensions and is case-insensitive on
 filenames. The first floppy whose name matches STARTUP.IMG /
-STARTUP.IMA wins; if none match, vhdmaker scans for any floppy
+STARTUP.IMA wins; if none match, dosforge scans for any floppy
 that contains SYS.COM + IBMBIO.COM and uses that as the boot
 template.
 

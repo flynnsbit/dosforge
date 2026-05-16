@@ -1,4 +1,4 @@
-"""CLI entrypoint for vhdmaker."""
+"""CLI entrypoint for dosforge."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from .app import VhdMakerApp
+from .app import DosForgeApp
 from .commands import CommandRunner
 from .dependencies import assert_dependencies
 from .disk import DiskManager
-from .errors import DependencyError, ValidationError, VhdMakerError
+from .errors import DependencyError, ValidationError, DosForgeError
 from .models import (
     BootMode,
     CreateRequest,
@@ -32,7 +32,7 @@ from .size import parse_size
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="vhdmaker")
+    parser = argparse.ArgumentParser(prog="dosforge")
     subcommands = parser.add_subparsers(dest="command")
 
     subcommands.add_parser("tui", help="Launch the interactive TUI (default).")
@@ -149,7 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
             "MartyPC AT/XT-IDE drive type when --machine-target=martypc-xtide "
             "or martypc-jride. Slug format is 'at-<cyl>-<heads>-<spt>' (for "
             "example 'at-1024-16-63' for the 504 MiB entry). Run "
-            "'vhdmaker list-martypc-formats' for the full set of 127 entries."
+            "'dosforge list-martypc-formats' for the full set of 127 entries."
         ),
     )
 
@@ -200,10 +200,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # One-shot migration of the pre-rename ``~/.local/state/vhdmaker/``
+    # directory into ``~/.local/state/dosforge/`` so existing users
+    # don't lose their state.json across the rename.
+    from .paths import migrate_legacy_state_dir
+    migrated = migrate_legacy_state_dir()
+    if migrated is not None:
+        sys.stderr.write(
+            f"dosforge: migrated state from ~/.local/state/vhdmaker/ "
+            f"to {migrated}\n"
+        )
+
     try:
         if args.command in (None, "tui"):
             ensure_startup_sudo_auth()
-            VhdMakerApp().run()
+            DosForgeApp().run()
             return 0
 
         if args.command == "check-deps":
@@ -310,9 +321,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{fmt.size_bytes/1024/1024:>7.2f}  {fmt.description}"
                 )
             return 0
-    except VhdMakerError as exc:
+    except DosForgeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
     parser.print_help(sys.stderr)
     return 2
+
+
+def _legacy_vhdmaker_entrypoint(argv: Sequence[str] | None = None) -> int:
+    """Legacy `vhdmaker` console-script shim.
+
+    The project was renamed from ``vhdmaker`` to ``dosforge``. Users who
+    installed the package as ``vhdmaker`` still get a working CLI for
+    one deprecation cycle: this entry point prints a one-time warning
+    and forwards to :func:`main`. Drop in a future release once usage
+    has migrated.
+    """
+    sys.stderr.write(
+        "vhdmaker has been renamed to 'dosforge'. "
+        "Please run 'dosforge ...' instead — the 'vhdmaker' command "
+        "will be removed in a future release.\n"
+    )
+    return main(argv)

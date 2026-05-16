@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from vhdmaker.models import BootMode, DiskFormat, MediaType
+from dosforge.models import BootMode, DiskFormat, MediaType
 
-from vhdmaker.e2e_matrix import generate_e2e_cases, valid_e2e_cases
+from dosforge.e2e_matrix import generate_e2e_cases, valid_e2e_cases
 
 
 def test_valid_e2e_matrix_has_unique_case_ids() -> None:

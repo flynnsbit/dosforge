@@ -6,15 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from vhdmaker.boot import (
+from dosforge.boot import (
     _BUILTIN_FAT16_BOOT_SECTOR_B64,
     BootAssetResolver,
     normalize_freedos_autoexec_bat,
     normalize_freedos_config_sys,
 )
-from vhdmaker.commands import CommandRunner
-from vhdmaker.errors import ValidationError
-from vhdmaker.models import (
+from dosforge.commands import CommandRunner
+from dosforge.errors import ValidationError
+from dosforge.models import (
     BootMode,
     CreateRequest,
     DiskFormat,
@@ -2026,7 +2026,7 @@ def test_default_msdos_config_sys_modern_keeps_dos_high(tmp_path: Path) -> None:
 
 
 def test_use_pre_dos5_config_sys_legacy_dos_modes() -> None:
-    from vhdmaker.boot import _use_pre_dos5_config_sys
+    from dosforge.boot import _use_pre_dos5_config_sys
 
     for mode in (BootMode.MSDOS33, BootMode.MSDOS331, BootMode.COMPAQ331, BootMode.PCDOS):
         request = CreateRequest(
@@ -2039,7 +2039,7 @@ def test_use_pre_dos5_config_sys_legacy_dos_modes() -> None:
 
 
 def test_use_pre_dos5_config_sys_ibm8088_dos33_vs_dos50() -> None:
-    from vhdmaker.boot import _use_pre_dos5_config_sys
+    from dosforge.boot import _use_pre_dos5_config_sys
 
     dos33 = CreateRequest(
         path=Path("/tmp/x.vhd"),
@@ -2060,7 +2060,7 @@ def test_use_pre_dos5_config_sys_ibm8088_dos33_vs_dos50() -> None:
 
 
 def test_use_pre_dos5_config_sys_modern_dos_modes() -> None:
-    from vhdmaker.boot import _use_pre_dos5_config_sys
+    from dosforge.boot import _use_pre_dos5_config_sys
 
     for mode in (
         BootMode.MSDOS5,

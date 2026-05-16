@@ -5,11 +5,11 @@ from typing import Sequence
 
 import pytest
 
-import vhdmaker.boot as boot_module
-from vhdmaker.boot import BootAssets, BootInstaller
-from vhdmaker.commands import RunResult
-from vhdmaker.errors import ValidationError
-from vhdmaker.models import BootMode, DiskFormat
+import dosforge.boot as boot_module
+from dosforge.boot import BootAssets, BootInstaller
+from dosforge.commands import RunResult
+from dosforge.errors import ValidationError
+from dosforge.models import BootMode, DiskFormat
 
 
 class FakeRunner:

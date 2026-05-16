@@ -7,19 +7,22 @@ from pathlib import Path
 
 import pytest
 
-from vhdmaker.disk import DiskManager
-from vhdmaker.models import BootMode, CreateRequest, DiskFormat, MediaType
+from dosforge.disk import DiskManager
+from dosforge.models import BootMode, CreateRequest, DiskFormat, MediaType
 
 
 def _native_86box_ready() -> tuple[bool, str]:
-    command_template = os.environ.get("VHDMAKER_86BOX_BOOT_COMMAND", "").strip()
+    command_template = (
+        os.environ.get("DOSFORGE_86BOX_BOOT_COMMAND")
+        or os.environ.get("VHDMAKER_86BOX_BOOT_COMMAND", "")
+    ).strip()
     if not command_template:
         return (
             False,
-            "Set VHDMAKER_86BOX_BOOT_COMMAND to enable required native 86Box boot checks.",
+            "Set DOSFORGE_86BOX_BOOT_COMMAND to enable required native 86Box boot checks.",
         )
     if "{image}" not in command_template:
-        return (False, "VHDMAKER_86BOX_BOOT_COMMAND must include {image} placeholder.")
+        return (False, "DOSFORGE_86BOX_BOOT_COMMAND must include {image} placeholder.")
     return (True, "")
 
 
@@ -51,7 +54,10 @@ def test_native_86box_boot_contract_msdos71_fat32(tmp_path: Path) -> None:
     )
     manager.create_and_prepare(request)
 
-    command_template = os.environ["VHDMAKER_86BOX_BOOT_COMMAND"]
+    command_template = (
+        os.environ.get("DOSFORGE_86BOX_BOOT_COMMAND")
+        or os.environ["VHDMAKER_86BOX_BOOT_COMMAND"]
+    )
     command = shlex.split(command_template.format(image=str(image_path)))
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     output = f"{completed.stdout}\n{completed.stderr}"

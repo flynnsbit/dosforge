@@ -1,11 +1,11 @@
 # MS-DOS 3.30 VHD Boot Reference
 
-Companion notes for `compaq331`-style legacy DOS boot modes in `vhdmaker`.
+Companion notes for `compaq331`-style legacy DOS boot modes in `dosforge`.
 Focused on **MS-DOS 3.30** (`msdos33` boot mode).
 
 ## TL;DR
 
-`vhdmaker --boot-mode msdos33` produces a bootable FAT16 VHD by:
+`dosforge --boot-mode msdos33` produces a bootable FAT16 VHD by:
 
 1. Creating a fixed VPC VHD with normalized 16h/63spt footer geometry.
 2. Partitioning with `parted` (legacy LBA 63 start, single primary).
@@ -89,7 +89,7 @@ cosmetic.
 
 ## Install media expectations
 
-`vhdmaker` looks for the bootable DOS 3.30 floppy under
+`dosforge` looks for the bootable DOS 3.30 floppy under
 `request.boot_assets_path` (or auto-detects `./msdos33/` from the
 current working directory). Within that directory, it picks the first
 match of these preferred filenames:
@@ -102,13 +102,13 @@ If none match, it scans every `*.img` / `*.ima` for one that contains
 **both** `SYS.COM` and `IO.SYS` (heuristic fallback).
 
 The chosen image is copied to a scratch location under
-`~/.local/state/vhdmaker/cache/legacy-dos-install/`, then a custom
+`~/.local/state/dosforge/cache/legacy-dos-install/`, then a custom
 `AUTOEXEC.BAT`, `CONFIG.SYS`, and `YES.TXT` are injected via
 `mcopy -i ... -o`. The injected files do not modify the original.
 
 ## QEMU command line
 
-`vhdmaker` invokes:
+`dosforge` invokes:
 
 ```
 qemu-system-i386 \
@@ -185,7 +185,7 @@ hard disks. The disk boots correctly anyway.
 
 ## Code locations
 
-- `src/vhdmaker/disk.py`
+- `src/dosforge/disk.py`
   - `create_and_prepare` — dispatches MSDOS33 to the legacy DOS path
     (skips `make_partition_bootable`).
   - `_partition_and_format` — for MSDOS33: patches partition type to
@@ -199,7 +199,7 @@ hard disks. The disk boots correctly anyway.
   - `_resolve_legacy_dos_assets_dir`, `_find_legacy_dos_install_image` —
     asset discovery.
 
-- `src/vhdmaker/legacy_dos_install.py`
+- `src/dosforge/legacy_dos_install.py`
   - `LegacyDosInstallProfile` — descriptor with `install_method`
     (`"sys"` or `"format"`) and `timeout_seconds`.
   - `msdos33_profile()` — returns
@@ -208,26 +208,26 @@ hard disks. The disk boots correctly anyway.
     AUTOEXEC.BAT for either install method.
   - `LegacyDosQemuInstaller._run_qemu` — launches QEMU, polls for marker.
 
-- `src/vhdmaker/dependencies.py`
+- `src/dosforge/dependencies.py`
   - `LEGACY_DOS_QEMU_COMMANDS` — extra deps required for `msdos33` and
     `compaq331` VHD targets: `qemu-system-i386`, `mformat`, `mcopy`,
     `mattrib`, `mtype`, `mdir`, `mdel`.
 
 ## Gotchas to remember
 
-1. **Quit and re-launch the TUI after vhdmaker code changes.** Python
-   caches imports in long-running processes. A vhdmaker TUI that was
+1. **Quit and re-launch the TUI after dosforge code changes.** Python
+   caches imports in long-running processes. A dosforge TUI that was
    already running when you `git pull` or edit source will keep using
    the old code in-memory. The behaviour can range from "missing fix"
    to "silently raises and shows stale status text". Always restart the
    TUI after pulling/editing.
-2. **vhdmaker always writes `qemu` as the VHD creator string** (because
+2. **dosforge always writes `qemu` as the VHD creator string** (because
    `_create_fixed_vhd` calls `qemu-img`). If a VHD in your dir has
    `creator='mVHD'` (Microsoft VHD signature) or anything other than
-   `'qemu'`, it was NOT produced by vhdmaker — it's a stale file from
+   `'qemu'`, it was NOT produced by dosforge — it's a stale file from
    86Box's "Create new VHD…" or some other tool. Delete it before
    testing.
-3. **`VHDMK.OK` must not exist when polling starts.** vhdmaker zeroes the
+3. **`VHDMK.OK` must not exist when polling starts.** dosforge zeroes the
    first 2 MiB of the partition before launching QEMU. If you change
    the install method later, make sure any prior marker file is wiped
    so the host doesn't return success from a previous run.
@@ -244,7 +244,7 @@ hard disks. The disk boots correctly anyway.
 
 ```bash
 # Build a fresh msdos33-20M.vhd via the CLI (TUI equivalent):
-vhdmaker create \
+dosforge create \
   --path ./msdos33-20M.vhd \
   --size 20M \
   --format fat16 \

@@ -3,7 +3,7 @@ FreeDOS bootable assets
 
 These files are FreeDOS — the open-source DOS-compatible operating
 system — extracted from the FreeDOS LiveCD and pre-organized for
-vhdmaker's `boot-mode=freedos` (local source) flow. The contents are
+dosforge's `boot-mode=freedos` (local source) flow. The contents are
 GPL/BSD-licensed and freely redistributable, so they live under
 version control inside this repo (unlike the other dosassets/
 subdirectories, which only carry a readme.txt placeholder).
@@ -21,10 +21,10 @@ Top-level files
 FDOS/
 -----
 Curated DOS userspace shipped with FreeDOS (editor, tools, drivers,
-help system, …). vhdmaker copies this into C:\FDOS\ when the user
+help system, …). dosforge copies this into C:\FDOS\ when the user
 picks the `freedos` boot mode.
 
-vhdmaker can also fetch FreeDOS directly from the upstream LiveCD
+dosforge can also fetch FreeDOS directly from the upstream LiveCD
 image (`--freedos-source auto`). Use this local copy when you want
 reproducible builds without an internet dependency.
 

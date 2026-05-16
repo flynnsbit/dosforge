@@ -1,4 +1,4 @@
-"""Domain-specific exceptions for vhdmaker."""
+"""Domain-specific exceptions for dosforge."""
 
 from __future__ import annotations
 
@@ -7,20 +7,20 @@ from shlex import join as shell_join
 from typing import Sequence
 
 
-class VhdMakerError(Exception):
-    """Base error for all vhdmaker failures."""
+class DosForgeError(Exception):
+    """Base error for all dosforge failures."""
 
 
-class ValidationError(VhdMakerError):
+class ValidationError(DosForgeError):
     """Raised when user input or request shape is invalid."""
 
 
-class DependencyError(VhdMakerError):
+class DependencyError(DosForgeError):
     """Raised when required external tools are not available."""
 
 
 @dataclass(slots=True)
-class CommandError(VhdMakerError):
+class CommandError(DosForgeError):
     """Raised when an external command fails."""
 
     command: Sequence[str]

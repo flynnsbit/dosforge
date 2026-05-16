@@ -8,7 +8,7 @@ dosassets/compaq331/.
 Expected files: 5.25" DS/DD floppy images (360 KiB) for 3.0 / 3.10;
 3.5" DS/DD floppy images (720 KiB) for 3.20 / 3.21.
 
-Status: vhdmaker does not yet ship a boot-mode for pre-3.3 MS-DOS.
+Status: dosforge does not yet ship a boot-mode for pre-3.3 MS-DOS.
 Drop install media here so it's ready when support lands. Until
 then the tool will report "no install images found" if anyone
 points it at this folder.

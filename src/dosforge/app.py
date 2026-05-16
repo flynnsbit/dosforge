@@ -13,7 +13,7 @@ from textual.widgets import Button, Checkbox, DirectoryTree, Footer, Header, Inp
 from textual.widgets._directory_tree import DirEntry
 
 from .disk import DiskManager
-from .errors import VhdMakerError
+from .errors import DosForgeError
 from .models import (
     BootMode,
     CreateRequest,
@@ -69,7 +69,7 @@ _FLOPPY_OPTIONS = [
 ]
 
 
-class VhdMakerApp(App[None]):
+class DosForgeApp(App[None]):
     TITLE = "VHD Maker"
     SUB_TITLE = "Create, mount, browse, and unmount DOS-friendly disk images"
     BINDINGS = [("q", "quit", "Quit")]
@@ -248,7 +248,7 @@ class VhdMakerApp(App[None]):
         try:
             self.manager.preflight()
             self._set_status("Preflight check passed. Select or create an image to begin.")
-        except VhdMakerError as exc:
+        except DosForgeError as exc:
             self._set_status(str(exc), error=True)
         self._sync_create_form_visibility()
         self._refresh_mounts()
@@ -496,7 +496,7 @@ class VhdMakerApp(App[None]):
     def _handle_create(self) -> None:
         try:
             request = self._request_from_form()
-        except VhdMakerError as exc:
+        except DosForgeError as exc:
             self._set_status(str(exc), error=True)
             return
 
@@ -527,7 +527,7 @@ class VhdMakerApp(App[None]):
         record = mounted_records[0]
         try:
             self.manager.open_in_files(record.mount_point)
-        except VhdMakerError as exc:
+        except DosForgeError as exc:
             self._set_status(str(exc), error=True)
             return
 
@@ -563,7 +563,7 @@ class VhdMakerApp(App[None]):
             return
         try:
             self.manager.open_in_files(Path(path_text))
-        except VhdMakerError as exc:
+        except DosForgeError as exc:
             self._set_status(str(exc), error=True)
             return
         self._set_status(f"Opened in Files: {path_text}")
@@ -572,7 +572,7 @@ class VhdMakerApp(App[None]):
         url_text = self.query_one("#freedos-url", Input).value.strip()
         try:
             target = self.manager.fetch_freedos_assets(download_url=(url_text or None))
-        except VhdMakerError as exc:
+        except DosForgeError as exc:
             self._set_status(str(exc), error=True)
             return
 
@@ -588,7 +588,7 @@ class VhdMakerApp(App[None]):
     def _request_from_form(self) -> CreateRequest:
         path_text = self.query_one("#create-path", Input).value.strip()
         if not path_text:
-            raise VhdMakerError("Create path is required.")
+            raise DosForgeError("Create path is required.")
         size_text = self.query_one("#create-size", Input).value.strip()
         media_select = self.query_one("#media-type", Select)
         format_select = self.query_one("#create-format", Select)
@@ -651,7 +651,7 @@ class VhdMakerApp(App[None]):
             elif custom_payload_path is not None:
                 size_bytes = 1
             else:
-                raise VhdMakerError("Create size is required.")
+                raise DosForgeError("Create size is required.")
         else:
             size_bytes = floppy_type.size_bytes
         request_boot_mode = BootMode(boot_value) if (media_type is MediaType.VHD or img_system_format) else BootMode.NONE
@@ -704,7 +704,7 @@ class VhdMakerApp(App[None]):
         try:
             operation()
             return True
-        except VhdMakerError as exc:
+        except DosForgeError as exc:
             if not self._is_sudo_auth_error(exc):
                 self._set_status(str(exc), error=True)
                 return False
@@ -715,11 +715,11 @@ class VhdMakerApp(App[None]):
             try:
                 operation()
                 return True
-            except VhdMakerError as retry_exc:
+            except DosForgeError as retry_exc:
                 self._set_status(str(retry_exc), error=True)
                 return False
 
-    def _is_sudo_auth_error(self, exc: VhdMakerError) -> bool:
+    def _is_sudo_auth_error(self, exc: DosForgeError) -> bool:
         message = str(exc)
         return (
             "Sudo authentication is required for disk operations." in message

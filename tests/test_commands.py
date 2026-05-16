@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from vhdmaker.commands import CommandRunner
+from dosforge.commands import CommandRunner
 
 
 def test_command_runner_uses_non_interactive_sudo(monkeypatch: Any) -> None:

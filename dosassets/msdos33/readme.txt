@@ -13,7 +13,7 @@ Used by:
   - boot-mode=msdos33          (FAT16 <32 MiB, MS-DOS 3.30 install)
   - boot-mode=ibm8088 +dos33   (same install media, IBM-PC variant)
 
-vhdmaker boots Disk 1 inside QEMU and runs `FORMAT C: /S` on the
+dosforge boots Disk 1 inside QEMU and runs `FORMAT C: /S` on the
 target — this is the only way to get a working DOS 3.30 boot sector
 + correctly attributed IO.SYS / MSDOS.SYS, since SYS.COM rewrites
 those at runtime.

@@ -1,4 +1,4 @@
-"""vhdmaker package."""
+"""dosforge package."""
 
 __all__ = ["__version__"]
 

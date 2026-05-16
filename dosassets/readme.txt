@@ -2,14 +2,14 @@ DOS Assets Directory
 ====================
 
 This folder holds install diskette images and pre-built boot assets that
-vhdmaker uses to build bootable VHDs and floppy IMGs. Each subdirectory
+dosforge uses to build bootable VHDs and floppy IMGs. Each subdirectory
 maps to a specific DOS version (or version range). Drop your install
-diskette images directly into the matching subdirectory and vhdmaker
+diskette images directly into the matching subdirectory and dosforge
 will auto-detect them.
 
 Each subdirectory has its own ``readme.txt`` with version-specific
 notes (expected filenames, typical source archive name, status of
-vhdmaker support).
+dosforge support).
 
 Supported today (have a working ``--boot-mode``)
 ------------------------------------------------
@@ -31,7 +31,7 @@ pcdos7/           boot-mode=pcdos7              *.DSK / *.XDF install media
 Staging folders (drop install media; ``--boot-mode`` support TBD)
 ------------------------------------------------------------------
 The following directories are placeholders for upcoming DOS versions
-support. vhdmaker accepts the install media you drop here but does NOT
+support. dosforge accepts the install media you drop here but does NOT
 yet ship a resolver / ``--boot-mode`` for them — pointing the tool at
 one of these today returns "no install images found" (or simply has no
 matching boot mode). When support lands they'll fall into the table
@@ -65,12 +65,12 @@ Typical workflow with WinWorldPC archives:
 
     1. Download the .7z archive for the DOS version.
     2. Extract it into the matching subdirectory.
-    3. vhdmaker (CLI or TUI) will find the .img/.ima/.dsk/.xdf files
+    3. dosforge (CLI or TUI) will find the .img/.ima/.dsk/.xdf files
        automatically — no need to pass a full path; just refer to the
-       boot mode (e.g. --boot-mode msdos33) and vhdmaker resolves
+       boot mode (e.g. --boot-mode msdos33) and dosforge resolves
        `./dosassets/msdos33/` by default.
 
-You can also point vhdmaker at any other directory by passing
+You can also point dosforge at any other directory by passing
 `--boot-assets-path /path/to/dir` (or filling the "Boot assets path"
 field in the TUI), or by passing just a short name like `msdos33` which
 will be resolved as `./dosassets/msdos33/`.
