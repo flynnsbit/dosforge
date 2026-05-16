@@ -31,6 +31,7 @@ from .models import (
     FloppyType,
     FreeDOSSource,
     IBMDOSVersion,
+    MSDOSInstallProfile,
     MachineTarget,
     MartyPCAtFormat,
     MartyPCXebecDriveType,
@@ -380,6 +381,17 @@ class DiskManager:
         # attributes — exactly the workflow used on real hardware.
         if _uses_legacy_dos_qemu_install(request):
             self._install_legacy_dos_via_qemu(
+                request=request,
+                vhd_path=target_path,
+                partition_offset_bytes=partition_offset_bytes,
+            )
+            # QEMU FORMAT C: /S only stages IO.SYS / MSDOS.SYS /
+            # COMMAND.COM. If the user picked the FULL install profile
+            # ("Tools + Startup files"), the DOS tools payload and
+            # CONFIG.SYS / AUTOEXEC.BAT live in BootAssets after
+            # resolution — copy them onto C: via mtools so they survive
+            # the FORMAT step.
+            self._stage_legacy_dos_full_profile_payload(
                 request=request,
                 vhd_path=target_path,
                 partition_offset_bytes=partition_offset_bytes,
@@ -1311,6 +1323,81 @@ class DiskManager:
             preferred_names=("STARTUP.IMG", "STARTUP.IMA"),
             system_file_marker="IBMBIO.COM",
         )
+
+    def _stage_legacy_dos_full_profile_payload(
+        self,
+        *,
+        request: CreateRequest,
+        vhd_path: Path,
+        partition_offset_bytes: int,
+    ) -> None:
+        """Stage the FULL profile's DOS tools + startup files onto C: via mtools.
+
+        Called after :meth:`_install_legacy_dos_via_qemu` for the legacy
+        DOS QEMU install path. The QEMU FORMAT C: /S step only writes
+        IO.SYS / MSDOS.SYS (or IBMBIO.COM / IBMDOS.COM) + COMMAND.COM.
+        When the user picks the ``FULL`` install profile ("Tools +
+        Startup files") the BootAssetResolver also exposes:
+
+        - ``assets.fdos_payload_dir``: a directory of DOS utilities
+          (FDISK.COM, FORMAT.COM, EDIT.COM, etc.) to copy into
+          ``C:\\<payload_target_dir>\\`` (typically C:\\DOS).
+        - ``assets.system_files``: CONFIG.SYS and AUTOEXEC.BAT (already
+          normalized to point at the correct install_dir per
+          media_type — C:\\DOS for VHD).
+
+        Skip everything when the resolved profile is MINIMAL; FORMAT C:
+        /S has already produced a bootable disk in that case.
+        """
+        if request.msdos_install_profile is not MSDOSInstallProfile.FULL:
+            return
+        assets = self.boot_resolver.resolve(request)
+        partition_image = f"{vhd_path}@@{partition_offset_bytes}"
+
+        # 1. Stage the DOS tools payload under C:\<payload_target_dir>\.
+        if assets.fdos_payload_dir is not None and assets.fdos_payload_dir.is_dir():
+            target_dir = (assets.payload_target_dir or "DOS").strip("/\\").upper()
+            # Create the top-level dir on C:\ first. mmd errors out if
+            # it already exists, so let it through (check=False).
+            self.runner.run(
+                ["mmd", "-i", partition_image, f"::{target_dir}"],
+                check=False,
+            )
+            for entry in sorted(assets.fdos_payload_dir.rglob("*")):
+                relative = entry.relative_to(assets.fdos_payload_dir)
+                dos_rel = str(relative).replace(os.sep, "/")
+                dest = f"::{target_dir}/{dos_rel}"
+                if entry.is_dir():
+                    self.runner.run(
+                        ["mmd", "-i", partition_image, dest],
+                        check=False,
+                    )
+                elif entry.is_file():
+                    self.runner.run(
+                        ["mcopy", "-i", partition_image, "-o", str(entry), dest],
+                    )
+
+        # 2. Stage CONFIG.SYS / AUTOEXEC.BAT to C:\. Skip the DOS system
+        # files (IO.SYS, MSDOS.SYS, IBMBIO.COM, IBMDOS.COM, COMMAND.COM)
+        # — they were written by SYS C: / FORMAT C: /S with the correct
+        # +s +h attributes already, and overwriting them strips those
+        # attributes.
+        protected_system_files = {
+            "IO.SYS",
+            "MSDOS.SYS",
+            "IBMBIO.COM",
+            "IBMDOS.COM",
+            "KERNEL.SYS",
+            "COMMAND.COM",
+        }
+        for name, src in (assets.system_files or {}).items():
+            if name.upper() in protected_system_files:
+                continue
+            if not src.is_file():
+                continue
+            self.runner.run(
+                ["mcopy", "-i", partition_image, "-o", str(src), f"::{name}"],
+            )
 
     def _copy_custom_payload_to_vhd_via_mtools(
         self,

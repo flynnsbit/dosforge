@@ -1053,3 +1053,131 @@ def test_partition_offset_bytes_for_generic_msdos33() -> None:
     )
     # Generic targets use the conventional LBA 63 layout.
     assert _partition_offset_bytes_for(request) == 63 * 512
+
+
+# --- FULL-profile payload staging for legacy DOS QEMU install ---
+
+
+def test_stage_legacy_dos_full_profile_payload_minimal_is_noop(tmp_path: Path) -> None:
+    """MINIMAL profile must not call mtools at all; FORMAT C: /S already
+    produced a complete boot disk and there's nothing else to stage."""
+    from vhdmaker.commands import CommandRunner
+    from vhdmaker import disk as _disk
+    from vhdmaker.models import MSDOSInstallProfile
+
+    calls: list[list[str]] = []
+
+    class FakeRunner(CommandRunner):
+        def run(self, args, *, sudo=False, check=True, env=None):
+            calls.append(list(args))
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    class FakeResolver:
+        def resolve(self, request):
+            raise AssertionError("resolver should not be called for MINIMAL profile")
+
+    mgr = _disk.DiskManager(runner=FakeRunner(), boot_resolver=FakeResolver())
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        msdos_install_profile=MSDOSInstallProfile.MINIMAL,
+    )
+    mgr._stage_legacy_dos_full_profile_payload(
+        request=request,
+        vhd_path=tmp_path / "fake.vhd",
+        partition_offset_bytes=17 * 512,
+    )
+    assert calls == []
+
+
+def test_stage_legacy_dos_full_profile_payload_full_copies_tools_and_startup(
+    tmp_path: Path,
+) -> None:
+    from vhdmaker.commands import CommandRunner
+    from vhdmaker import disk as _disk
+    from vhdmaker.boot import BootAssets
+    from vhdmaker.models import MSDOSInstallProfile
+
+    payload_dir = tmp_path / "payload"
+    (payload_dir / "FDISK.COM").parent.mkdir(parents=True, exist_ok=True)
+    (payload_dir / "FDISK.COM").write_bytes(b"fdisk")
+    (payload_dir / "FORMAT.COM").write_bytes(b"format")
+    sub = payload_dir / "SUB"
+    sub.mkdir()
+    (sub / "MORE.EXE").write_bytes(b"more")
+    config = tmp_path / "CONFIG.SYS"
+    config.write_bytes(b"FILES=20\r\n")
+    autoexec = tmp_path / "AUTOEXEC.BAT"
+    autoexec.write_bytes(b"@ECHO OFF\r\nPATH=C:\\DOS\r\n")
+    # FORMAT C: /S puts these; staging must NOT overwrite them.
+    iosys = tmp_path / "IO.SYS"
+    iosys.write_bytes(b"io")
+    cmd = tmp_path / "COMMAND.COM"
+    cmd.write_bytes(b"command")
+
+    fake_assets = BootAssets(
+        system_files={
+            "IO.SYS": iosys,
+            "COMMAND.COM": cmd,
+            "CONFIG.SYS": config,
+            "AUTOEXEC.BAT": autoexec,
+        },
+        boot_sector_template=None,
+        fdos_payload_dir=payload_dir,
+        payload_target_dir="DOS",
+    )
+
+    calls: list[list[str]] = []
+
+    class FakeRunner(CommandRunner):
+        def run(self, args, *, sudo=False, check=True, env=None):
+            calls.append(list(args))
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    class FakeResolver:
+        def resolve(self, request):
+            return fake_assets
+
+    mgr = _disk.DiskManager(runner=FakeRunner(), boot_resolver=FakeResolver())
+    vhd = tmp_path / "fake.vhd"
+    request = CreateRequest(
+        path=vhd,
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        msdos_install_profile=MSDOSInstallProfile.FULL,
+    )
+    mgr._stage_legacy_dos_full_profile_payload(
+        request=request,
+        vhd_path=vhd,
+        partition_offset_bytes=17 * 512,
+    )
+
+    # The DOS dir was created at C:\DOS.
+    assert any(
+        call[:2] == ["mmd", "-i"] and call[-1] == "::DOS"
+        for call in calls
+    ), calls
+    # FDISK.COM was copied into C:\DOS\FDISK.COM
+    assert any(
+        call[:2] == ["mcopy", "-i"]
+        and call[-2] == str(payload_dir / "FDISK.COM")
+        and call[-1] == "::DOS/FDISK.COM"
+        for call in calls
+    ), calls
+    # Subdir SUB was created and MORE.EXE staged inside it.
+    assert any(call[-1] == "::DOS/SUB" for call in calls), calls
+    assert any(
+        call[:2] == ["mcopy", "-i"]
+        and call[-1] == "::DOS/SUB/MORE.EXE"
+        for call in calls
+    ), calls
+    # CONFIG.SYS + AUTOEXEC.BAT were copied to C:\.
+    assert any(call[-1] == "::CONFIG.SYS" for call in calls), calls
+    assert any(call[-1] == "::AUTOEXEC.BAT" for call in calls), calls
+    # IO.SYS / COMMAND.COM must NOT be overwritten — FORMAT already wrote
+    # them with system+hidden attributes.
+    assert not any(call[-1] == "::IO.SYS" for call in calls), calls
+    assert not any(call[-1] == "::COMMAND.COM" for call in calls), calls
