@@ -66,7 +66,7 @@ def test_validate_rejects_ibm8088_with_fat32() -> None:
         ibm_dos_version=IBMDOSVersion.DOS50,
         boot_assets_path=Path("/tmp/ibm-assets"),
     )
-    with pytest.raises(ValidationError, match="FAT16 only"):
+    with pytest.raises(ValidationError, match="supports FAT16"):
         manager._validate_create_request(request)
 
 
@@ -747,3 +747,170 @@ def test_resolve_legacy_dos_assets_dir_ibm8088_dos33_uses_root_when_no_subdir(
         label="MS-DOS 3.30",
     )
     assert resolved == root.resolve()
+
+
+# --- FAT12 + MartyPC Xebec Type 1 ---
+
+
+def _martypc_xebec_type1_request(**overrides) -> CreateRequest:
+    base = dict(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=10 * 1024 * 1024,  # ignored — MartyPC forces drive_type size
+        disk_format=DiskFormat.FAT12,
+        boot_mode=BootMode.MSDOS33,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE1,
+        boot_assets_path=Path("/tmp/msdos33"),
+    )
+    base.update(overrides)
+    return CreateRequest(**base)
+
+
+def test_validate_accepts_martypc_xebec_type1_fat12_msdos33(tmp_path: Path) -> None:
+    manager = DiskManager()
+    assets = tmp_path / "msdos33"
+    assets.mkdir()
+    (assets / "DISK01.IMG").write_bytes(b"\0" * 1024)
+    request = _martypc_xebec_type1_request(boot_assets_path=assets)
+    manager._validate_create_request(request)
+
+
+def test_validate_accepts_martypc_xebec_type1_fat12_ibm8088_dos33(tmp_path: Path) -> None:
+    manager = DiskManager()
+    assets = tmp_path / "msdos33"
+    assets.mkdir()
+    (assets / "DISK01.IMG").write_bytes(b"\0" * 1024)
+    request = _martypc_xebec_type1_request(
+        boot_mode=BootMode.IBM8088,
+        ibm_dos_version=IBMDOSVersion.DOS33,
+        boot_assets_path=assets,
+    )
+    manager._validate_create_request(request)
+
+
+def test_validate_rejects_martypc_xebec_type1_fat16() -> None:
+    manager = DiskManager()
+    request = _martypc_xebec_type1_request(disk_format=DiskFormat.FAT16)
+    with pytest.raises(ValidationError, match="Type 1.*requires FAT12"):
+        manager._validate_create_request(request)
+
+
+def test_validate_rejects_martypc_xebec_type2_fat12() -> None:
+    manager = DiskManager()
+    request = _martypc_xebec_type1_request(
+        disk_format=DiskFormat.FAT12,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+    )
+    with pytest.raises(ValidationError, match="requires FAT16"):
+        manager._validate_create_request(request)
+
+
+def test_validate_rejects_fat12_on_non_martypc() -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=10 * 1024 * 1024,
+        disk_format=DiskFormat.FAT12,
+        boot_mode=BootMode.MSDOS33,
+        machine_target=MachineTarget.GENERIC,
+        boot_assets_path=Path("/tmp/msdos33"),
+    )
+    with pytest.raises(ValidationError, match="FAT12 on VHD"):
+        manager._validate_create_request(request)
+
+
+def test_validate_rejects_fat12_with_non_msdos33_boot_mode() -> None:
+    manager = DiskManager()
+    request = _martypc_xebec_type1_request(boot_mode=BootMode.COMPAQ331)
+    with pytest.raises(ValidationError, match="FAT12 on VHD requires boot-mode"):
+        manager._validate_create_request(request)
+
+
+# --- BPB-to-footer geometry patch (MartyPC Xebec Type 2 boot fix) ---
+
+
+def _make_fake_vhd_with_partition(
+    path: Path,
+    *,
+    footer_cyl: int,
+    footer_heads: int,
+    footer_spt: int,
+    bpb_spt: int = 63,
+    bpb_heads: int = 16,
+    partition_start_lba: int = 63,
+) -> None:
+    """Build a minimal VHD-like file: zeroed data + footer + a BPB stub."""
+    import struct as _struct
+
+    total_sectors = footer_cyl * footer_heads * footer_spt
+    data_size = total_sectors * 512
+    path.write_bytes(b"\x00" * (data_size + 512))
+    # Stub BPB at partition VBR (offset partition_start_lba * 512).
+    with path.open("r+b") as f:
+        f.seek(partition_start_lba * 512 + 24)
+        f.write(_struct.pack("<HH", bpb_spt, bpb_heads))
+        # Write a footer cookie + CHS so _read_vpc_bios_chs_geometry can parse it.
+        f.seek(-512, 2)
+        footer = bytearray(512)
+        footer[:8] = b"conectix"
+        footer[56:58] = _struct.pack(">H", footer_cyl)
+        footer[58] = footer_heads
+        footer[59] = footer_spt
+        f.write(footer)
+
+
+def test_patch_partition_bpb_to_footer_geometry_rewrites_spt_and_heads(
+    tmp_path: Path,
+) -> None:
+    import struct as _struct
+
+    manager = DiskManager()
+    vhd = tmp_path / "fake.vhd"
+    # MartyPC Xebec Type 2 geometry — 615 × 4 × 17 MFM.
+    _make_fake_vhd_with_partition(
+        vhd,
+        footer_cyl=615,
+        footer_heads=4,
+        footer_spt=17,
+        bpb_spt=63,
+        bpb_heads=16,
+    )
+    manager._patch_partition_bpb_to_footer_geometry(
+        vhd_path=vhd,
+        partition_offset_bytes=63 * 512,
+    )
+    # Read back the BPB heads/spt — should now match the footer.
+    with vhd.open("rb") as f:
+        f.seek(63 * 512 + 24)
+        spt, heads = _struct.unpack("<HH", f.read(4))
+    assert spt == 17
+    assert heads == 4
+
+
+def test_patch_partition_bpb_to_footer_geometry_noop_for_canonical_chs(
+    tmp_path: Path,
+) -> None:
+    import struct as _struct
+
+    manager = DiskManager()
+    vhd = tmp_path / "fake.vhd"
+    # Generic disk with already-canonical 16/63 footer (e.g. non-MartyPC
+    # build). The BPB ends up matching the footer, so the patch is a no-op
+    # in observable terms.
+    _make_fake_vhd_with_partition(
+        vhd,
+        footer_cyl=64,
+        footer_heads=16,
+        footer_spt=63,
+        bpb_spt=63,
+        bpb_heads=16,
+    )
+    manager._patch_partition_bpb_to_footer_geometry(
+        vhd_path=vhd,
+        partition_offset_bytes=63 * 512,
+    )
+    with vhd.open("rb") as f:
+        f.seek(63 * 512 + 24)
+        spt, heads = _struct.unpack("<HH", f.read(4))
+    assert spt == 63
+    assert heads == 16

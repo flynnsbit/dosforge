@@ -26,6 +26,8 @@ _SIZE_FACTORS: Final[dict[str, int]] = {
     "tib": 1024**4,
 }
 
+FAT12_MIN_BYTES: Final[int] = 360 * 1024  # smallest standard floppy size
+FAT12_MAX_BYTES: Final[int] = 32 * 1024**2  # FAT12 hard cap (4084 clusters * max clu sz)
 FAT16_MIN_BYTES: Final[int] = 16 * 1024**2
 FAT16_MAX_BYTES: Final[int] = 2 * 1024**3
 FAT32_MIN_BYTES: Final[int] = 64 * 1024**2
@@ -97,6 +99,15 @@ def normalize_label(label: str | None) -> str | None:
 
 
 def validate_size_for_format(size_bytes: int, disk_format: DiskFormat) -> None:
+    if disk_format is DiskFormat.FAT12:
+        if size_bytes < FAT12_MIN_BYTES:
+            raise ValidationError("FAT12 images must be at least 360 KiB.")
+        if size_bytes > FAT12_MAX_BYTES:
+            raise ValidationError(
+                "FAT12 partitions are capped at 32 MiB. Use FAT16 for larger drives."
+            )
+        return
+
     if disk_format is DiskFormat.FAT16:
         if size_bytes < FAT16_MIN_BYTES:
             raise ValidationError("FAT16 images must be at least 16 MiB.")

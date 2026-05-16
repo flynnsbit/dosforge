@@ -213,8 +213,10 @@ class DiskManager:
         self._create_fixed_vhd(target_path, size_bytes, request=request)
         request.size_bytes = size_bytes
         request.path = target_path
-        fat16_bios_chs = (
-            self._read_vpc_bios_chs_geometry(target_path) if request.disk_format is DiskFormat.FAT16 else None
+        fat_bios_chs = (
+            self._read_vpc_bios_chs_geometry(target_path)
+            if request.disk_format in (DiskFormat.FAT12, DiskFormat.FAT16)
+            else None
         )
 
         def configure(nbd_device: str) -> None:
@@ -238,11 +240,11 @@ class DiskManager:
                 self.boot_installer.write_mbr_only(disk_device=nbd_device)
                 if (
                     request.boot_mode is BootMode.COMPAQ331
-                    and fat16_bios_chs is not None
+                    and fat_bios_chs is not None
                 ):
                     self.boot_installer.patch_fat16_bpb_geometry(
                         partition_device=partition_device,
-                        bios_chs=fat16_bios_chs,
+                        bios_chs=fat_bios_chs,
                     )
             elif request.boot_mode is not BootMode.NONE:
                 assets = self.boot_resolver.resolve(request)
@@ -251,7 +253,7 @@ class DiskManager:
                     partition_device=partition_device,
                     disk_format=request.disk_format,
                     assets=assets,
-                    bios_chs=fat16_bios_chs,
+                    bios_chs=fat_bios_chs,
                     boot_mode=request.boot_mode,
                 )
             custom_payload = self._resolve_custom_payload_path(request)
@@ -270,6 +272,20 @@ class DiskManager:
         # attributes — exactly the workflow used on real hardware.
         if _uses_legacy_dos_qemu_install(request):
             self._install_legacy_dos_via_qemu(request=request, vhd_path=target_path)
+            # QEMU's SeaBIOS exposes BIOS-canonical translation (16h/63s)
+            # to the guest, so when DOS's FORMAT.COM writes the partition
+            # BPB it picks up 16/63 for heads/spt. For targets whose
+            # actual on-hardware controller exposes a different geometry
+            # (notably MartyPC's Xebec MFM controller, which uses native
+            # CHS, e.g. 615×4×17), the BPB ends up mismatching real
+            # INT 13h reads and the boot sector double-faults — two beeps
+            # and a drop into ROM-BASIC. Patch the BPB heads/spt to
+            # whatever the VHD footer advertises so it matches what the
+            # emulator's hard-disk controller will report.
+            self._patch_partition_bpb_to_footer_geometry(
+                vhd_path=target_path,
+                partition_offset_bytes=63 * 512,
+            )
             # Custom payload (for these modes) is copied via mtools after
             # the QEMU SYS step, since the NBD path is no longer active.
             custom_payload = self._resolve_custom_payload_path(request)
@@ -532,9 +548,31 @@ class DiskManager:
             self._validate_martypc_at_request(request)
 
         validate_size_for_format(request.size_bytes, request.disk_format)
+        if request.disk_format is DiskFormat.FAT12:
+            # FAT12 on VHD is a narrow capability: only the MartyPC
+            # Xebec Type 1 (10 MiB MFM) preset is supported today, with
+            # an MS-DOS 3.30 (msdos33) or IBM 8088 + DOS33 install.
+            # Anywhere else we'd need a hard-disk-aware FAT12 boot
+            # sector / SYS workflow we don't currently produce.
+            if request.machine_target is not MachineTarget.MARTYPC_XEBEC:
+                raise ValidationError(
+                    "FAT12 on VHD is only supported with the MartyPC Xebec Type 1 (10 MiB) preset."
+                )
+            if request.martypc_xebec_drive_type is not MartyPCXebecDriveType.TYPE1:
+                raise ValidationError(
+                    "FAT12 on VHD is only supported with MartyPC Xebec Type 1 (10 MiB). "
+                    "Pick FAT16 for Xebec Type 2 / 13 / 16."
+                )
+            if not _uses_msdos33_filesystem_layout(request):
+                raise ValidationError(
+                    "FAT12 on VHD requires boot-mode=msdos33 or ibm8088 + --ibm-dos-version dos33 "
+                    "(DOS's own FORMAT C: /S writes the FAT12 BPB)."
+                )
         if request.boot_mode is BootMode.IBM8088:
-            if request.disk_format is not DiskFormat.FAT16:
-                raise ValidationError("IBM PC 8088/V20 mode supports FAT16 only.")
+            if request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12):
+                raise ValidationError(
+                    "IBM PC 8088/V20 mode supports FAT16 (and FAT12 for the MartyPC Xebec Type 1 preset)."
+                )
             validate_size_for_ibm_dos(request.size_bytes, request.ibm_dos_version)
         # MS-DOS 3.30 (msdos33) predates FAT16B and only reads
         # BPB.total_sectors_16 (uint16, max 65535 sectors ~= 31.99 MiB). The
@@ -552,7 +590,6 @@ class DiskManager:
                 "Use msdos331 (Compaq / FAT16B) or msdos622 for larger partitions."
             )
         legacy_fat16_modes = {
-            BootMode.MSDOS33,
             BootMode.MSDOS331,
             BootMode.MSDOS5,
             BootMode.MSDOS622,
@@ -562,6 +599,15 @@ class DiskManager:
         }
         if request.boot_mode in legacy_fat16_modes and request.disk_format is not DiskFormat.FAT16:
             raise ValidationError("Legacy DOS boot profiles support FAT16 only.")
+        # MSDOS33 accepts FAT16 (default) and FAT12 (only for MartyPC Xebec
+        # Type 1, validated above).
+        if (
+            request.boot_mode is BootMode.MSDOS33
+            and request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12)
+        ):
+            raise ValidationError(
+                "MS-DOS 3.30 boot mode supports FAT16 (and FAT12 for the MartyPC Xebec Type 1 preset)."
+            )
         if (
             request.boot_mode is BootMode.FREEDOS
             and request.freedos_source is FreeDOSSource.AUTO
@@ -651,16 +697,21 @@ class DiskManager:
             raise ValidationError(
                 "MartyPC Xebec target requires VHD media; IMG floppies are not supported."
             )
-        if request.disk_format is not DiskFormat.FAT16:
-            raise ValidationError(
-                "MartyPC Xebec target requires FAT16 (FAT32 is not supported by the XT-class Xebec HDC)."
-            )
         drive_type = request.martypc_xebec_drive_type
         if drive_type is MartyPCXebecDriveType.TYPE1:
-            raise ValidationError(
-                "MartyPC Xebec Type 1 (10 MiB, 306x4x17) requires FAT12, which vhdmaker does not yet "
-                "produce for VHD targets. Use Type 2, Type 13, or Type 16 (20 MiB) with FAT16."
-            )
+            # 10 MiB MFM drive — must use FAT12 (only 20800 sectors,
+            # well under FAT16's 16 MiB minimum).
+            if request.disk_format is not DiskFormat.FAT12:
+                raise ValidationError(
+                    "MartyPC Xebec Type 1 (10 MiB, 306x4x17) requires FAT12. "
+                    "Pick disk-format=fat12 (and boot-mode=msdos33 or ibm8088+dos33)."
+                )
+        else:
+            if request.disk_format is not DiskFormat.FAT16:
+                raise ValidationError(
+                    "MartyPC Xebec target requires FAT16 (FAT32 is not supported by the XT-class Xebec HDC). "
+                    "Type 1 uses FAT12 instead."
+                )
         xt_class_modes = {
             BootMode.NONE,
             BootMode.IBM8088,
@@ -1457,10 +1508,12 @@ class DiskManager:
         # the FAT16 BPB with DOS-3-compatible defaults (compaq331); others
         # let DOS's own FORMAT.COM lay out everything from scratch
         # (msdos33, ibm8088+dos33 — same install media). The MS-DOS 3.30
-        # layout also requires partition type 0x04 (FAT16 <32 MiB)
-        # because DOS 3.30 predates FAT16B / partition type 0x06.
+        # layout also requires partition type 0x01 (FAT12 <32 MiB) or
+        # 0x04 (FAT16 <32 MiB) because DOS 3.30 predates FAT16B /
+        # partition type 0x06.
         if use_msdos33_layout:
-            self._set_mbr_partition_type(nbd_device, partition_index=1, fs_type=0x04)
+            fs_type = 0x01 if disk_format is DiskFormat.FAT12 else 0x04
+            self._set_mbr_partition_type(nbd_device, partition_index=1, fs_type=fs_type)
             # No mformat: FORMAT C: /S inside DOS will write the FS from
             # scratch with DOS 3.30's exact expected layout. Zero the
             # first 2 MB to clear any residual data so FORMAT doesn't
@@ -1681,6 +1734,34 @@ class DiskManager:
         if heads <= 0 or sectors_per_track <= 0:
             return None
         return (sectors_per_track, heads)
+
+    def _patch_partition_bpb_to_footer_geometry(
+        self,
+        *,
+        vhd_path: Path,
+        partition_offset_bytes: int,
+    ) -> None:
+        """Patch the FAT BPB's heads/spt to match the VHD footer CHS.
+
+        After QEMU runs FORMAT C: /S inside DOS, the BPB heads/spt
+        reflect QEMU's SeaBIOS view of the disk (BIOS-canonical
+        16h/63s), not the geometry the real target controller will
+        expose. For non-MartyPC targets (86Box AUTO IDE / LARGE
+        translation) the footer is also 16/63, so this is a no-op.
+        For MartyPC Xebec targets the footer carries the controller's
+        native MFM CHS (e.g. 615×4×17 for Type 2), and patching the
+        BPB here is what stops the "two beeps + corrupt characters +
+        ROM-BASIC" boot failure.
+        """
+        bios_chs = self._read_vpc_bios_chs_geometry(vhd_path)
+        if bios_chs is None:
+            return
+        sectors_per_track, heads = bios_chs
+        if sectors_per_track <= 0 or heads <= 0:
+            return
+        with vhd_path.open("r+b") as handle:
+            handle.seek(partition_offset_bytes + 24)
+            handle.write(struct.pack("<HH", sectors_per_track, heads))
 
     def _ensure_sudo_ready(self) -> None:
         result = self.runner.run(["true"], sudo=True, check=False)

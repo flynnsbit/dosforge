@@ -33,20 +33,31 @@ class FloppySpec:
 
 
 class DiskFormat(str, Enum):
+    FAT12 = "fat12"
     FAT16 = "fat16"
     FAT32 = "fat32"
 
     @property
     def mkfs_bits(self) -> str:
-        return "16" if self is DiskFormat.FAT16 else "32"
+        if self is DiskFormat.FAT12:
+            return "12"
+        if self is DiskFormat.FAT16:
+            return "16"
+        return "32"
 
     @property
     def parted_fs_label(self) -> str:
-        return "fat16" if self is DiskFormat.FAT16 else "fat32"
+        # parted has no explicit "fat12" label; FAT12 partitions are created
+        # with the fat16 label and then re-tagged via _set_mbr_partition_type
+        # so DOS sees partition type 0x01 (FAT12 <32 MiB) instead of 0x04.
+        return "fat32" if self is DiskFormat.FAT32 else "fat16"
 
     @property
     def boot_code_offset(self) -> int:
-        return 62 if self is DiskFormat.FAT16 else 90
+        # FAT12 and FAT16 share the same DOS-3-style BPB layout, so the
+        # boot code begins at the same offset (62). FAT32 reserves more
+        # BPB space and starts boot code at offset 90.
+        return 90 if self is DiskFormat.FAT32 else 62
 
 
 class BootMode(str, Enum):
