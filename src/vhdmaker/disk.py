@@ -917,7 +917,13 @@ class DiskManager:
         ):
             # MartyPC targets have fixed geometry/size; we cannot grow them
             # to fit payload. Validation in _validate_martypc_*_request
-            # enforces the chosen drive type's size verbatim.
+            # enforces the chosen drive type's size verbatim, so the most
+            # helpful thing we can do is fail fast when the requested
+            # payload won't fit.
+            self._validate_custom_payload_fits_fixed_drive(
+                request=request,
+                custom_payload=custom_payload,
+            )
             return
 
         estimated_payload = self._estimate_payload_bytes_on_fat(
@@ -928,6 +934,69 @@ class DiskManager:
         required_size = self._round_up_to_alignment(estimated_payload + safety_buffer, 1024 * 1024)
         if required_size > request.size_bytes:
             request.size_bytes = required_size
+
+    def _validate_custom_payload_fits_fixed_drive(
+        self,
+        *,
+        request: CreateRequest,
+        custom_payload: Path,
+    ) -> None:
+        """Reject a custom payload that won't fit in a fixed-size MartyPC VHD.
+
+        Mirrors the behavior of generic VHDs (which auto-grow) and the
+        floppy IMG / mounted-FS payload copy (which uses statvfs to
+        verify free space). MartyPC drives have a fixed geometry from
+        the chosen drive type, so we estimate payload bytes here and
+        raise a clear ValidationError if it exceeds the data area.
+
+        The estimate uses an MS-DOS-3.3-style cluster size based on the
+        disk format (FAT12 → 1 sector/cluster; FAT16 <32 MiB → 4
+        sectors/cluster) and reserves a conservative overhead for the
+        FAT, root directory, system files (IO.SYS, MSDOS.SYS,
+        COMMAND.COM), and CONFIG.SYS / AUTOEXEC.BAT.
+        """
+        cluster_bytes = 512 if request.disk_format is DiskFormat.FAT12 else 2048
+        estimated_payload = self._estimate_payload_bytes_on_fat(
+            source_dir=custom_payload,
+            cluster_bytes=cluster_bytes,
+        )
+        # ~1 MiB covers FAT tables (~80 KiB on a 20 MiB FAT16 disk),
+        # root directory (16 KiB for 512 entries), the DOS system files
+        # (~80 KiB), CONFIG.SYS / AUTOEXEC.BAT, and a small slack. For
+        # the smallest preset (Xebec Type 1 = 10 MiB), this is still
+        # roughly 10% reserved — appropriate for a vintage DOS install.
+        overhead_bytes = 1 * 1024 * 1024
+        # FULL profile also stages DOS utilities (FDISK, FORMAT, EDIT,
+        # …). Conservatively reserve another 800 KiB on top so a
+        # custom payload doesn't elbow the tools off the disk.
+        if request.msdos_install_profile is MSDOSInstallProfile.FULL:
+            overhead_bytes += 800 * 1024
+        available_bytes = request.size_bytes - overhead_bytes
+        if estimated_payload > available_bytes:
+            drive_label = self._describe_machine_drive(request)
+            raise ValidationError(
+                f"Custom payload (~{estimated_payload // 1024} KiB on FAT) does not fit on the "
+                f"{drive_label} ({request.size_bytes // 1024} KiB total, "
+                f"~{available_bytes // 1024} KiB usable after DOS files / FAT overhead). "
+                "Pick a larger MartyPC drive type, or shrink the custom payload."
+            )
+
+    @staticmethod
+    def _describe_machine_drive(request: CreateRequest) -> str:
+        if request.machine_target is MachineTarget.MARTYPC_XEBEC:
+            spec = request.martypc_xebec_drive_type.spec
+            return (
+                f"MartyPC Xebec {request.martypc_xebec_drive_type.value} "
+                f"({spec.description})"
+            )
+        if request.machine_target in (
+            MachineTarget.MARTYPC_XTIDE,
+            MachineTarget.MARTYPC_JRIDE,
+        ):
+            fmt = request.martypc_at_drive_type
+            label = "XT-IDE" if request.machine_target is MachineTarget.MARTYPC_XTIDE else "JR-IDE"
+            return f"MartyPC {label} {fmt.slug} ({fmt.description})"
+        return "selected MartyPC drive type"
 
     @staticmethod
     def _martypc_locked_geometry(

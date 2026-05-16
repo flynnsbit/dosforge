@@ -1181,3 +1181,98 @@ def test_stage_legacy_dos_full_profile_payload_full_copies_tools_and_startup(
     # them with system+hidden attributes.
     assert not any(call[-1] == "::IO.SYS" for call in calls), calls
     assert not any(call[-1] == "::COMMAND.COM" for call in calls), calls
+
+
+# --- Custom payload fit check on fixed-size MartyPC drives ---
+
+
+def _populate(dir_: Path, files: dict[str, int]) -> None:
+    dir_.mkdir(parents=True, exist_ok=True)
+    for name, size in files.items():
+        (dir_ / name).write_bytes(b"\x00" * size)
+
+
+def test_apply_custom_payload_fits_small_payload_on_xebec_type2(tmp_path: Path) -> None:
+    manager = DiskManager()
+    payload = tmp_path / "payload"
+    _populate(payload, {"a.exe": 64 * 1024, "b.txt": 1024})
+    request = CreateRequest(
+        path=tmp_path / "x.vhd",
+        size_bytes=20 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        custom_payload_path=payload,
+    )
+    # Force MartyPC size as validator would.
+    request.size_bytes = MartyPCXebecDriveType.TYPE2.size_bytes
+    # Should not raise.
+    manager._apply_custom_payload_autosizing(request)
+    # Size must be unchanged (MartyPC drives are fixed).
+    assert request.size_bytes == MartyPCXebecDriveType.TYPE2.size_bytes
+
+
+def test_apply_custom_payload_rejects_oversized_on_xebec_type1(tmp_path: Path) -> None:
+    manager = DiskManager()
+    payload = tmp_path / "payload"
+    # Type 1 = 10 MiB (FAT12). Build a payload that clearly won't fit.
+    _populate(payload, {"big.bin": 12 * 1024 * 1024})
+    request = CreateRequest(
+        path=tmp_path / "x.vhd",
+        size_bytes=MartyPCXebecDriveType.TYPE1.size_bytes,
+        disk_format=DiskFormat.FAT12,
+        boot_mode=BootMode.MSDOS33,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE1,
+        custom_payload_path=payload,
+    )
+    with pytest.raises(ValidationError, match="does not fit"):
+        manager._apply_custom_payload_autosizing(request)
+
+
+def test_apply_custom_payload_full_profile_reserves_more_overhead(tmp_path: Path) -> None:
+    """FULL profile reserves an extra ~800 KiB so DOS tools have room."""
+    manager = DiskManager()
+    payload = tmp_path / "payload"
+    # Type 2 = ~20.4 MiB. Leave just enough so MINIMAL would pass but
+    # FULL won't (within the 800 KiB FULL-only headroom).
+    type2_size = MartyPCXebecDriveType.TYPE2.size_bytes
+    # Use a payload that's ~size - 1.4 MiB → fits MINIMAL but not FULL.
+    payload_size = type2_size - (1 * 1024 * 1024 + 600 * 1024)
+    _populate(payload, {"big.bin": payload_size})
+    common = dict(
+        path=tmp_path / "x.vhd",
+        size_bytes=type2_size,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        custom_payload_path=payload,
+    )
+    from vhdmaker.models import MSDOSInstallProfile
+    minimal_req = CreateRequest(**common, msdos_install_profile=MSDOSInstallProfile.MINIMAL)
+    full_req = CreateRequest(**common, msdos_install_profile=MSDOSInstallProfile.FULL)
+    # MINIMAL passes
+    manager._apply_custom_payload_autosizing(minimal_req)
+    # FULL rejects with a clear error
+    with pytest.raises(ValidationError, match="does not fit"):
+        manager._apply_custom_payload_autosizing(full_req)
+
+
+def test_apply_custom_payload_generic_still_autogrows(tmp_path: Path) -> None:
+    """Confirm the MartyPC fit-check doesn't regress the generic path."""
+    manager = DiskManager()
+    payload = tmp_path / "payload"
+    _populate(payload, {"big.bin": 100 * 1024 * 1024})
+    request = CreateRequest(
+        path=tmp_path / "x.vhd",
+        size_bytes=64 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS622,
+        machine_target=MachineTarget.GENERIC,
+        custom_payload_path=payload,
+    )
+    manager._apply_custom_payload_autosizing(request)
+    # Generic VHD should have grown to fit the payload.
+    assert request.size_bytes > 100 * 1024 * 1024
