@@ -1,54 +1,36 @@
-"""External command dependency checks."""
+"""External command dependency checks.
+
+The list of required commands is computed by the active platform
+backend (see :mod:`dosforge._platform`). The module-level
+``REQUIRED_COMMANDS*`` / ``BOOT_COMMANDS`` / ``LEGACY_DOS_QEMU_COMMANDS``
+tuples are kept as Linux-only constants for backward compatibility
+with existing tests; new code should call
+:func:`assert_dependencies` (which dispatches through the backend).
+"""
 
 from __future__ import annotations
 
 import shutil
 from collections.abc import Iterable
 
+from ._platform import get_backend
+from ._platform.linux import (
+    _BOOT_COMMANDS as _LINUX_BOOT_COMMANDS,
+    _LEGACY_DOS_QEMU_COMMANDS as _LINUX_LEGACY_DOS_QEMU_COMMANDS,
+    _REQUIRED_COMMANDS_BASE as _LINUX_REQUIRED_COMMANDS_BASE,
+    _REQUIRED_COMMANDS_VHD as _LINUX_REQUIRED_COMMANDS_VHD,
+)
 from .errors import DependencyError
 from .models import BootMode, FreeDOSSource, MediaType
 
-REQUIRED_COMMANDS_BASE: tuple[str, ...] = (
-    "mkfs.fat",
-    "mount",
-    "umount",
-    "sudo",
-    "xdg-open",
-)
-
-REQUIRED_COMMANDS_VHD: tuple[str, ...] = (
-    "qemu-img",
-    "qemu-nbd",
-    "parted",
-    "partprobe",
-)
+# Legacy module-level constants. These mirror what the v0.2.x build
+# exposed; tests and CLI ``dependency-check`` callers still use them.
+# The backend produces a platform-appropriate effective list.
+REQUIRED_COMMANDS_BASE: tuple[str, ...] = _LINUX_REQUIRED_COMMANDS_BASE
+REQUIRED_COMMANDS_VHD: tuple[str, ...] = _LINUX_REQUIRED_COMMANDS_VHD
 REQUIRED_COMMANDS: tuple[str, ...] = (*REQUIRED_COMMANDS_BASE, *REQUIRED_COMMANDS_VHD)
-
-BOOT_COMMANDS: tuple[str, ...] = (
-    "dd",
-    "mcopy",
-    "mattrib",
-)
-
-# Boot modes that drive an emulated DOS install to produce an authentic
-# boot sector via the DOS's own SYS.COM. Currently compaq331 + msdos33
-# (their boot-sector templates are stored inside FORMAT.COM/SYS.COM as a
-# floppy layout that gets patched at runtime; offline extraction is
-# unreliable).
-LEGACY_DOS_QEMU_COMMANDS: tuple[str, ...] = (
-    "qemu-system-i386",
-    "mformat",
-    "mcopy",
-    "mattrib",
-    "mtype",
-    "mdir",
-    "mdel",
-)
-
-# Boot modes that use the LEGACY_DOS_QEMU_COMMANDS install path. Update
-# this set when adding a new legacy DOS boot mode that uses the same
-# QEMU-driven SYS approach.
-_LEGACY_DOS_QEMU_BOOT_MODES = frozenset({BootMode.COMPAQ331, BootMode.MSDOS33})
+BOOT_COMMANDS: tuple[str, ...] = _LINUX_BOOT_COMMANDS
+LEGACY_DOS_QEMU_COMMANDS: tuple[str, ...] = _LINUX_LEGACY_DOS_QEMU_COMMANDS
 
 
 def find_missing(commands: Iterable[str]) -> list[str]:
@@ -61,16 +43,13 @@ def assert_dependencies(
     boot_mode: BootMode = BootMode.NONE,
     freedos_source: FreeDOSSource = FreeDOSSource.LOCAL,
 ) -> None:
-    missing = find_missing(REQUIRED_COMMANDS_BASE)
-    if media_type is MediaType.VHD:
-        missing.extend(find_missing(REQUIRED_COMMANDS_VHD))
-    if boot_mode is not BootMode.NONE:
-        missing.extend(find_missing(BOOT_COMMANDS))
-    if boot_mode is BootMode.FREEDOS and freedos_source is FreeDOSSource.AUTO:
-        missing.extend(find_missing(("mcopy",)))
-    if boot_mode in _LEGACY_DOS_QEMU_BOOT_MODES and media_type is MediaType.VHD:
-        missing.extend(find_missing(LEGACY_DOS_QEMU_COMMANDS))
-    missing = sorted(set(missing))
+    backend = get_backend()
+    required = backend.required_commands(
+        media_type=media_type,
+        boot_mode=boot_mode,
+        freedos_source=freedos_source,
+    )
+    missing = find_missing(required)
     if missing:
         formatted = ", ".join(missing)
         raise DependencyError(f"Missing required tools: {formatted}")
