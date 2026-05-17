@@ -12,24 +12,21 @@ with optional boot/system file staging for FreeDOS and legacy MS-DOS / PC-DOS / 
 ## Demo
 
 <!--
-  The video below uses GitHub's raw-file URL so it renders as an inline
-  HTML5 player on the repo landing page. Markdown viewers that don't
-  render HTML (e.g. plain README mirrors) will fall back to the link.
+  GitHub's README sanitizer strips <video> tags whose src points at
+  raw.githubusercontent.com. We host the MP4 as a v0.2.1 release
+  asset (whitelisted) and embed it via <video> below. The file is
+  also tracked under assets/demo/ in the repo for offline use.
 -->
 
-<p align="center">
-  <video
-    src="https://github.com/flynnsbit/dosforge/raw/main/assets/demo/dosforge-demo.mp4"
-    controls
-    muted
-    playsinline
-    width="720">
-    Your viewer can't embed video — watch the
-    <a href="https://github.com/flynnsbit/dosforge/raw/main/assets/demo/dosforge-demo.mp4">demo video here</a>.
-  </video>
-</p>
+https://github.com/flynnsbit/dosforge/releases/download/v0.2.1/dosforge-demo.mp4
 
-> Can't see the player above? [Download / open the demo video directly](assets/demo/dosforge-demo.mp4).
+<details>
+<summary>Player not loading? Click here to play / download directly.</summary>
+
+- **Inline (release asset):** <https://github.com/flynnsbit/dosforge/releases/download/v0.2.1/dosforge-demo.mp4>
+- **From the repo tree:** [`assets/demo/dosforge-demo.mp4`](assets/demo/dosforge-demo.mp4)
+
+</details>
 
 ## Highlights
 
