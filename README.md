@@ -9,6 +9,28 @@ It can create, mount, browse, and unmount:
 
 with optional boot/system file staging for FreeDOS and legacy MS-DOS / PC-DOS / Compaq DOS families.
 
+## Demo
+
+<!--
+  The video below uses GitHub's raw-file URL so it renders as an inline
+  HTML5 player on the repo landing page. Markdown viewers that don't
+  render HTML (e.g. plain README mirrors) will fall back to the link.
+-->
+
+<p align="center">
+  <video
+    src="https://github.com/flynnsbit/dosforge/raw/main/assets/demo/dosforge-demo.mp4"
+    controls
+    muted
+    playsinline
+    width="720">
+    Your viewer can't embed video — watch the
+    <a href="https://github.com/flynnsbit/dosforge/raw/main/assets/demo/dosforge-demo.mp4">demo video here</a>.
+  </video>
+</p>
+
+> Can't see the player above? [Download / open the demo video directly](assets/demo/dosforge-demo.mp4).
+
 ## Highlights
 
 - Dynamic TUI create flow with top-level **Media type** selector (**VHD** default, **IMG** optional)
