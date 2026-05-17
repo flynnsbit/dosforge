@@ -526,7 +526,9 @@ def test_normalize_vhd_size_for_msdos33_caps_at_32mib(tmp_path: Path) -> None:
     assert aligned < 32 * 1024 * 1024
 
 
-def test_normalize_vhd_size_for_msdos331_allows_above_32mib(tmp_path: Path) -> None:
+def test_normalize_vhd_size_for_msdos331_caps_at_32mib(tmp_path: Path) -> None:
+    """Microsoft MS-DOS 3.31 (msdos331) is capped at 32 MiB — only the
+    Compaq OEM kernel (compaq331) handles FAT16B above that."""
     manager = DiskManager()
     request = CreateRequest(
         path=tmp_path / "out.vhd",
@@ -535,10 +537,34 @@ def test_normalize_vhd_size_for_msdos331_allows_above_32mib(tmp_path: Path) -> N
         boot_mode=BootMode.MSDOS331,
     )
     aligned = manager._normalize_vhd_size_for_chs(request)
-    # FAT16B (DOS 3.31 / Compaq) handles total_sectors_32, so >32 MiB is fine.
-    # 128 MiB rounds up to 65,011,712 bytes (~62 MiB)? No, 128 MiB = 134217728
-    # 134217728 / 516096 = 260.07 -> 261 cyl -> 261 * 516096 = 134,701,056 B
-    assert aligned >= 128 * 1024 * 1024
+    # Asked for 128 MiB, should be clamped under the 32 MiB cap.
+    assert aligned <= 32 * 1024 * 1024
+
+
+def test_validate_rejects_msdos331_above_32mib(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=(32 * 1024 * 1024) + 1,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS331,
+        boot_assets_path=Path("/tmp/msdos331"),
+    )
+    with pytest.raises(ValidationError, match="msdos331.*32 MiB"):
+        manager._validate_create_request(request)
+
+
+def test_validate_rejects_compaq331_above_504mib(tmp_path: Path) -> None:
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=(504 * 1024 * 1024) + 1,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.COMPAQ331,
+        boot_assets_path=Path("/tmp/compaq331"),
+    )
+    with pytest.raises(ValidationError, match="compaq331.*504 MiB"):
+        manager._validate_create_request(request)
 
 
 def test_normalize_vhd_size_for_compaq331_allows_above_32mib(tmp_path: Path) -> None:

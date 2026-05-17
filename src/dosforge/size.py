@@ -34,6 +34,12 @@ FAT32_MIN_BYTES: Final[int] = 64 * 1024**2
 FAT32_MAX_BYTES: Final[int] = 2 * 1024**4
 IBM_DOS33_MAX_BYTES: Final[int] = 32 * 1024**2
 IBM_DOS50_MAX_BYTES: Final[int] = 504 * 1024**2
+# Microsoft-branded MS-DOS 3.31 is capped at 32 MiB (FAT16 short,
+# partition type 0x04). The Compaq OEM version of DOS 3.31 lifts the
+# cap to ~504 MiB with FAT16B (partition type 0x06) — see
+# COMPAQ331_MAX_BYTES.
+MSDOS331_MAX_BYTES: Final[int] = 32 * 1024**2
+COMPAQ331_MAX_BYTES: Final[int] = 504 * 1024**2
 FLOPPY_IMG_SIZES_BYTES: Final[set[int]] = {floppy_type.size_bytes for floppy_type in FloppyType}
 
 # A "cylinder" in the BIOS-friendly canonical ATA geometry dosforge writes

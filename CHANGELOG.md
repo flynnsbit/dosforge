@@ -6,6 +6,32 @@ The format is loosely based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] — 2026-05-17
+
+### Fixed
+
+- **`msdos331` boot hang at "Verifying DMI pool data"**: the
+  static-boot-template install path produced an unbootable VHD
+  because the DOS 3.31 boot loader couldn't navigate the
+  `mkfs.fat` BPB (reserved_sectors=4 / 8). Routed `msdos331`
+  through the same QEMU-driven `SYS C:` install pipeline as
+  `compaq331` so the boot sector is authentic.
+
+### Changed
+
+- **`msdos331` is now capped at 32 MiB** (FAT16 short, MBR
+  partition type `0x04`) to match what Microsoft's MS-DOS 3.31
+  kernel actually addresses. Only the Compaq OEM kernel
+  (`compaq331`) supports FAT16B up to ~504 MiB. Both modes share
+  the same Compaq DOS 3.31 install media in
+  `dosassets/msdos331/` or `dosassets/compaq331/`.
+- **`compaq331` is now explicitly capped at 504 MiB** with a
+  clear validation error when exceeded (was previously silently
+  allowed up to FAT16's 2 GiB limit, which doesn't actually
+  boot).
+- New constants `MSDOS331_MAX_BYTES` and `COMPAQ331_MAX_BYTES`
+  in `dosforge.size`.
+
 ## [0.1.0] — 2026-05-16
 
 First public release. The tool was previously developed under the name

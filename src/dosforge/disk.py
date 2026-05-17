@@ -53,6 +53,8 @@ from .size import (
     FAT32_MIN_BYTES,
     IBM_DOS33_MAX_BYTES,
     IBM_DOS50_MAX_BYTES,
+    MSDOS331_MAX_BYTES,
+    COMPAQ331_MAX_BYTES,
     align_size_for_normal_chs,
     normalize_label,
     validate_size_for_floppy,
@@ -82,6 +84,20 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
     BootMode.COMPAQ331: _LegacyDosInstallDescriptor(
         label="Compaq DOS 3.31",
         asset_fallback_dirs=("compaq331", "msdos331"),
+        preferred_image_names=("STARTUP.IMG", "STARTUP.IMA"),
+        system_file_marker="IBMBIO.COM",
+        profile_builder=compaq331_profile,
+    ),
+    # MS-DOS 3.31 (msdos331) is functionally identical to Compaq DOS 3.31
+    # — the install media most users have under ``dosassets/msdos331/``
+    # is the Compaq OEM release. Use the same QEMU-driven SYS install
+    # flow so the resulting boot sector is authentic (instead of pulling
+    # a static template out of SYS.COM and grafting it onto an mkfs.fat
+    # BPB, which DOS 3.31 rejects with a silent boot hang at "Verifying
+    # DMI pool data").
+    BootMode.MSDOS331: _LegacyDosInstallDescriptor(
+        label="MS-DOS 3.31",
+        asset_fallback_dirs=("msdos331", "compaq331"),
         preferred_image_names=("STARTUP.IMG", "STARTUP.IMA"),
         system_file_marker="IBMBIO.COM",
         profile_builder=compaq331_profile,
@@ -151,9 +167,12 @@ def _chs_to_partition_table_bytes(*, cyl: int, head: int, sector: int) -> bytes:
 def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
     """Return True for boot modes whose install step is driven by QEMU.
 
-    Currently three flows go through ``_install_legacy_dos_via_qemu``:
+    Currently four flows go through ``_install_legacy_dos_via_qemu``:
 
     - ``BootMode.COMPAQ331`` — Compaq DOS 3.31 (FAT16B + SYS C:).
+    - ``BootMode.MSDOS331`` — MS-DOS 3.31 reuses the Compaq pipeline
+      (same Compaq OEM install media; the static-template path can't
+      produce a working DOS-3.31 boot sector on an mkfs.fat BPB).
     - ``BootMode.MSDOS33`` — MS-DOS 3.30 (FORMAT C: /S from scratch).
     - ``BootMode.IBM8088`` with ``ibm_dos_version == DOS33`` — same
       MS-DOS 3.30 install media + the same FORMAT-from-scratch flow.
@@ -165,7 +184,11 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
     ``make_partition_bootable`` flow because their static template is
     known to boot.
     """
-    if request.boot_mode in (BootMode.COMPAQ331, BootMode.MSDOS33):
+    if request.boot_mode in (
+        BootMode.COMPAQ331,
+        BootMode.MSDOS331,
+        BootMode.MSDOS33,
+    ):
         return True
     if (
         request.boot_mode is BootMode.IBM8088
@@ -333,7 +356,7 @@ class DiskManager:
             if _uses_legacy_dos_qemu_install(request):
                 self.boot_installer.write_mbr_only(disk_device=nbd_device)
                 if (
-                    request.boot_mode is BootMode.COMPAQ331
+                    request.boot_mode in (BootMode.COMPAQ331, BootMode.MSDOS331)
                     and fat_bios_chs is not None
                 ):
                     self.boot_installer.patch_fat16_bpb_geometry(
@@ -712,8 +735,8 @@ class DiskManager:
         # BPB.total_sectors_16 (uint16, max 65535 sectors ~= 31.99 MiB). The
         # post-CHS-alignment size effectively caps at IBM_DOS33_MAX_BYTES, but
         # raise here too so the user sees a clear "requested too big" error
-        # instead of a silent shrink. msdos331 / compaq331 / pcdos use FAT16B
-        # and have no such cap (they read total_sectors_32 properly).
+        # instead of a silent shrink. compaq331 uses Compaq's FAT16B-capable
+        # kernel and stretches the cap to ~504 MiB.
         if (
             request.boot_mode is BootMode.MSDOS33
             and request.size_bytes > IBM_DOS33_MAX_BYTES
@@ -721,7 +744,32 @@ class DiskManager:
             raise ValidationError(
                 "MS-DOS 3.30 (msdos33) only supports FAT16 partitions up to 32 MiB "
                 "because its boot loader and kernel read total_sectors_16 (uint16). "
-                "Use msdos331 (Compaq / FAT16B) or msdos622 for larger partitions."
+                "Use compaq331 (Compaq DOS 3.31 / FAT16B) or msdos622 for larger partitions."
+            )
+        # Microsoft MS-DOS 3.31 (msdos331) has the same 32 MiB cap as
+        # DOS 3.30 — Microsoft never shipped a true FAT16B kernel, only
+        # Compaq did. The install media in dosassets/msdos331/ is the
+        # Compaq OEM release, so we still drive it through the same
+        # SYS C: pipeline, but the size is artificially capped at
+        # 32 MiB to mirror what the Microsoft kernel can actually
+        # address.
+        if (
+            request.boot_mode is BootMode.MSDOS331
+            and request.size_bytes > MSDOS331_MAX_BYTES
+        ):
+            raise ValidationError(
+                "MS-DOS 3.31 (msdos331) is capped at 32 MiB (FAT16 short). "
+                "Use compaq331 for Compaq DOS 3.31's FAT16B kernel which "
+                f"goes up to ~{COMPAQ331_MAX_BYTES // 1024 // 1024} MiB."
+            )
+        if (
+            request.boot_mode is BootMode.COMPAQ331
+            and request.size_bytes > COMPAQ331_MAX_BYTES
+        ):
+            raise ValidationError(
+                f"Compaq DOS 3.31 (compaq331) only supports FAT16B partitions up to "
+                f"{COMPAQ331_MAX_BYTES // 1024 // 1024} MiB. Use msdos5 / msdos622 "
+                "for larger partitions."
             )
         legacy_fat16_modes = {
             BootMode.MSDOS331,
@@ -1122,13 +1170,16 @@ class DiskManager:
                 max_bytes = min(max_bytes, ibm_max)
             # MS-DOS 3.30 (msdos33) predates FAT16B and only reads
             # BPB.total_sectors_16 (uint16, max 65535 sectors ~= 31.99 MiB).
-            # Anything larger trips the same boot failure we saw with
-            # msdos331 (BPB.total16 wraps to 0, kernel can't locate the FAT).
-            # FAT16B (DOS 3.31 / Compaq 3.31 / PC-DOS 4.0+) handles
-            # total_sectors_32 properly, so those modes stay at FAT16's
-            # 2 GiB cap.
+            # Anything larger trips the same boot failure (BPB.total16
+            # wraps to 0, kernel can't locate the FAT). Microsoft MS-DOS
+            # 3.31 (msdos331) has the same 32 MiB cap — only the
+            # Compaq OEM kernel (compaq331) handles FAT16B up to ~504 MiB.
             if request.boot_mode is BootMode.MSDOS33:
                 max_bytes = min(max_bytes, IBM_DOS33_MAX_BYTES)
+            if request.boot_mode is BootMode.MSDOS331:
+                max_bytes = min(max_bytes, MSDOS331_MAX_BYTES)
+            if request.boot_mode is BootMode.COMPAQ331:
+                max_bytes = min(max_bytes, COMPAQ331_MAX_BYTES)
         else:
             min_bytes = FAT32_MIN_BYTES
             max_bytes = FAT32_MAX_BYTES
@@ -1819,11 +1870,21 @@ class DiskManager:
             self._zero_partition_head(partition_device, bytes_to_zero=2 * 1024 * 1024)
             return partition_device
 
-        if boot_mode is BootMode.COMPAQ331:
-            # Compaq DOS 3.31 SYS.COM rejects mkfs.fat's BPB layout
+        if boot_mode in (BootMode.COMPAQ331, BootMode.MSDOS331):
+            # Compaq / MS-DOS 3.31 SYS.COM rejects mkfs.fat's BPB layout
             # (reserved_sec_count=8 in particular) with "No room for system
-            # on destination disk". mformat defaults to a DOS-3-compatible
-            # layout (reserved=1) that SYS accepts.
+            # on destination disk", and the resulting hard-disk boot
+            # sector hangs at "Verifying DMI pool data" because the
+            # DOS-3.31 loader can't navigate the unfamiliar BPB. mformat
+            # defaults to a DOS-3-compatible layout (reserved=1) that
+            # SYS accepts and that DOS-3.31's boot loader understands.
+            #
+            # Microsoft MS-DOS 3.31 (msdos331) is capped at 32 MiB so it
+            # gets the FAT16-short partition type (0x04). Compaq DOS 3.31
+            # (compaq331) supports FAT16B up to ~504 MiB and keeps the
+            # parted-assigned 0x06 partition type.
+            if boot_mode is BootMode.MSDOS331:
+                self._set_mbr_partition_type(nbd_device, partition_index=1, fs_type=0x04)
             mformat_cmd = ["mformat", "-i", partition_device]
             if label:
                 mformat_cmd += ["-v", label]
