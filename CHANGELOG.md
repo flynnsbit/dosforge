@@ -6,6 +6,53 @@ The format is loosely based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] — 2026-05-17
+
+### Changed
+
+- **Slimmed the bundled FreeDOS payload from 34 MB / 1,399 files
+  down to 7 MB / 95 files.** Drops the FreeDOS userspace
+  subdirectories that very few users actually need on a DOS-box
+  build:
+
+  - `FDOS/APPS` (Dos Navigator 2)
+  - `FDOS/APPINFO` (FDIMPLES package metadata)
+  - `FDOS/DEVEL` (BWBasic interpreter)
+  - `FDOS/DOC` (per-tool documentation)
+  - `FDOS/HELP` (`help <command>` database)
+  - `FDOS/NET` (curl / links / ping / gopherus / terminal — most
+    need a DOS packet driver which emulators rarely have set up)
+  - `FDOS/NLS` (national-language CPI files)
+  - `FDOS/SOUND` (DOSMID, OpenCP, etc.)
+  - `FDOS/LINKS` (empty)
+
+  Kept: all root boot files + the entire `FDOS/BIN/` directory
+  (84 files — 36 EXE + 31 COM + 10 SYS + a small support set,
+  including FREECOM, EDIT, EDLIN, ATTRIB, MEM, MODE, SYS, FORMAT,
+  XCOPY, FDXMS, …). No source code is bundled.
+
+  Users who want the full FreeDOS userland can pass
+  `--freedos-source auto` (downloads from www.ibiblio.org on
+  demand) or `--boot-assets-path /path/to/freedos-1.4/` to point
+  at an external tree.
+
+### Removed (git history)
+
+- The same nine `FDOS/<subdir>` paths were also purged from every
+  reachable commit via `git filter-repo`. This includes the
+  duplicate copies under `releases/v0.1.0/` through
+  `releases/v0.2.1/dosassets/freedos/`. The repo's pack file is
+  ~4 MB smaller and clones download fewer redundant blobs.
+- **Force-push notice:** anyone with an existing local clone
+  needs to either:
+  - re-clone the repo, or
+  - run `git fetch --all && git reset --hard origin/main`
+    (this will discard any local commits on `main`).
+  The v0.2.0 and v0.2.1 tags were re-tagged after the rewrite
+  and now point at the post-rewrite commits. GitHub Release
+  assets are keyed by release-ID (not tag-SHA), so all v0.2.0 /
+  v0.2.1 downloads remain intact and unchanged.
+
 ## [0.2.1] — 2026-05-17
 
 ### Fixed

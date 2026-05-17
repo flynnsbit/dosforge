@@ -33,6 +33,7 @@ ships, the contract above becomes binding.
 
 | Version | Date       | Notes                                                                                                       |
 |---------|------------|-------------------------------------------------------------------------------------------------------------|
+| 0.2.2   | 2026-05-17 | Slimmed bundled FreeDOS payload from 34 MB to 7 MB (root + `FDOS/BIN/` only); same trim applied to git history. |
 | 0.2.1   | 2026-05-17 | Fixes leftover "VHD Maker" / "VHDMaker" strings in the TUI header and zenity sudo prompt (now "DosForge").  |
 | 0.2.0   | 2026-05-17 | Adds Phoenix + AMI classic AT BIOS HDD type presets (Types 1–45) with new `--bios-drive-type` flag and TUI selector. |
 | 0.1.2   | 2026-05-17 | Accepts `Disk1.img` (Microsoft DOS 3.31 archive) for `msdos331`; system-file verification accepts either flavor. |
