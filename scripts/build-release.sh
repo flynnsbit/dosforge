@@ -90,6 +90,23 @@ echo "    Copying install.sh + README"
 cp release-templates/install.sh "$release_dir/install.sh"
 chmod +x "$release_dir/install.sh"
 
+# 4b) Desktop integration assets (launcher wrapper, icons, .desktop
+#     template). Bundled under desktop/ in the release. install.sh
+#     picks them up from there and copies them into the right XDG
+#     locations on the install target.
+if [ -d assets/desktop ] && [ -d assets/icons ]; then
+  echo "    Staging desktop/ (launcher + icons + .desktop template)"
+  mkdir -p "$release_dir/desktop/icons"
+  cp assets/desktop/dosforge.desktop "$release_dir/desktop/dosforge.desktop"
+  cp assets/desktop/dosforge-launcher "$release_dir/desktop/dosforge-launcher"
+  chmod +x "$release_dir/desktop/dosforge-launcher"
+  cp assets/icons/dosforge.svg "$release_dir/desktop/icons/dosforge.svg"
+  for size in 16 24 32 48 64 128 256; do
+    src="assets/icons/dosforge-${size}.png"
+    [ -f "$src" ] && cp "$src" "$release_dir/desktop/icons/dosforge-${size}.png"
+  done
+fi
+
 python3 - "$release_dir/README.md" "$version" <<'PY'
 import sys
 from pathlib import Path

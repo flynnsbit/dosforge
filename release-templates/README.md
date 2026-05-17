@@ -10,8 +10,9 @@ install and run the tool on a fresh Linux system.
 |---------------------------------------------|-------------------------------------------------------------------------|
 | `dosforge-@@VERSION@@-py3-none-any.whl`     | Pure-Python wheel (preferred install artifact)                          |
 | `dosforge-@@VERSION@@.tar.gz`               | Source distribution (for building from source)                          |
-| `install.sh`                                | One-shot installer: system deps + wheel + `dosassets/` staging          |
+| `install.sh`                                | One-shot installer: system deps + wheel + `dosassets/` + desktop entry  |
 | `dosassets/`                                | DOS boot-asset tree (FreeDOS payload + per-mode `readme.txt`)           |
+| `desktop/`                                  | Launcher wrapper, icon set, `.desktop` template (walker / app menu)     |
 | `SHA256SUMS`                                | Integrity manifest for every file above                                 |
 | `README.md`                                 | This file                                                               |
 
@@ -38,10 +39,17 @@ The installer:
    `~/.local/share/dosforge/dosassets/` so the tool's bare-name
    boot-asset lookups (e.g. `--boot-assets-path msdos33`) work even
    when you're not inside the release directory.
+5. Installs the **dosforge launcher integration** — a small
+   `dosforge-launcher` wrapper to `~/.local/bin/`, the SVG + PNG
+   icon set to `~/.local/share/icons/hicolor/`, and a `.desktop`
+   entry to `~/.local/share/applications/` — so dosforge shows up
+   in walker (Omarchy) or any other XDG-aware app menu with the
+   forge / hammer-strike icon.
 
 Pass `--system` to install dosforge system-wide (`pipx --global` or
 sudo + PIPX_HOME=/opt). Pass `--no-dosassets` to skip step 4 if you're
-managing your own dosassets/ tree.
+managing your own dosassets/ tree. Pass `--no-desktop` to skip step 5
+if you don't want the launcher integration.
 
 ## Manual install
 

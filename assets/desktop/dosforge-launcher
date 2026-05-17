@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#
+# dosforge-launcher -- desktop / walker launcher for dosforge.
+#
+# The dosforge CLI is already on PATH (installed by `pip install -e .`
+# into mise's Python). This wrapper exists because XDG .desktop Exec
+# lines can't contain shell expansion, conditionals, or quoted
+# variables. The wrapper:
+#
+#   1. Chooses a sane working directory: the dosforge project (where
+#      ./dosassets/ lives so bare-name boot-asset lookups work), with
+#      $HOME as a fallback.
+#   2. Re-exec's dosforge inside the user's preferred terminal via
+#      uwsm-app + xdg-terminal-exec (Omarchy's standard pattern).
+#
+# Used by ~/.local/share/applications/dosforge.desktop.
+
+set -e
+
+for candidate in \
+    "$HOME/Projects/dosforge" \
+    "$HOME/dosforge" \
+    "$PWD"; do
+    if [ -d "$candidate" ] && [ -d "$candidate/dosassets" ]; then
+        workdir="$candidate"
+        break
+    fi
+done
+: "${workdir:=$HOME}"
+
+cd "$workdir"
+exec uwsm-app -- xdg-terminal-exec --working-directory="$workdir" dosforge "$@"

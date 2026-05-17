@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  dosforge icon (v5 — hi-res)
+  ===========================
+  High-resolution vector illustration of a blacksmith's hammer
+  striking white-hot iron on an anvil. The composition reads as
+  one cohesive moment of impact:
+
+    * Anvil at the bottom (steel gradient body, lit top face with
+      a glowing heat reflection).
+    * Hot iron billet resting on the anvil face (small white-hot
+      core).
+    * Hammer head plunging down from above (steel head + wooden
+      haft, with motion-streak duplicate behind it).
+    * Huge fire bloom radiating outward from the impact point
+      (8-stop radial: white-hot through every fire colour to deep
+      ember-red and finally transparent).
+    * Sparks erupting in all directions — small bright circles plus
+      curved streak tails that fade behind them.
+    * Background: deep blue forge night with a darker vignette
+      and a faint warm glow under the anvil.
+
+  Designed for crisp rendering at 16/24/32/48/64/128/256 px via
+  rsvg-convert. No pixel-grid alignment; smooth gradients + curves
+  throughout.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+
+  <defs>
+    <!-- Background: warm-center, dark-corners forge night. -->
+    <radialGradient id="bg" cx="50%" cy="55%" r="78%">
+      <stop offset="0%"   stop-color="#2a2168"/>
+      <stop offset="55%"  stop-color="#10094a"/>
+      <stop offset="100%" stop-color="#02011a"/>
+    </radialGradient>
+
+    <!-- Fire bloom: white-hot core through every fire colour to
+         a transparent edge. Used by both the big bloom and the
+         smaller hot-iron piece. -->
+    <radialGradient id="fire" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="12%"  stop-color="#FFFAD9" stop-opacity="1"/>
+      <stop offset="24%"  stop-color="#FFE56B" stop-opacity="1"/>
+      <stop offset="40%"  stop-color="#FFB300" stop-opacity="0.95"/>
+      <stop offset="55%"  stop-color="#FF7A1A" stop-opacity="0.9"/>
+      <stop offset="70%"  stop-color="#EE3A00" stop-opacity="0.78"/>
+      <stop offset="85%"  stop-color="#9F0D0D" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#3B0202" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Brighter inner core for the hottest part of the impact. -->
+    <radialGradient id="fireCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="40%"  stop-color="#FFF3A3" stop-opacity="1"/>
+      <stop offset="80%"  stop-color="#FFD744" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#FFB300" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Anvil steel: highlight on top, mid-tone, deep shadow underneath. -->
+    <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#e8edf4"/>
+      <stop offset="22%"  stop-color="#a8b1bf"/>
+      <stop offset="55%"  stop-color="#5b6573"/>
+      <stop offset="100%" stop-color="#1a2030"/>
+    </linearGradient>
+
+    <!-- Anvil top face: cool steel with a warm hot-iron reflection
+         baked in across the centre. -->
+    <linearGradient id="topface" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="40%"  stop-color="#d3dae3"/>
+      <stop offset="100%" stop-color="#3e4654"/>
+    </linearGradient>
+
+    <!-- Hammer head: dark forged steel. -->
+    <linearGradient id="hammer" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#52606d"/>
+      <stop offset="50%"  stop-color="#323a44"/>
+      <stop offset="100%" stop-color="#0c1118"/>
+    </linearGradient>
+
+    <!-- Hammer haft: warm wood grain. -->
+    <linearGradient id="haft" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#7a4a1f"/>
+      <stop offset="50%"  stop-color="#b87333"/>
+      <stop offset="100%" stop-color="#5a3614"/>
+    </linearGradient>
+
+    <!-- Soft bloom blur applied to fire layers + sparks. -->
+    <filter id="bloom" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Stronger bloom for the central impact. -->
+    <filter id="bigBloom" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Drop shadow for the anvil so it lifts off the background. -->
+    <filter id="anvilShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="4"/>
+      <feOffset dx="0" dy="6" result="off"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.6"/></feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Spark streak template path (reused via <use>). -->
+    <symbol id="spark" overflow="visible">
+      <circle r="2.5" fill="#FFFFFF" filter="url(#bloom)"/>
+    </symbol>
+  </defs>
+
+  <!-- ====================== background plate ====================== -->
+  <rect x="0" y="0" width="256" height="256" rx="40" ry="40" fill="url(#bg)"/>
+
+  <!-- ============== ground reflection / floor glow ============== -->
+  <ellipse cx="128" cy="222" rx="100" ry="14"
+           fill="#FF7A1A" opacity="0.35" filter="url(#bloom)"/>
+
+  <!-- ================== outer fire halo (huge) ================== -->
+  <ellipse cx="128" cy="118" rx="118" ry="80"
+           fill="url(#fire)" filter="url(#bigBloom)" opacity="0.95"/>
+
+  <!-- ================== anvil ================== -->
+  <g filter="url(#anvilShadow)">
+    <!-- Anvil silhouette: drawn as one closed path so the steel
+         gradient flows continuously from top face down through base. -->
+    <path d="
+        M 36 138
+        L 188 138
+        Q 196 138 204 134
+        Q 218 130 230 138
+        Q 218 142 204 144
+        Q 196 146 188 146
+        L 188 156
+        L 36 156
+        Z
+        M 86 156
+        L 86 168
+        L 98 168
+        L 98 188
+        L 80 196
+        L 70 214
+        L 70 226
+        L 186 226
+        L 186 214
+        L 176 196
+        L 158 188
+        L 158 168
+        L 170 168
+        L 170 156
+        Z"
+      fill="url(#steel)"
+      fill-rule="evenodd"/>
+
+    <!-- Glossy highlight along the top face. -->
+    <rect x="40" y="136" width="148" height="6" rx="2" fill="url(#topface)" opacity="0.9"/>
+
+    <!-- Hot-iron reflection: warm gradient stripe across the top face. -->
+    <ellipse cx="120" cy="146" rx="56" ry="3.5"
+             fill="#FF7A1A" opacity="0.55"/>
+    <ellipse cx="120" cy="146" rx="32" ry="2.5"
+             fill="#FFE56B" opacity="0.8"/>
+  </g>
+
+  <!-- ================== hot iron billet ==================
+       Sits directly on the anvil face. White-hot core + smaller
+       fire bloom. -->
+  <g filter="url(#bigBloom)">
+    <ellipse cx="120" cy="138" rx="46" ry="11" fill="url(#fire)" opacity="0.95"/>
+    <ellipse cx="120" cy="137" rx="28" ry="6"  fill="url(#fireCore)"/>
+    <!-- Crisp white-hot specular line on top of the billet. -->
+    <ellipse cx="120" cy="134" rx="22" ry="1.5" fill="#FFFFFF" opacity="0.9"/>
+  </g>
+
+  <!-- ================== hammer ==================
+       Plunging down from above with a faint motion-blur ghost
+       behind it. Head is a stout forged-steel block, haft is a
+       warm wooden handle running off the top-right of the icon. -->
+
+  <!-- Motion-blur ghost (lower opacity, offset back along the
+       swing path). -->
+  <g opacity="0.25">
+    <rect x="86" y="60" width="68" height="32" rx="4" fill="url(#hammer)"/>
+    <rect x="145" y="40" width="60" height="8" rx="2"
+          fill="url(#haft)" transform="rotate(-22 175 44)"/>
+  </g>
+
+  <!-- Active hammer (sharp). -->
+  <g>
+    <!-- Head block. -->
+    <rect x="92" y="74" width="68" height="32" rx="4" fill="url(#hammer)"/>
+    <!-- Head bevels for a forged look. -->
+    <polygon points="92,74 100,68 100,112 92,106" fill="#4b5460"/>
+    <polygon points="160,74 152,68 152,112 160,106" fill="#1c232e"/>
+    <!-- Head highlight strip. -->
+    <rect x="96" y="77" width="60" height="4" rx="2" fill="#a8b1bf" opacity="0.85"/>
+    <!-- Top peen highlight (small bright stripe). -->
+    <rect x="100" y="68" width="50" height="2" fill="#e8edf4" opacity="0.9"/>
+
+    <!-- Haft (wooden handle): swings up to the top-right of the icon. -->
+    <g transform="rotate(-20 153 78)">
+      <rect x="146" y="74" width="92" height="10" rx="3" fill="url(#haft)"/>
+      <!-- Wood-grain highlight. -->
+      <rect x="148" y="75" width="86" height="1.5" fill="#f0c890" opacity="0.55"/>
+      <!-- Iron collar where the haft meets the head. -->
+      <rect x="146" y="73" width="10" height="12" rx="1.5" fill="#1a2030"/>
+    </g>
+  </g>
+
+  <!-- ================== sparks ==================
+       Sprayed in a 360° fan from the impact point. Each spark is a
+       small bright circle, with some accompanied by a fading streak
+       tail (curved path) suggesting motion. -->
+
+  <!-- Streak tails (drawn before dots so the dot sits on top). -->
+  <g stroke-linecap="round" fill="none" filter="url(#bloom)">
+    <path d="M 128 110 Q 92 76 60 60"  stroke="#FFE56B" stroke-width="2" opacity="0.85"/>
+    <path d="M 128 110 Q 164 76 196 60" stroke="#FFE56B" stroke-width="2" opacity="0.85"/>
+    <path d="M 128 110 Q 100 50 90 24"  stroke="#FF7A1A" stroke-width="1.8" opacity="0.75"/>
+    <path d="M 128 110 Q 156 50 166 24" stroke="#FF7A1A" stroke-width="1.8" opacity="0.75"/>
+    <path d="M 128 110 Q 70 110 28 124" stroke="#FFB300" stroke-width="1.6" opacity="0.7"/>
+    <path d="M 128 110 Q 186 110 228 124" stroke="#FFB300" stroke-width="1.6" opacity="0.7"/>
+    <path d="M 128 110 Q 80 84 36 92"   stroke="#EE3A00" stroke-width="1.4" opacity="0.65"/>
+    <path d="M 128 110 Q 176 84 220 92" stroke="#EE3A00" stroke-width="1.4" opacity="0.65"/>
+  </g>
+
+  <!-- Hot spark dots (varied size + colour). -->
+  <g filter="url(#bloom)">
+    <circle cx="60"  cy="60"  r="3.5" fill="#FFFFFF"/>
+    <circle cx="196" cy="60"  r="3.5" fill="#FFFFFF"/>
+    <circle cx="90"  cy="24"  r="3"   fill="#FFFAD9"/>
+    <circle cx="166" cy="24"  r="3"   fill="#FFFAD9"/>
+    <circle cx="28"  cy="124" r="2.8" fill="#FFE56B"/>
+    <circle cx="228" cy="124" r="2.8" fill="#FFE56B"/>
+    <circle cx="36"  cy="92"  r="2.4" fill="#FFB300"/>
+    <circle cx="220" cy="92"  r="2.4" fill="#FFB300"/>
+
+    <!-- Secondary smaller sparks scattered around. -->
+    <circle cx="50"  cy="40"  r="1.8" fill="#FFFFFF"/>
+    <circle cx="206" cy="40"  r="1.8" fill="#FFFFFF"/>
+    <circle cx="22"  cy="76"  r="2"   fill="#FF7A1A"/>
+    <circle cx="234" cy="76"  r="2"   fill="#FF7A1A"/>
+    <circle cx="78"  cy="14"  r="1.6" fill="#FFE56B"/>
+    <circle cx="178" cy="14"  r="1.6" fill="#FFE56B"/>
+    <circle cx="116" cy="8"   r="2.2" fill="#FFFFFF"/>
+    <circle cx="140" cy="6"   r="1.6" fill="#FFFAD9"/>
+    <circle cx="14"  cy="108" r="2"   fill="#EE3A00"/>
+    <circle cx="242" cy="108" r="2"   fill="#EE3A00"/>
+
+    <!-- Magenta "extreme heat" rare sparks. -->
+    <circle cx="68"  cy="98"  r="1.6" fill="#FF55FF" opacity="0.85"/>
+    <circle cx="188" cy="98"  r="1.6" fill="#FF55FF" opacity="0.85"/>
+
+    <!-- Cyan accent stars (MS-DOS Shell palette nod). -->
+    <circle cx="20"  cy="34"  r="1.4" fill="#55FFFF" opacity="0.7"/>
+    <circle cx="236" cy="34"  r="1.4" fill="#55FFFF" opacity="0.7"/>
+    <circle cx="100" cy="44"  r="1.2" fill="#55FFFF" opacity="0.6"/>
+    <circle cx="156" cy="44"  r="1.2" fill="#55FFFF" opacity="0.6"/>
+  </g>
+
+  <!-- ================== DOS prompt accent ==================
+       Subtle terminal-green ">_" in the lower-left so the icon
+       still reads as a DOS tool, not a generic blacksmith. -->
+  <g font-family="ui-monospace, 'JetBrains Mono', monospace"
+     font-weight="800" font-size="20"
+     fill="#9CFFB1" opacity="0.85" filter="url(#bloom)">
+    <text x="22" y="244">&gt;_</text>
+  </g>
+</svg>

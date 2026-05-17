@@ -49,9 +49,18 @@ release. The legacy CLI command and migration shims have been removed —
   oversized payloads with a clear error instead of failing mid-build).
 - **Textual TUI** with media-type / boot-mode / machine-target gating
   and dynamic visibility logic; CLI mirrors every flag.
+- **Desktop integration**: pixel-bright hammer-strikes-anvil icon
+  (SVG + pre-rendered PNGs at 16/24/32/48/64/128/256 px), a
+  `dosforge-launcher` wrapper that picks a sensible working
+  directory and opens the TUI in the user's preferred terminal,
+  and a `dosforge.desktop` entry — so walker (Omarchy) or any
+  XDG-aware app menu lists DOSforge with the custom icon. Bundled
+  under `desktop/` in each release; installed automatically by
+  `install.sh` unless `--no-desktop` is passed.
 - **Release tooling**: `scripts/build-release.sh` assembles a
   self-contained `releases/v<version>/` bundle (wheel + sdist +
-  `dosassets/` + distro-aware installer + SHA-256 manifest).
+  `dosassets/` + `desktop/` + distro-aware installer + SHA-256
+  manifest).
 
 ### Removed (vs. the previous `vhdmaker` project name)
 

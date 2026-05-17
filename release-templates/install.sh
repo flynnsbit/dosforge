@@ -11,6 +11,9 @@
 #      Python environment via pipx (preferred) or `pip --user`.
 #   4. Stage the bundled ``dosassets/`` tree into the user's home
 #      so dosforge auto-resolves boot assets without a CLI flag.
+#   5. Install the dosforge desktop integration (launcher wrapper,
+#      icon set, .desktop entry) so the TUI shows up in walker / the
+#      Omarchy app menu.
 #
 # Re-running is idempotent: system packages already present are
 # left alone; pipx upgrades the wheel in place; the dosassets/
@@ -21,10 +24,12 @@
 #     ./install.sh                 # install for the current user
 #     ./install.sh --system        # install dosforge globally (pipx --global)
 #     ./install.sh --no-dosassets  # skip the dosassets stage step
+#     ./install.sh --no-desktop    # skip the launcher/icon/.desktop step
 
 set -euo pipefail
 
 install_dosassets=1
+install_desktop=1
 pipx_global=0
 
 for arg in "$@"; do
@@ -34,6 +39,9 @@ for arg in "$@"; do
       ;;
     --no-dosassets)
       install_dosassets=0
+      ;;
+    --no-desktop)
+      install_desktop=0
       ;;
     -h|--help)
       sed -n '2,30p' "$0"
@@ -184,6 +192,63 @@ if [ "$install_dosassets" -eq 1 ] && [ -d "$script_dir/dosassets" ]; then
   fi
   echo "    Tip: cd to a directory containing 'dosassets/' (the install copied"
   echo "    one to ${user_assets}) or pass --boot-assets-path explicitly."
+fi
+
+# ------------------------------------------------------------------
+# 5) Desktop integration: launcher wrapper, icon, .desktop entry.
+#    Optional; skipped on non-XDG systems or with --no-desktop.
+# ------------------------------------------------------------------
+
+if [ "$install_desktop" -eq 1 ] && [ -d "$script_dir/desktop" ]; then
+  data_root="${XDG_DATA_HOME:-$HOME/.local/share}"
+  bin_dir="$HOME/.local/bin"
+  apps_dir="$data_root/applications"
+  icons_root="$data_root/icons/hicolor"
+
+  mkdir -p "$bin_dir" "$apps_dir" \
+           "$icons_root/scalable/apps" \
+           "$icons_root/16x16/apps" "$icons_root/24x24/apps" \
+           "$icons_root/32x32/apps" "$icons_root/48x48/apps" \
+           "$icons_root/64x64/apps" "$icons_root/128x128/apps" \
+           "$icons_root/256x256/apps"
+
+  # Launcher wrapper.
+  install -m 0755 "$script_dir/desktop/dosforge-launcher" "$bin_dir/dosforge-launcher"
+  echo "==> Installed launcher wrapper to $bin_dir/dosforge-launcher"
+
+  # SVG + per-size PNG icons.
+  if [ -f "$script_dir/desktop/icons/dosforge.svg" ]; then
+    install -m 0644 "$script_dir/desktop/icons/dosforge.svg" \
+                    "$icons_root/scalable/apps/dosforge.svg"
+  fi
+  for size in 16 24 32 48 64 128 256; do
+    src="$script_dir/desktop/icons/dosforge-${size}.png"
+    if [ -f "$src" ]; then
+      install -m 0644 "$src" "$icons_root/${size}x${size}/apps/dosforge.png"
+    fi
+  done
+  echo "==> Installed icons under $icons_root"
+
+  # Desktop entry: copy template + patch Icon= to an absolute PNG path
+  # so launchers that don't fully consult the icon theme still render
+  # something (walker in particular sometimes shows blank for SVG icons).
+  icon_path="$icons_root/256x256/apps/dosforge.png"
+  desktop_target="$apps_dir/dosforge.desktop"
+  sed -e "s|^Icon=.*|Icon=${icon_path}|" \
+      "$script_dir/desktop/dosforge.desktop" > "$desktop_target"
+  chmod 0644 "$desktop_target"
+  echo "==> Installed desktop entry: $desktop_target"
+
+  # Refresh XDG application database (best-effort).
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$apps_dir" >/dev/null 2>&1 || true
+  fi
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t "$icons_root" >/dev/null 2>&1 || true
+  fi
+
+  echo "    Tip: launcher icon will appear in walker / Omarchy app menu on"
+  echo "    its next refresh. If you don't see it, restart your launcher."
 fi
 
 echo
