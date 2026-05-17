@@ -38,9 +38,14 @@ class LegacyDosInstallProfile:
     AUTOEXEC.BAT + CONFIG.SYS, and boots from it.
     """
 
-    required_system_files: tuple[str, ...]
+    required_system_files: tuple[str | tuple[str, ...], ...]
     """Files that must exist at C:\\ root after the SYS step succeeds.
-    Used for post-run verification.
+
+    Each entry is either a single name (one specific file must be
+    present) or a tuple of alternative names (any one of them is
+    accepted — used for boot modes whose install media may ship
+    Compaq-flavored ``IBMBIO.COM``/``IBMDOS.COM`` *or* MS-flavored
+    ``IO.SYS``/``MSDOS.SYS``).
     """
 
     install_method: str = "sys"
@@ -69,7 +74,15 @@ def compaq331_profile(install_image: Path) -> LegacyDosInstallProfile:
     return LegacyDosInstallProfile(
         label="Compaq DOS 3.31",
         install_image=install_image,
-        required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+        # The Compaq install media uses IBMBIO.COM / IBMDOS.COM. The
+        # "Microsoft DOS 3.31" archive uses IO.SYS / MSDOS.SYS. The
+        # SYS C: step preserves whichever pair the install floppy
+        # shipped, so accept either in the post-install verification.
+        required_system_files=(
+            ("IBMBIO.COM", "IO.SYS"),
+            ("IBMDOS.COM", "MSDOS.SYS"),
+            "COMMAND.COM",
+        ),
         install_method="sys",
         timeout_seconds=60.0,
     )
@@ -326,13 +339,24 @@ class LegacyDosQemuInstaller:
             )
 
         missing: list[str] = []
-        for name in profile.required_system_files:
-            r = self.runner.run(
-                ["mdir", "-i", partition_image, "-a", f"::{name}"],
-                check=False,
-            )
-            if r.returncode != 0:
-                missing.append(name)
+        for entry in profile.required_system_files:
+            if isinstance(entry, tuple):
+                names = entry
+            else:
+                names = (entry,)
+            found = False
+            for name in names:
+                r = self.runner.run(
+                    ["mdir", "-i", partition_image, "-a", f"::{name}"],
+                    check=False,
+                )
+                if r.returncode == 0:
+                    found = True
+                    break
+            if not found:
+                # Report the original group so the message names every
+                # alternative the install was allowed to satisfy.
+                missing.append(" / ".join(names))
         if missing:
             raise ValidationError(
                 f"{profile.label} install completed marker write but is missing required "

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=DOSforge
+GenericName=DOS image builder
+Comment=Build bootable DOS VHDs and floppy IMGs (FreeDOS / MS-DOS / Compaq DOS / PC-DOS / MartyPC presets)
+Exec=dosforge-launcher
+Terminal=false
+Icon=dosforge
+Categories=System;
+Keywords=dos;vhd;img;floppy;86box;martypc;freedos;msdos;
+StartupNotify=true

@@ -33,5 +33,6 @@ ships, the contract above becomes binding.
 
 | Version | Date       | Notes                                                                                                       |
 |---------|------------|-------------------------------------------------------------------------------------------------------------|
+| 0.1.2   | 2026-05-17 | Accepts `Disk1.img` (Microsoft DOS 3.31 archive) for `msdos331`; system-file verification accepts either flavor. |
 | 0.1.1   | 2026-05-17 | Fixes `msdos331` boot hang (routes through QEMU SYS install); `msdos331` capped at 32 MiB, `compaq331` at 504 MiB. |
 | 0.1.0   | 2026-05-16 | First public release. VHD + IMG creation, FreeDOS / MS-DOS 3.30 – 7.1 / Compaq / PC-DOS, MartyPC presets.   |

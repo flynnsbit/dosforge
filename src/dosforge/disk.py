@@ -88,18 +88,28 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
         system_file_marker="IBMBIO.COM",
         profile_builder=compaq331_profile,
     ),
-    # MS-DOS 3.31 (msdos331) is functionally identical to Compaq DOS 3.31
-    # — the install media most users have under ``dosassets/msdos331/``
-    # is the Compaq OEM release. Use the same QEMU-driven SYS install
-    # flow so the resulting boot sector is authentic (instead of pulling
-    # a static template out of SYS.COM and grafting it onto an mkfs.fat
-    # BPB, which DOS 3.31 rejects with a silent boot hang at "Verifying
-    # DMI pool data").
+    # MS-DOS 3.31 (msdos331) shares the QEMU-driven SYS C: install
+    # pipeline with Compaq DOS 3.31, but the install media you'll find
+    # in the wild is varied:
+    #
+    #   - "Microsoft DOS 3.31" WinWorldPC archives ship as a single
+    #     bootable Disk1.img with MS-flavoured IO.SYS / MSDOS.SYS.
+    #   - Compaq DOS 3.31 archives ship as STARTUP.IMG / OPER.IMG /
+    #     FASTART.IMG with IBM-flavoured IBMBIO.COM / IBMDOS.COM.
+    #
+    # Accept both naming conventions in ``preferred_image_names`` and
+    # use IO.SYS as the system-file marker (the install-image scanner
+    # is case-insensitive and will also match IBMBIO.COM via the
+    # heuristic-fallback path inside ``_find_legacy_dos_install_image``).
     BootMode.MSDOS331: _LegacyDosInstallDescriptor(
         label="MS-DOS 3.31",
         asset_fallback_dirs=("msdos331", "compaq331"),
-        preferred_image_names=("STARTUP.IMG", "STARTUP.IMA"),
-        system_file_marker="IBMBIO.COM",
+        preferred_image_names=(
+            "DISK1.IMG", "DISK1.IMA",
+            "DISK01.IMG", "DISK01.IMA",
+            "STARTUP.IMG", "STARTUP.IMA",
+        ),
+        system_file_marker="IO.SYS",
         profile_builder=compaq331_profile,
     ),
     BootMode.MSDOS33: _LegacyDosInstallDescriptor(

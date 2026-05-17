@@ -6,6 +6,26 @@ The format is loosely based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] — 2026-05-17
+
+### Fixed
+
+- **`msdos331` install media detection broadened**. The 0.1.1
+  release only accepted Compaq-style `STARTUP.IMG`/`STARTUP.IMA`
+  filenames and used `IBMBIO.COM` as the system-file marker, so
+  the more common "Microsoft DOS 3.31" archives (which ship as
+  `Disk1.img` with `IO.SYS`/`MSDOS.SYS`) failed with
+  "MS-DOS 3.31 boot mode requires a bootable install diskette".
+  The descriptor now accepts `DISK1.IMG`, `DISK01.IMG`,
+  `STARTUP.IMG`, and their `.IMA` variants, and uses `IO.SYS`
+  as the heuristic-fallback marker.
+- **`compaq331_profile` post-install verification accepts either
+  system-file flavor**. `required_system_files` entries can now
+  be a tuple of alternatives (e.g. `("IBMBIO.COM", "IO.SYS")`),
+  so an install from a Microsoft-flavored Disk1.img isn't
+  rejected for "missing IBMBIO.COM" when its SYS-equivalent
+  `IO.SYS` is present.
+
 ## [0.1.1] — 2026-05-17
 
 ### Fixed
