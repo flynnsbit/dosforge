@@ -1418,3 +1418,149 @@ def test_legacy_dos_assets_dir_error_mentions_dosassets(
             fallback_dirs=("msdos33",),
             label="MS-DOS 3.30",
         )
+
+
+# --- Classic AT BIOS HDD type presets (Phoenix/AMI) ---
+
+
+def test_normalize_size_locks_to_bios_drive_type_phoenix_1(tmp_path: Path) -> None:
+    """Picking Phoenix Type 1 must produce a VHD with exactly 306×4×17 = 10 MB."""
+    from dosforge.models import BIOSVendor
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=512 * 1024 * 1024,  # user-typed value should be ignored
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.NONE,
+        bios_drive_type=(BIOSVendor.PHOENIX, 1),
+    )
+    size = manager._normalize_vhd_size_for_chs(request)
+    assert size == 306 * 4 * 17 * 512
+
+
+def test_normalize_size_locks_to_bios_drive_type_ami_45(tmp_path: Path) -> None:
+    from dosforge.models import BIOSVendor
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "out.vhd",
+        size_bytes=1,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.NONE,
+        bios_drive_type=(BIOSVendor.AMI, 45),
+    )
+    size = manager._normalize_vhd_size_for_chs(request)
+    assert size == 1024 * 8 * 17 * 512
+
+
+def test_request_locked_geometry_uses_bios_drive_type(tmp_path: Path) -> None:
+    from dosforge.models import BIOSVendor
+    from dosforge.disk import DiskManager as _DM
+    request = CreateRequest(
+        path=tmp_path / "x.vhd",
+        size_bytes=10 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.NONE,
+        bios_drive_type=(BIOSVendor.PHOENIX, 1),
+    )
+    assert _DM._request_locked_geometry(request) == (306, 4, 17)
+
+
+def test_request_locked_geometry_martypc_takes_precedence(tmp_path: Path) -> None:
+    """When both MartyPC and BIOS are set, validation rejects, but the
+    geometry helper still prefers MartyPC's table so the error message
+    can describe the active fixed-geometry source."""
+    from dosforge.models import BIOSVendor
+    from dosforge.disk import DiskManager as _DM
+    request = CreateRequest(
+        path=tmp_path / "x.vhd",
+        size_bytes=20 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        bios_drive_type=(BIOSVendor.PHOENIX, 1),
+    )
+    # MartyPC Xebec Type 2 = 615×4×17, Phoenix Type 1 = 306×4×17 — confirm
+    # the helper picks MartyPC.
+    assert _DM._request_locked_geometry(request) == (615, 4, 17)
+
+
+def test_validate_rejects_bios_drive_type_with_martypc(tmp_path: Path) -> None:
+    from dosforge.models import BIOSVendor
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "x.vhd",
+        size_bytes=10 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.NONE,
+        machine_target=MachineTarget.MARTYPC_XEBEC,
+        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        bios_drive_type=(BIOSVendor.PHOENIX, 1),
+    )
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        manager._validate_create_request(request)
+
+
+def test_validate_rejects_bios_drive_type_on_floppy(tmp_path: Path) -> None:
+    from dosforge.models import BIOSVendor, FloppyType
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "x.img",
+        size_bytes=1440 * 1024,
+        disk_format=DiskFormat.FAT12,
+        media_type=MediaType.IMG,
+        floppy_type=FloppyType.F1440K,
+        boot_mode=BootMode.NONE,
+        bios_drive_type=(BIOSVendor.PHOENIX, 1),
+    )
+    # Validate via the public path; the IMG branch short-circuits before
+    # _validate_bios_drive_type_request is reached, so we call the
+    # helper directly to confirm the VHD-only check.
+    with pytest.raises(ValidationError, match="only valid for VHD media"):
+        manager._validate_bios_drive_type_request(request)
+
+
+def test_validate_rejects_bios_drive_type_4_with_msdos33(tmp_path: Path) -> None:
+    """Phoenix Type 4 is 62 MB; msdos33 is capped at 32 MiB."""
+    from dosforge.models import BIOSVendor
+    manager = DiskManager()
+    request = CreateRequest(
+        path=tmp_path / "x.vhd",
+        size_bytes=1,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        boot_assets_path=Path("/tmp/msdos33"),
+        bios_drive_type=(BIOSVendor.PHOENIX, 4),
+    )
+    with pytest.raises(ValidationError, match="MS-DOS 3.30 32 MiB cap"):
+        manager._validate_create_request(request)
+
+
+def test_parse_bios_drive_slug_auto_maps_to_phoenix() -> None:
+    from dosforge.models import BIOSVendor, parse_bios_drive_slug
+    assert parse_bios_drive_slug("auto:1") == (BIOSVendor.PHOENIX, 1)
+    assert parse_bios_drive_slug("phoenix:2") == (BIOSVendor.PHOENIX, 2)
+    assert parse_bios_drive_slug("ami:45") == (BIOSVendor.AMI, 45)
+
+
+def test_parse_bios_drive_slug_rejects_bad_input() -> None:
+    from dosforge.models import parse_bios_drive_slug
+    with pytest.raises(ValueError, match="expected '<vendor>:<id>'"):
+        parse_bios_drive_slug("phoenix1")
+    with pytest.raises(ValueError, match="Unknown BIOS vendor"):
+        parse_bios_drive_slug("award:1")
+    with pytest.raises(ValueError, match="must be an integer"):
+        parse_bios_drive_slug("phoenix:abc")
+
+
+def test_lookup_bios_drive_type_rejects_reserved_type_15() -> None:
+    from dosforge.models import BIOSVendor, lookup_bios_drive_type
+    with pytest.raises(KeyError, match="phoenix:15"):
+        lookup_bios_drive_type(BIOSVendor.PHOENIX, 15)
+
+
+def test_bios_drive_table_has_44_entries_per_vendor() -> None:
+    """Types 1..45 minus the reserved Type 15 = 44 entries per vendor."""
+    from dosforge.models import BIOSVendor, iter_bios_drive_types
+    assert len(iter_bios_drive_types(BIOSVendor.PHOENIX)) == 44
+    assert len(iter_bios_drive_types(BIOSVendor.AMI)) == 44

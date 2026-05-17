@@ -714,6 +714,13 @@ class DiskManager:
         ):
             self._validate_martypc_at_request(request)
 
+        # BIOS drive-type preset: lock size + footer CHS to the
+        # selected Phoenix/AMI Type N row. Mutually exclusive with the
+        # MartyPC machine targets (which already lock geometry through
+        # their own preset tables).
+        if request.bios_drive_type is not None:
+            self._validate_bios_drive_type_request(request)
+
         validate_size_for_format(request.size_bytes, request.disk_format)
         if request.disk_format is DiskFormat.FAT12:
             # FAT12 on VHD is a narrow capability: only the MartyPC
@@ -975,6 +982,72 @@ class DiskManager:
                 )
         request.size_bytes = size_bytes
 
+    def _validate_bios_drive_type_request(self, request: CreateRequest) -> None:
+        """Validate a Phoenix/AMI BIOS drive-type preset and lock the size.
+
+        The classic AT-BIOS HDD types lock both the total size and the
+        footer CHS, so 86Box's BIOS auto-detect locks onto "Type N"
+        instead of "User-defined". Mutually exclusive with the MartyPC
+        machine targets — they're a different geometry source and
+        combining them would produce ambiguous footers.
+
+        Also enforces the regular boot-mode size caps (msdos33 and
+        msdos331 at 32 MiB, IBM8088+DOS33 at 32 MiB, etc.) since some
+        BIOS Types exceed those caps (Type 4 = 62 MB, Type 9 = 112 MB).
+        """
+        if request.media_type is not MediaType.VHD:
+            raise ValidationError(
+                "BIOS drive-type presets are only valid for VHD media."
+            )
+        if request.machine_target is not MachineTarget.GENERIC:
+            raise ValidationError(
+                "BIOS drive-type presets are mutually exclusive with MartyPC "
+                "machine targets. Use machine-target=generic to pick a Phoenix/AMI "
+                "Type N, or switch off the BIOS drive-type to use MartyPC's "
+                "drive-type table."
+            )
+        spec = request.bios_drive_spec  # raises if invalid (vendor, type_id)
+        assert spec is not None  # _validate_create_request only calls us when set
+
+        # Lock the request's size to the spec; downstream callers
+        # (qemu-img create, partition table) expect size_bytes to match
+        # the eventual footer CHS exactly.
+        request.size_bytes = spec.size_bytes
+
+        # Re-apply boot-mode size caps now that the BIOS preset has
+        # potentially raised the size above the requested value.
+        if request.boot_mode is BootMode.IBM8088:
+            ibm_max = (
+                IBM_DOS33_MAX_BYTES
+                if request.ibm_dos_version is IBMDOSVersion.DOS33
+                else IBM_DOS50_MAX_BYTES
+            )
+            if spec.size_bytes > ibm_max:
+                version_label = "DOS 3.3" if request.ibm_dos_version is IBMDOSVersion.DOS33 else "DOS 5.0"
+                raise ValidationError(
+                    f"BIOS drive-type preset {spec.slug} ({spec.description}) "
+                    f"exceeds the IBM 8088/V20 {version_label} {ibm_max // 1024 // 1024} MiB "
+                    "limit. Pick a smaller BIOS type or switch off IBM 8088 mode."
+                )
+        if request.boot_mode is BootMode.MSDOS33 and spec.size_bytes > IBM_DOS33_MAX_BYTES:
+            raise ValidationError(
+                f"BIOS drive-type preset {spec.slug} ({spec.description}) "
+                f"exceeds the MS-DOS 3.30 32 MiB cap. Pick a smaller BIOS type or "
+                "switch to compaq331 / msdos5 / msdos622 for larger partitions."
+            )
+        if request.boot_mode is BootMode.MSDOS331 and spec.size_bytes > MSDOS331_MAX_BYTES:
+            raise ValidationError(
+                f"BIOS drive-type preset {spec.slug} ({spec.description}) "
+                f"exceeds the MS-DOS 3.31 32 MiB cap. Pick a smaller BIOS type or "
+                "switch to compaq331 / msdos5 / msdos622 for larger partitions."
+            )
+        if request.boot_mode is BootMode.COMPAQ331 and spec.size_bytes > COMPAQ331_MAX_BYTES:
+            raise ValidationError(
+                f"BIOS drive-type preset {spec.slug} ({spec.description}) "
+                f"exceeds the Compaq DOS 3.31 {COMPAQ331_MAX_BYTES // 1024 // 1024} MiB cap. "
+                "Pick a smaller BIOS type or switch to msdos5 / msdos622."
+            )
+
     def _apply_custom_payload_autosizing(self, request: CreateRequest) -> None:
         custom_payload = self._resolve_custom_payload_path(request)
         if custom_payload is None:
@@ -991,6 +1064,14 @@ class DiskManager:
             # enforces the chosen drive type's size verbatim, so the most
             # helpful thing we can do is fail fast when the requested
             # payload won't fit.
+            self._validate_custom_payload_fits_fixed_drive(
+                request=request,
+                custom_payload=custom_payload,
+            )
+            return
+        if request.bios_drive_type is not None:
+            # BIOS-typed disks are locked to the preset's exact size,
+            # same as MartyPC drives. Fail fast if the payload won't fit.
             self._validate_custom_payload_fits_fixed_drive(
                 request=request,
                 custom_payload=custom_payload,
@@ -1067,7 +1148,10 @@ class DiskManager:
             fmt = request.martypc_at_drive_type
             label = "XT-IDE" if request.machine_target is MachineTarget.MARTYPC_XTIDE else "JR-IDE"
             return f"MartyPC {label} {fmt.slug} ({fmt.description})"
-        return "selected MartyPC drive type"
+        bios_spec = request.bios_drive_spec
+        if bios_spec is not None:
+            return f"BIOS preset {bios_spec.slug} ({bios_spec.description})"
+        return "selected fixed-size drive"
 
     @staticmethod
     def _martypc_locked_geometry(
@@ -1089,6 +1173,27 @@ class DiskManager:
             return (fmt.cylinders, fmt.heads, fmt.sectors_per_track)
         return None
 
+    @staticmethod
+    def _request_locked_geometry(
+        request: CreateRequest,
+    ) -> tuple[int, int, int] | None:
+        """Return locked (cyl, heads, spt) from MartyPC OR BIOS-type presets.
+
+        The MartyPC machine targets and the classic AT-BIOS HDD-type
+        presets both lock the footer CHS to an exact value (instead of
+        the 16h/63s canonical normalization). They are mutually
+        exclusive — validated in ``_validate_create_request``. This
+        helper returns whichever geometry source is active, or ``None``
+        for a fully generic build.
+        """
+        martypc = DiskManager._martypc_locked_geometry(request)
+        if martypc is not None:
+            return martypc
+        spec = request.bios_drive_spec
+        if spec is not None:
+            return (spec.cylinders, spec.heads, spec.sectors_per_track)
+        return None
+
     def _create_fixed_vhd(
         self,
         path: Path,
@@ -1101,7 +1206,7 @@ class DiskManager:
         # algorithm. We then rewrite the footer CHS to the emulator's
         # expected geometry; current_size will exactly equal cyl*heads*spt*512.
         locked = (
-            self._martypc_locked_geometry(request) if request is not None else None
+            self._request_locked_geometry(request) if request is not None else None
         )
         if locked is not None:
             self.runner.run(
@@ -1152,6 +1257,11 @@ class DiskManager:
         - ``MachineTarget.MARTYPC_XTIDE`` / ``MARTYPC_JRIDE``: returns the
           exact size of the selected AT/XT-IDE drive type from MartyPC's
           127-entry AtFormats table.
+        - ``CreateRequest.bios_drive_type`` set: returns the exact size
+          of the selected classic AT BIOS Type N preset (mirrors the
+          MartyPC behavior — the BIOS table also requires footer CHS to
+          match the table's geometry exactly so 86Box's BIOS auto-detect
+          locks onto Type N at boot).
         - ``MachineTarget.GENERIC``: rounds ``request.size_bytes`` to a
           cylinder of 16-head x 63-spt geometry so the post-create footer
           rewrite maps ``cyl x 16 x 63`` exactly to ``total_sectors``. Caps
@@ -1165,6 +1275,9 @@ class DiskManager:
             MachineTarget.MARTYPC_JRIDE,
         ):
             return request.martypc_at_drive_type.size_bytes
+        bios_spec = request.bios_drive_spec
+        if bios_spec is not None:
+            return bios_spec.size_bytes
 
         min_bytes: int | None
         max_bytes: int | None

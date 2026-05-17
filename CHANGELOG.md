@@ -6,6 +6,42 @@ The format is loosely based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] — 2026-05-17
+
+### Added
+
+- **Classic AT BIOS HDD type presets (Phoenix + AMI Types 1–45).**
+  When a Phoenix/AMI Type N entry is picked, dosforge locks the VHD
+  footer CHS to that type's exact geometry so 86Box's BIOS
+  auto-detect screen shows "Type N — Cyl×Hd×Spt" instead of
+  "User-defined / 86B_HD00". Includes both vendor tables (identical
+  for Types 1–32, divergent for some 33–45 entries).
+- New CLI flag `--bios-drive-type <vendor>:<N>` (e.g. `phoenix:1`,
+  `ami:45`, `auto:N` aliasing `phoenix:N`).
+- New CLI subcommand `dosforge list-bios-drive-types` prints the
+  full Phoenix + AMI tables with Cyl / Hd / Pre / LZ / Spt / Size.
+- New TUI selector "Disk type" — defaults to "Custom — use size
+  field"; picking a Phoenix/AMI type auto-fills the size input
+  (read-only) with the preset's MB value. Hidden when a MartyPC
+  machine target is selected (those have their own preset tables).
+- `BIOSVendor` enum, `BIOSDriveSpec` dataclass, `BIOS_AT_DRIVE_TYPES`
+  registry, `lookup_bios_drive_type()`, `iter_bios_drive_types()`,
+  `parse_bios_drive_slug()` in `dosforge.models`.
+
+### Changed
+
+- `CreateRequest.bios_drive_type: tuple[BIOSVendor, int] | None`
+  field (default `None` = current behavior).
+- `_normalize_vhd_size_for_chs` now respects `bios_drive_type` and
+  returns the preset's `cyl × heads × spt × 512` size.
+- `_create_fixed_vhd` writes the preset's CHS verbatim into the VHD
+  footer (skips the 16h/63s canonical normalization) when a BIOS
+  preset is selected — same mechanism MartyPC presets use.
+- Mutually exclusive with MartyPC machine targets; validation
+  rejects combining them with a clear error.
+- Boot-mode size caps still apply: e.g. Phoenix Type 4 (62 MB) +
+  `boot-mode=msdos33` raises a "MS-DOS 3.30 32 MiB cap" error.
+
 ## [0.1.2] — 2026-05-17
 
 ### Fixed

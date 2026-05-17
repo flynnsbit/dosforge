@@ -14,6 +14,7 @@ from .dependencies import assert_dependencies
 from .disk import DiskManager
 from .errors import DependencyError, ValidationError, DosForgeError
 from .models import (
+    BIOSVendor,
     BootMode,
     CreateRequest,
     DiskFormat,
@@ -26,7 +27,9 @@ from .models import (
     MediaType,
     DEFAULT_MARTYPC_AT_FORMAT_SLUG,
     MARTYPC_AT_FORMATS,
+    iter_bios_drive_types,
     lookup_martypc_at_format,
+    parse_bios_drive_slug,
 )
 from .size import parse_size
 
@@ -152,6 +155,19 @@ def build_parser() -> argparse.ArgumentParser:
             "'dosforge list-martypc-formats' for the full set of 127 entries."
         ),
     )
+    create.add_argument(
+        "--bios-drive-type",
+        default=None,
+        metavar="VENDOR:N",
+        help=(
+            "Lock the VHD to a classic AT BIOS Type N preset so 86Box's BIOS "
+            "auto-detect shows 'Type N' instead of 'User-defined'. Format is "
+            "'<vendor>:<type_id>', e.g. 'phoenix:1' (10 MB 306x4x17), "
+            "'ami:45' (68 MB 1024x8x17), or 'auto:N' (alias for phoenix). "
+            "Run 'dosforge list-bios-drive-types' for the full table. "
+            "Mutually exclusive with the MartyPC machine targets."
+        ),
+    )
 
     mount = subcommands.add_parser("mount", help="Mount a disk image and track it in app state.")
     mount.add_argument("--path", required=True, help="Path to .vhd/.img/.ima file to mount.")
@@ -164,6 +180,10 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands.add_parser(
         "list-martypc-formats",
         help="Print all 127 MartyPC AT/XT-IDE drive type slugs and exit.",
+    )
+    subcommands.add_parser(
+        "list-bios-drive-types",
+        help="Print the Phoenix and AMI classic AT BIOS HDD type tables and exit.",
     )
     return parser
 
@@ -234,6 +254,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             ):
                 # Validate slug eagerly so CLI errors are clear.
                 lookup_martypc_at_format(martypc_at_slug)
+            bios_drive_type: tuple[BIOSVendor, int] | None = None
+            if args.bios_drive_type is not None:
+                try:
+                    bios_drive_type = parse_bios_drive_slug(args.bios_drive_type)
+                except ValueError as exc:
+                    raise ValidationError(str(exc)) from exc
             if media_type is MediaType.VHD:
                 if args.size:
                     size_bytes = parse_size(args.size)
@@ -246,10 +272,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     MachineTarget.MARTYPC_JRIDE,
                 ):
                     size_bytes = lookup_martypc_at_format(martypc_at_slug).size_bytes
+                elif bios_drive_type is not None:
+                    # BIOS-typed drives lock size to the preset; placeholder
+                    # value is overwritten by ``_validate_bios_drive_type_request``.
+                    from .models import lookup_bios_drive_type as _lookup_bios
+                    vendor, type_id = bios_drive_type
+                    size_bytes = _lookup_bios(vendor, type_id).size_bytes
                 else:
                     raise ValidationError(
-                        "--size is required when --media-type is vhd unless --custom-payload-path is provided "
-                        "or --machine-target selects a fixed-geometry profile."
+                        "--size is required when --media-type is vhd unless --custom-payload-path is provided, "
+                        "--bios-drive-type is set, or --machine-target selects a fixed-geometry profile."
                     )
             else:
                 size_bytes = parse_size(args.size) if args.size else floppy_type.size_bytes
@@ -272,6 +304,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 machine_target=MachineTarget(args.machine_target),
                 martypc_xebec_drive_type=MartyPCXebecDriveType(args.martypc_xebec_drive_type),
                 martypc_at_drive_type_slug=martypc_at_slug,
+                bios_drive_type=bios_drive_type,
             )
             manager.create_and_prepare(request)
             print(f"Created and prepared {request.path.expanduser().resolve()}")
@@ -309,6 +342,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{fmt.slug:18s}  {chs:>13}  {fmt.size_bytes:>11}  "
                     f"{fmt.size_bytes/1024/1024:>7.2f}  {fmt.description}"
                 )
+            return 0
+
+        if args.command == "list-bios-drive-types":
+            for vendor in (BIOSVendor.PHOENIX, BIOSVendor.AMI):
+                vendor_label = vendor.value.capitalize()
+                print(f"\n{vendor_label} BIOS Standard Setup HDD types:")
+                print(
+                    f"  {'Type':>4}  {'Cyl':>5}  {'Hd':>3}  {'Pre':>5}  "
+                    f"{'LZ':>5}  {'Spt':>3}  {'Size':>7}  slug"
+                )
+                for spec in iter_bios_drive_types(vendor):
+                    pre = "---" if spec.write_precomp_cylinder < 0 else str(spec.write_precomp_cylinder)
+                    print(
+                        f"  {spec.type_id:>4}  "
+                        f"{spec.cylinders:>5}  {spec.heads:>3}  {pre:>5}  "
+                        f"{spec.landing_zone_cylinder:>5}  {spec.sectors_per_track:>3}  "
+                        f"{spec.size_mb:>4} MB  {spec.slug}"
+                    )
+            print(
+                "\nUse with: dosforge create --bios-drive-type <vendor>:<type_id> ...\n"
+                "  e.g. --bios-drive-type phoenix:1  (10 MB, 306x4x17)\n"
+                "       --bios-drive-type ami:45     (68 MB, 1024x8x17)\n"
+                "       --bios-drive-type auto:2     (alias for phoenix:2)"
+            )
             return 0
     except DosForgeError as exc:
         print(str(exc), file=sys.stderr)

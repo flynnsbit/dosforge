@@ -393,6 +393,246 @@ _MARTYPC_XEBEC_SPECS: dict[MartyPCXebecDriveType, MartyPCXebecSpec] = {
 }
 
 
+# =====================================================================
+# Classic AT BIOS hard-drive type presets (Phoenix / AMI Standard Setup)
+# =====================================================================
+#
+# 1985-1992 Phoenix, AMI, and Award BIOSes shipped with a 45-entry
+# hard-drive type table. Picking Type N in BIOS Setup made the BIOS
+# expose that exact CHS to DOS via INT 13h AH=08. dosforge can lock a
+# VHD to one of these presets so 86Box's BIOS auto-detect shows
+# "Type N — Cyl×Hd×Spt" instead of "User-defined / 86B_HD00".
+#
+# The two vendors agree on Types 1..32; Types 33..45 differ slightly
+# between Phoenix and AMI (different drives were added by each vendor
+# over the years). Both tables are stored here so the user can pick
+# the one their target BIOS matches.
+
+class BIOSVendor(str, Enum):
+    PHOENIX = "phoenix"
+    AMI     = "ami"
+
+
+@dataclass(frozen=True, slots=True)
+class BIOSDriveSpec:
+    vendor: BIOSVendor
+    type_id: int
+    cylinders: int
+    heads: int
+    write_precomp_cylinder: int  # -1 == auto / not specified
+    landing_zone_cylinder: int
+    sectors_per_track: int
+
+    @property
+    def size_bytes(self) -> int:
+        return self.cylinders * self.heads * self.sectors_per_track * 512
+
+    @property
+    def size_mb(self) -> int:
+        return self.size_bytes // 1024 // 1024
+
+    @property
+    def slug(self) -> str:
+        return f"{self.vendor.value}:{self.type_id}"
+
+    @property
+    def description(self) -> str:
+        vendor_label = self.vendor.value.capitalize()
+        pre = "auto" if self.write_precomp_cylinder < 0 else str(self.write_precomp_cylinder)
+        lz = self.landing_zone_cylinder
+        return (
+            f"{vendor_label} Type {self.type_id} — "
+            f"{self.cylinders}×{self.heads}×{self.sectors_per_track} — "
+            f"Pre={pre} LZ={lz} — {self.size_mb} MB"
+        )
+
+
+# Phoenix Standard Setup HDD types 1..45.
+# Source: Phoenix BIOS reference 1985-1992 era; matches the table shown
+# in user-supplied Phoenix Setup Utility screenshots (Type 1 = 306×4×17
+# Pre=128 LZ=305 → 10 MB; Type 45 = 1024×8×17 Pre=auto LZ=1024 → 68 MB).
+_BIOS_PHOENIX_DRIVE_ROWS: tuple[tuple[int, int, int, int, int, int], ...] = (
+    # (type, cyl, hd, pre, lz, spt)
+    ( 1,  306,  4,  128,  305, 17),
+    ( 2,  615,  4,  300,  615, 17),
+    ( 3,  615,  6,  300,  615, 17),
+    ( 4,  940,  8,  512,  940, 17),
+    ( 5,  940,  6,  512,  940, 17),
+    ( 6,  615,  4,   -1,  615, 17),
+    ( 7,  462,  8,  256,  511, 17),
+    ( 8,  733,  5,   -1,  733, 17),
+    ( 9,  900, 15,   -1,  901, 17),
+    (10,  820,  3,   -1,  820, 17),
+    (11,  855,  5,   -1,  855, 17),
+    (12,  855,  7,   -1,  855, 17),
+    (13,  306,  8,  128,  319, 17),
+    (14,  733,  7,   -1,  733, 17),
+    # Type 15 reserved by IBM; clones omit it. We include it with the
+    # same shape as Type 1 so the table indices stay contiguous; this
+    # entry is intentionally not exposed in lookups (the dict skips it).
+    (16,  612,  4,    0,  663, 17),
+    (17,  977,  5,  300,  977, 17),
+    (18,  977,  7,   -1,  977, 17),
+    (19, 1024,  7,  512, 1023, 17),
+    (20,  733,  5,  300,  732, 17),
+    (21,  733,  7,  300,  732, 17),
+    (22,  733,  5,  300,  733, 17),
+    (23,  306,  4,    0,  336, 17),
+    (24,  612,  4,  305,  663, 17),
+    (25,  306,  4,   -1,  340, 17),
+    (26,  612,  4,   -1,  670, 17),
+    (27,  698,  7,  300,  732, 17),
+    (28,  976,  5,  488,  977, 17),
+    (29,  306,  4,    0,  340, 17),
+    (30,  611,  4,  306,  663, 17),
+    (31,  732,  7,  300,  732, 17),
+    (32, 1023,  5,   -1, 1023, 17),
+    # Phoenix 33..45 — values from Phoenix BIOS reference.
+    (33,  614,  4,   -1,  663, 25),
+    (34,  775,  2,  254,  775, 27),
+    (35,  921,  2,    0,  921, 33),
+    (36,  402,  4,    0,  402, 39),
+    (37,  580,  6,    0,  580, 26),
+    (38,  845,  2,    0,  845, 36),
+    (39,  769,  3,  256,  769, 36),
+    (40,  531,  4,    0,  532, 39),
+    (41,  577,  2,    0,  577, 40),
+    (42,  654,  2,    0,  654, 32),
+    (43,  923,  5,    0,  923, 36),
+    (44,  531,  8,   -1,  532, 39),
+    (45, 1024,  8,   -1, 1024, 17),
+)
+
+# AMI BIOS HDD types 1..45. Identical to Phoenix for 1..32; AMI's
+# 33..45 entries come from their late-80s/early-90s clone BIOS tables
+# and differ in geometry from Phoenix for a few sizes (commonly noted
+# in motherboard manuals of the era).
+_BIOS_AMI_DRIVE_ROWS: tuple[tuple[int, int, int, int, int, int], ...] = (
+    # 1..32 — same as Phoenix.
+    ( 1,  306,  4,  128,  305, 17),
+    ( 2,  615,  4,  300,  615, 17),
+    ( 3,  615,  6,  300,  615, 17),
+    ( 4,  940,  8,  512,  940, 17),
+    ( 5,  940,  6,  512,  940, 17),
+    ( 6,  615,  4,   -1,  615, 17),
+    ( 7,  462,  8,  256,  511, 17),
+    ( 8,  733,  5,   -1,  733, 17),
+    ( 9,  900, 15,   -1,  901, 17),
+    (10,  820,  3,   -1,  820, 17),
+    (11,  855,  5,   -1,  855, 17),
+    (12,  855,  7,   -1,  855, 17),
+    (13,  306,  8,  128,  319, 17),
+    (14,  733,  7,   -1,  733, 17),
+    (16,  612,  4,    0,  663, 17),
+    (17,  977,  5,  300,  977, 17),
+    (18,  977,  7,   -1,  977, 17),
+    (19, 1024,  7,  512, 1023, 17),
+    (20,  733,  5,  300,  732, 17),
+    (21,  733,  7,  300,  732, 17),
+    (22,  733,  5,  300,  733, 17),
+    (23,  306,  4,    0,  336, 17),
+    (24,  612,  4,  305,  663, 17),
+    (25,  306,  4,   -1,  340, 17),
+    (26,  612,  4,   -1,  670, 17),
+    (27,  698,  7,  300,  732, 17),
+    (28,  976,  5,  488,  977, 17),
+    (29,  306,  4,    0,  340, 17),
+    (30,  611,  4,  306,  663, 17),
+    (31,  732,  7,  300,  732, 17),
+    (32, 1023,  5,   -1, 1023, 17),
+    # AMI 33..45 — divergent from Phoenix.
+    (33,  830,  7,    0,  830, 17),
+    (34,  830, 10,    0,  830, 17),
+    (35, 1024, 10,    0, 1024, 17),
+    (36, 1024,  8,    0, 1024, 17),
+    (37,  615,  8,  128,  615, 17),
+    (38,  830,  4,    0,  830, 26),
+    (39,  697, 13,   -1,  697, 25),
+    (40,  723,  9,    0,  723, 36),
+    (41,  723, 13,   -1,  723, 36),
+    (42,  855, 15,   -1,  855, 17),
+    (43, 1024,  9,    0, 1024, 17),
+    (44,  977,  3,   -1,  977, 17),
+    (45, 1024,  8,   -1, 1024, 17),
+)
+
+
+def _build_bios_drive_table(
+    vendor: BIOSVendor,
+    rows: tuple[tuple[int, int, int, int, int, int], ...],
+) -> dict[tuple[BIOSVendor, int], BIOSDriveSpec]:
+    out: dict[tuple[BIOSVendor, int], BIOSDriveSpec] = {}
+    for type_id, cyl, hd, pre, lz, spt in rows:
+        out[(vendor, type_id)] = BIOSDriveSpec(
+            vendor=vendor,
+            type_id=type_id,
+            cylinders=cyl,
+            heads=hd,
+            write_precomp_cylinder=pre,
+            landing_zone_cylinder=lz,
+            sectors_per_track=spt,
+        )
+    return out
+
+
+BIOS_AT_DRIVE_TYPES: dict[tuple[BIOSVendor, int], BIOSDriveSpec] = {
+    **_build_bios_drive_table(BIOSVendor.PHOENIX, _BIOS_PHOENIX_DRIVE_ROWS),
+    **_build_bios_drive_table(BIOSVendor.AMI, _BIOS_AMI_DRIVE_ROWS),
+}
+
+
+def parse_bios_drive_slug(slug: str) -> tuple[BIOSVendor, int]:
+    """Parse a ``<vendor>:<type_id>`` slug used on the CLI / TUI.
+
+    Vendor aliases: ``auto`` → Phoenix (they agree on Types 1..32 and
+    Phoenix is the more widely-supported preset table).
+    """
+    raw = slug.strip().lower()
+    if ":" not in raw:
+        raise ValueError(
+            f"Invalid BIOS drive-type slug {slug!r}; expected '<vendor>:<id>' (e.g. 'phoenix:1')."
+        )
+    vendor_part, _, id_part = raw.partition(":")
+    if vendor_part == "auto":
+        vendor = BIOSVendor.PHOENIX
+    else:
+        try:
+            vendor = BIOSVendor(vendor_part)
+        except ValueError as exc:
+            valid = ", ".join(v.value for v in BIOSVendor)
+            raise ValueError(
+                f"Unknown BIOS vendor {vendor_part!r}; valid: {valid} (or 'auto')."
+            ) from exc
+    try:
+        type_id = int(id_part)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid BIOS drive type id {id_part!r}; must be an integer 1..45."
+        ) from exc
+    return (vendor, type_id)
+
+
+def lookup_bios_drive_type(vendor: BIOSVendor, type_id: int) -> BIOSDriveSpec:
+    """Return the spec for ``(vendor, type_id)`` or raise ``KeyError``.
+
+    Type 15 is intentionally absent (IBM reserved it; clones omit it).
+    """
+    key = (vendor, type_id)
+    if key not in BIOS_AT_DRIVE_TYPES:
+        raise KeyError(
+            f"No BIOS drive type {vendor.value}:{type_id} (valid range 1..45 minus 15)."
+        )
+    return BIOS_AT_DRIVE_TYPES[key]
+
+
+def iter_bios_drive_types(vendor: BIOSVendor | None = None) -> list[BIOSDriveSpec]:
+    """List BIOS drive specs in vendor-then-type-id order."""
+    entries = list(BIOS_AT_DRIVE_TYPES.values())
+    if vendor is not None:
+        entries = [spec for spec in entries if spec.vendor is vendor]
+    return sorted(entries, key=lambda s: (s.vendor.value, s.type_id))
+
+
 class FloppyType(str, Enum):
     F160K = "160k"
     F180K = "180k"
@@ -520,6 +760,21 @@ class CreateRequest:
     machine_target: MachineTarget = MachineTarget.GENERIC
     martypc_xebec_drive_type: MartyPCXebecDriveType = MartyPCXebecDriveType.TYPE2
     martypc_at_drive_type_slug: str = DEFAULT_MARTYPC_AT_FORMAT_SLUG
+    # Optional classic-AT-BIOS hard-drive preset. When set as a
+    # ``(vendor, type_id)`` tuple, the VHD's footer CHS + total size
+    # are locked to the BIOS-table spec so 86Box BIOS auto-detect
+    # shows "Type N" instead of "User-defined / 86B_HD00". Custom is
+    # represented by ``None`` (the default) — in that case ``size_bytes``
+    # is used as today and the footer gets the 16h/63s canonical CHS.
+    bios_drive_type: tuple[BIOSVendor, int] | None = None
+
+    @property
+    def bios_drive_spec(self) -> BIOSDriveSpec | None:
+        """Resolve ``bios_drive_type`` to a full ``BIOSDriveSpec``."""
+        if self.bios_drive_type is None:
+            return None
+        vendor, type_id = self.bios_drive_type
+        return lookup_bios_drive_type(vendor, type_id)
 
     @property
     def martypc_at_drive_type(self) -> MartyPCAtFormat:

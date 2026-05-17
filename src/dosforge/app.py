@@ -25,9 +25,13 @@ from .models import (
     MachineTarget,
     MartyPCXebecDriveType,
     MediaType,
+    BIOSVendor,
     DEFAULT_MARTYPC_AT_FORMAT_SLUG,
     MARTYPC_AT_FORMATS,
+    iter_bios_drive_types,
+    lookup_bios_drive_type,
     lookup_martypc_at_format,
+    parse_bios_drive_slug,
 )
 from .size import parse_size
 
@@ -57,6 +61,18 @@ _MARTYPC_AT_DRIVE_TYPE_OPTIONS = [
     )
     for fmt in MARTYPC_AT_FORMATS
 ]
+
+# Classic AT BIOS HDD type presets — 44 entries each for Phoenix and
+# AMI (Type 15 reserved/omitted). The Select widget shows them grouped
+# with the special "Custom" entry on top so the default behavior
+# (typing a size in MB) maps to a single value.
+_BIOS_CUSTOM_VALUE = ""
+_BIOS_DRIVE_TYPE_OPTIONS: list[tuple[str, str]] = [
+    ("Custom — use size field", _BIOS_CUSTOM_VALUE),
+]
+for _vendor in (BIOSVendor.PHOENIX, BIOSVendor.AMI):
+    for _spec in iter_bios_drive_types(_vendor):
+        _BIOS_DRIVE_TYPE_OPTIONS.append((_spec.description, _spec.slug))
 _FLOPPY_OPTIONS = [
     ("160K", FloppyType.F160K.value),
     ("180K", FloppyType.F180K.value),
@@ -170,6 +186,15 @@ class DosForgeApp(App[None]):
                     yield Input(placeholder="Path (for example: ~/vhd/disk.vhd)", id="create-path")
                     yield Button("📁", id="browse-create-path-btn")
                 yield Input(value="512M", placeholder="Static size (for example: 512M)", id="create-size")
+                # Classic AT BIOS HDD-type preset. Default is "Custom"
+                # (typed size). Picking a Phoenix/AMI Type N entry locks
+                # the size to the preset's exact CHS so 86Box BIOS
+                # auto-detect shows "Type N" instead of "User-defined".
+                yield Select(
+                    options=_BIOS_DRIVE_TYPE_OPTIONS,
+                    value=_BIOS_CUSTOM_VALUE,
+                    id="bios-drive-type",
+                )
                 yield Select(
                     options=[
                         ("FAT12 (MartyPC Xebec Type 1 only)", DiskFormat.FAT12.value),
@@ -393,6 +418,9 @@ class DosForgeApp(App[None]):
         if event.select.id == "martypc-at-drive-type":
             self._sync_create_form_visibility()
             return
+        if event.select.id == "bios-drive-type":
+            self._sync_create_form_visibility()
+            return
         if event.select.id == "boot-mode":
             media_type = MediaType(cast(str, self.query_one("#media-type", Select).value))
             if media_type is MediaType.VHD and str(event.value) == BootMode.IBM8088.value:
@@ -467,18 +495,42 @@ class DosForgeApp(App[None]):
         )
         show_freedos_url = show_freedos and freedos_source is FreeDOSSource.AUTO
 
+        bios_drive_slug = cast(str, self.query_one("#bios-drive-type", Select).value)
+        bios_drive_active = bool(bios_drive_slug)
+
         self.query_one("#create-title", Label).update("Create fixed-size VHD" if is_vhd else "Create floppy IMG")
         self.query_one("#create-path", Input).placeholder = (
             "Path (for example: ~/vhd/disk.vhd)" if is_vhd else "Path (for example: ~/floppy/disk.img)"
         )
         self.query_one("#create-btn", Button).label = "Create + format VHD" if is_vhd else "Create + format IMG"
-        # Size + format are user-controlled only for generic VHD targets.
-        # MartyPC targets derive size from the chosen drive type and require FAT16.
-        self.query_one("#create-size", Input).display = is_vhd and not is_martypc
+        # Size + format are user-controlled only for generic VHD targets
+        # with no fixed-geometry preset. MartyPC presets and BIOS Type N
+        # presets both lock size to an exact CHS, so the size input is
+        # hidden / read-only for those.
+        size_input = self.query_one("#create-size", Input)
+        size_input.display = is_vhd and not is_martypc
+        if is_vhd and bios_drive_active and not is_martypc:
+            # Surface the BIOS preset's size in the input box, read-only,
+            # so the user can see what they'll get.
+            try:
+                vendor, type_id = parse_bios_drive_slug(bios_drive_slug)
+                spec = lookup_bios_drive_type(vendor, type_id)
+            except (ValueError, KeyError):
+                spec = None
+            if spec is not None:
+                size_input.value = f"{spec.size_mb}M"
+                size_input.disabled = True
+            else:
+                size_input.disabled = False
+        else:
+            size_input.disabled = False
         self.query_one("#create-format", Select).display = is_vhd and not is_martypc_xebec
         self.query_one("#machine-target", Select).display = is_vhd
         self.query_one("#martypc-xebec-drive-type", Select).display = is_martypc_xebec
         self.query_one("#martypc-at-drive-type", Select).display = is_martypc_at
+        # BIOS Type preset is only meaningful for generic VHD targets.
+        # MartyPC has its own preset tables and would conflict.
+        self.query_one("#bios-drive-type", Select).display = is_vhd and not is_martypc
         self.query_one("#floppy-type", Select).display = not is_vhd
         self.query_one("#img-system-format", Checkbox).display = not is_vhd
         self.query_one("#boot-mode", Select).display = boot_controls_active
@@ -600,6 +652,7 @@ class DosForgeApp(App[None]):
         machine_target_select = self.query_one("#machine-target", Select)
         martypc_xebec_select = self.query_one("#martypc-xebec-drive-type", Select)
         martypc_at_select = self.query_one("#martypc-at-drive-type", Select)
+        bios_drive_select = self.query_one("#bios-drive-type", Select)
 
         media_value = cast(str, media_select.value)
         format_value = cast(str, format_select.value)
@@ -611,6 +664,7 @@ class DosForgeApp(App[None]):
         machine_target_value = cast(str, machine_target_select.value)
         martypc_xebec_value = cast(str, martypc_xebec_select.value)
         martypc_at_value = cast(str, martypc_at_select.value)
+        bios_drive_value = cast(str, bios_drive_select.value)
         img_system_format = self.query_one("#img-system-format", Checkbox).value
 
         media_type = MediaType(media_value)
@@ -685,6 +739,11 @@ class DosForgeApp(App[None]):
             machine_target=machine_target,
             martypc_xebec_drive_type=martypc_xebec_drive_type,
             martypc_at_drive_type_slug=martypc_at_value,
+            bios_drive_type=(
+                parse_bios_drive_slug(bios_drive_value)
+                if bios_drive_value
+                else None
+            ),
         )
 
     def _refresh_mounts(self) -> None:
