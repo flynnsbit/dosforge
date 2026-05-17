@@ -1,0 +1,50 @@
+dosforge Windows bundle — third-party software notices
+========================================================
+
+This dosforge Windows distribution bundles unmodified binaries from
+the following projects. Each is governed by its own license; the
+full license texts are reproduced in the ``licenses/`` directory of
+this bundle.
+
+QEMU
+----
+* Files:           qemu-img.exe, qemu-system-i386.exe, supporting DLLs
+* Upstream:        https://qemu.weilnetz.de/w64/  (Stefan Weil's
+                   official Windows builds of QEMU)
+* License:         GNU General Public License, version 2 only
+                   (GPL-2.0-only).
+* License text:    licenses/qemu-LICENSE
+* Source code:     The corresponding source is available from the
+                   QEMU project at https://www.qemu.org/download/
+                   and is republished alongside this distribution
+                   for the duration of the dosforge release cycle.
+
+mtools (mformat, mcopy, mattrib, mdir, mtype, mdel)
+---------------------------------------------------
+* Files:           mformat.exe, mcopy.exe, mattrib.exe, mdir.exe,
+                   mtype.exe, mdel.exe
+* Upstream:        https://www.gnu.org/software/mtools/  (Windows
+                   builds from MSYS2: https://packages.msys2.org/
+                   package/mingw-w64-x86_64-mtools)
+* License:         GNU General Public License, version 3 or later
+                   (GPL-3.0-or-later).
+* License text:    licenses/mtools-COPYING
+* Source code:     Available from the GNU project at
+                   https://ftp.gnu.org/gnu/mtools/ and republished
+                   alongside this distribution for the duration of
+                   the dosforge release cycle.
+
+Your rights
+-----------
+
+You may redistribute and modify the bundled binaries under the
+terms of the respective GPL licenses. You are entitled to the
+corresponding source for the binaries; the dosforge project will
+provide it on request, or you may obtain it directly from the
+upstream projects listed above.
+
+dosforge itself is licensed separately under the MIT license — see
+the top-level ``LICENSE`` file in the dosforge source tree. The
+bundling of GPL binaries does not convert dosforge to a GPL
+license, but redistribution of this composite bundle must comply
+with the GPL terms for the bundled binaries.

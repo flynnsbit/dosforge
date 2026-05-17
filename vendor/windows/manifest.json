@@ -1,0 +1,72 @@
+{
+  "$schema-comment": "Manifest for Windows-bundled binaries. Each entry describes one .exe (and its DLLs) that ships under vendor/windows/bin/.",
+  "$layout-comment": "All extracted .exe + .dll files MUST land directly in vendor/windows/bin/ (no nested subdirectories) so dosforge._platform.windows can resolve them with a single Path.join.",
+  "$version": 1,
+  "components": [
+    {
+      "name": "qemu",
+      "description": "QEMU for Windows (Stefan Weil's official x86_64 build). Provides qemu-img.exe and qemu-system-i386.exe used for VHD creation and DOS SYS install.",
+      "version_pin": "REPLACE_WITH_VERSION_DATESTAMP",
+      "download_url": "https://qemu.weilnetz.de/w64/qemu-w64-setup-REPLACE_WITH_VERSION_DATESTAMP.exe",
+      "archive_format": "innosetup",
+      "expected_sha256": "REPLACE_WITH_SHA256",
+      "license_id": "GPL-2.0-only",
+      "license_url": "https://gitlab.com/qemu-project/qemu/-/raw/master/LICENSE",
+      "extracts": [
+        {
+          "from_in_archive": "qemu-img.exe",
+          "to_in_bin": "qemu-img.exe"
+        },
+        {
+          "from_in_archive": "qemu-system-i386.exe",
+          "to_in_bin": "qemu-system-i386.exe"
+        },
+        {
+          "from_in_archive_glob": "*.dll",
+          "to_in_bin_dir": "."
+        }
+      ]
+    },
+    {
+      "name": "mtools",
+      "description": "MSYS2 mingw-w64 mtools package — provides mformat.exe, mcopy.exe, mattrib.exe, mdir.exe used for FAT12/16 system-file staging.",
+      "version_pin": "REPLACE_WITH_VERSION",
+      "download_url": "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-mtools-REPLACE_WITH_VERSION-any.pkg.tar.zst",
+      "archive_format": "zstandard_tar",
+      "expected_sha256": "REPLACE_WITH_SHA256",
+      "license_id": "GPL-3.0-or-later",
+      "license_url": "https://www.gnu.org/licenses/gpl-3.0.txt",
+      "extracts": [
+        {
+          "from_in_archive": "mingw64/bin/mformat.exe",
+          "to_in_bin": "mformat.exe"
+        },
+        {
+          "from_in_archive": "mingw64/bin/mcopy.exe",
+          "to_in_bin": "mcopy.exe"
+        },
+        {
+          "from_in_archive": "mingw64/bin/mattrib.exe",
+          "to_in_bin": "mattrib.exe"
+        },
+        {
+          "from_in_archive": "mingw64/bin/mdir.exe",
+          "to_in_bin": "mdir.exe"
+        },
+        {
+          "from_in_archive": "mingw64/bin/mtype.exe",
+          "to_in_bin": "mtype.exe"
+        },
+        {
+          "from_in_archive": "mingw64/bin/mdel.exe",
+          "to_in_bin": "mdel.exe"
+        }
+      ]
+    }
+  ],
+  "$notes": [
+    "Run scripts/fetch-windows-vendor.py to populate vendor/windows/bin/ on a developer or CI machine.",
+    "The exact version_pin, download_url, and expected_sha256 fields must be populated before the fetch script will succeed. See vendor/windows/README.md for the recommended values for v0.3.0.",
+    "vendor/windows/bin/ is .gitignore'd — binaries are fetched at build time, not committed."
+  ]
+}

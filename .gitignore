@@ -68,3 +68,8 @@ __pycache__/
 *.zip
 testing-notes.md
 testing-notes.md.*
+
+# Windows-bundled binaries (auto-populated by scripts/fetch-windows-vendor.py)
+vendor/windows/bin/
+vendor/windows/licenses/
+.vendor-cache/
