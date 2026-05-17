@@ -33,6 +33,7 @@ ships, the contract above becomes binding.
 
 | Version | Date       | Notes                                                                                                       |
 |---------|------------|-------------------------------------------------------------------------------------------------------------|
+| 0.2.1   | 2026-05-17 | Fixes leftover "VHD Maker" / "VHDMaker" strings in the TUI header and zenity sudo prompt (now "DosForge").  |
 | 0.2.0   | 2026-05-17 | Adds Phoenix + AMI classic AT BIOS HDD type presets (Types 1–45) with new `--bios-drive-type` flag and TUI selector. |
 | 0.1.2   | 2026-05-17 | Accepts `Disk1.img` (Microsoft DOS 3.31 archive) for `msdos331`; system-file verification accepts either flavor. |
 | 0.1.1   | 2026-05-17 | Fixes `msdos331` boot hang (routes through QEMU SYS install); `msdos331` capped at 32 MiB, `compaq331` at 504 MiB. |

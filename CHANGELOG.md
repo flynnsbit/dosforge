@@ -6,6 +6,16 @@ The format is loosely based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] — 2026-05-17
+
+### Fixed
+
+- TUI header now displays "DosForge" instead of the leftover
+  "VHD Maker" string (and the zenity sudo-prompt title is also
+  "DosForge sudo authentication"). The original rename pass
+  grepped for the lowercase token `vhdmaker` and missed the
+  spaced/CamelCased variants.
+
 ## [0.2.0] — 2026-05-17
 
 ### Added
