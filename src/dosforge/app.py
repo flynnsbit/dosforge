@@ -86,7 +86,7 @@ _FLOPPY_OPTIONS = [
 
 
 class DosForgeApp(App[None]):
-    TITLE = "VHD Maker"
+    TITLE = "DosForge"
     SUB_TITLE = "Create, mount, browse, and unmount DOS-friendly disk images"
     BINDINGS = [("q", "quit", "Quit")]
 
@@ -812,7 +812,7 @@ class DosForgeApp(App[None]):
         command = [
             "zenity",
             "--password",
-            "--title=VHDMaker sudo authentication",
+            "--title=DosForge sudo authentication",
             "--text=Enter your sudo password to continue disk operations",
         ]
         try:
