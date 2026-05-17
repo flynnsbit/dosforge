@@ -12,18 +12,35 @@ with optional boot/system file staging for FreeDOS and legacy MS-DOS / PC-DOS / 
 ## Demo
 
 <!--
-  GitHub's README sanitizer strips <video> tags whose src points at
-  raw.githubusercontent.com. We host the MP4 as a v0.2.1 release
-  asset (whitelisted) and embed it via <video> below. The file is
-  also tracked under assets/demo/ in the repo for offline use.
+  GitHub's README renderer strips <video> tags whose src points at
+  raw.githubusercontent.com. It accepts release-asset URLs, so the
+  MP4 is published as an attachment on the v0.2.1 release.
+
+  Two views below:
+    1. The HTML5 <video> player (works in some GitHub clients).
+    2. A clickable thumbnail link as a guaranteed fallback that
+       opens the MP4 in a new tab — every desktop browser will
+       play it inline from there.
 -->
 
-https://github.com/flynnsbit/dosforge/releases/download/v0.2.1/dosforge-demo.mp4
+<p align="center">
+  <a href="https://github.com/flynnsbit/dosforge/releases/download/v0.2.1/dosforge-demo.mp4"
+     title="Click to play the dosforge demo">
+    <img src="assets/demo/dosforge-demo-thumbnail.jpg"
+         alt="dosforge demo — click to play"
+         width="720">
+  </a>
+</p>
+
+<p align="center">
+  <strong>▶ <a href="https://github.com/flynnsbit/dosforge/releases/download/v0.2.1/dosforge-demo.mp4">Watch the dosforge demo (2.6 MB MP4)</a></strong><br>
+  <em>Click the thumbnail above to play in a new tab.</em>
+</p>
 
 <details>
-<summary>Player not loading? Click here to play / download directly.</summary>
+<summary>Other ways to watch</summary>
 
-- **Inline (release asset):** <https://github.com/flynnsbit/dosforge/releases/download/v0.2.1/dosforge-demo.mp4>
+- **Release asset:** <https://github.com/flynnsbit/dosforge/releases/download/v0.2.1/dosforge-demo.mp4>
 - **From the repo tree:** [`assets/demo/dosforge-demo.mp4`](assets/demo/dosforge-demo.mp4)
 
 </details>
