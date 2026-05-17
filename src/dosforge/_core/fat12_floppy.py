@@ -50,6 +50,53 @@ def write_fat12_floppy(
     path.write_bytes(payload)
 
 
+def format_existing(
+    path: Path,
+    *,
+    floppy_type: FloppyType,
+    volume_label: str | None = None,
+    volume_serial: int = 0,
+) -> None:
+    """Write a FAT12 BPB / FAT / root-dir layout in place at ``path``.
+
+    The file at ``path`` must already exist and be at least
+    ``floppy_type.size_bytes`` bytes long. The boot sector, both FAT
+    tables, and the root directory area are overwritten; the data
+    region is left as-is.
+
+    This is the Windows equivalent of running
+    ``mkfs.fat -F 12 -g <h>/<spt> -M <media> -r <root> -s <spc>`` on
+    Linux.
+    """
+
+    spec = floppy_type.spec
+    if not path.exists():
+        raise FileNotFoundError(path)
+    if path.stat().st_size < spec.size_bytes:
+        raise ValueError(
+            f"{path} is smaller than expected for {floppy_type.value} "
+            f"({path.stat().st_size} < {spec.size_bytes})",
+        )
+    boot = _build_boot_sector(spec, volume_label=volume_label, volume_serial=volume_serial)
+    fat = _build_fat_table(spec)
+    fat_size_bytes = spec.sectors_per_fat * SECTOR_SIZE
+    if len(fat) < fat_size_bytes:
+        fat = fat + bytes(fat_size_bytes - len(fat))
+    fat1_offset = SECTOR_SIZE
+    fat2_offset = fat1_offset + fat_size_bytes
+    root_offset = fat2_offset + fat_size_bytes
+    root_bytes = spec.root_entries * 32
+    with path.open("r+b") as handle:
+        handle.seek(0, os.SEEK_SET)
+        handle.write(boot)
+        handle.seek(fat1_offset, os.SEEK_SET)
+        handle.write(fat)
+        handle.seek(fat2_offset, os.SEEK_SET)
+        handle.write(fat)
+        handle.seek(root_offset, os.SEEK_SET)
+        handle.write(bytes(root_bytes))
+
+
 def _build_image(spec: FloppySpec, *, volume_label: str | None, volume_serial: int) -> bytes:
     total_sectors = spec.total_sectors
     image = bytearray(b"\xf6" * (total_sectors * SECTOR_SIZE))

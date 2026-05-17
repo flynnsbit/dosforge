@@ -292,7 +292,12 @@ class DiskManager:
         nbd_sys_block_root: Path | None = None,
         nbd_dev_root: Path | None = None,
         nbd_discovery_timeout: float = 5.0,
+        backend: "PlatformBackend | None" = None,
     ) -> None:
+        from ._platform import get_backend
+        from ._platform.base import PlatformBackend  # noqa: F401 — type only
+
+        self.backend = backend or get_backend()
         self.runner = runner or CommandRunner()
         self.state_store = state_store or StateStore()
         self.mount_root = mount_root or app_mount_root()
@@ -1833,6 +1838,22 @@ class DiskManager:
         return value + (alignment - remainder)
 
     def _format_floppy_img(self, image_path: Path, *, floppy_type: FloppyType, label: str | None) -> None:
+        if not self.backend.supports_kernel_mount:
+            # Windows / no-kernel-mount path: format in place with the
+            # pure-Python writer. Produces a BPB byte-identical (in the
+            # fields we care about) to ``mkfs.fat -F12 -g h/spt -M
+            # <media> -r <root> -s <spc>``.
+            from ._core.fat12_floppy import format_existing
+
+            format_existing(
+                image_path,
+                floppy_type=floppy_type,
+                volume_label=label,
+            )
+            if isinstance(self.runner, CommandRunner):
+                self._validate_floppy_img_bpb(image_path=image_path, floppy_type=floppy_type)
+            return
+
         spec = floppy_type.spec
         command = [
             "mkfs.fat",
