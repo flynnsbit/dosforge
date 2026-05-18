@@ -105,7 +105,17 @@ _BUILTIN_FAT16_MBR_BOOT_CODE_B64 = (
     "+jHAjtC84Hv7/I7YjsC+AHy/AAa5AAHzpeoeBgAAhNJ1ArKAiBYABr++B/YFgHUOg8cQgf/+B3LyvtQG62BX6B4AcwW+yQbrVYE+/n1VqnQFvugG60heihYABuoAfAAAHrhAAI7Yu6pVtEH5zRMfch2B+1WqdRfQ6XMTi0UIo7AHi0UKo7IHtEK+qAfrDLgBArsAfItNAop1AfnNE8PoGQC+AgfoEwAw5M0aidPNGinag/o2cvfNGOv+rITAdAm7BwC0Ds0Q6/LDUmVhZCBlcnJvcgBObyBhY3RpdmUgcGFydGl0aW9uAFZCUiBoYXMgaWxsZWdhbCBzaWduYXR1cmUALiBUcnlpbmcgbmV4dCBib290IGRldmljZS4uLg0KAJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkBAAAQAAfAAAAAAAAAAAAAA="
 )
 _BUILTIN_FAT16_BOOT_SECTOR_B64 = (
-    "6zyQRlJET1M1LjEAAgQEAAIAAgAA+MgAEQAMAAAIAAAAHAMAgAApJXrCXE5PIE5BTUUgICAgRkFUMTYgICD6/DHAjti9AHy44B+OwInuie+5AAHzpepefOAfAABgAI7YjtCNZqD7iFYkx0bAEADHRsIBAIxexsdGxKBji3Yci34eA3YOg9cAiXbSiX7UikYQmPdmFgHGEdeJdtaJftiLXguxBdPri0YRMdL381ABxoPXAIl22ol+3ItG1otW2F/EXlrolQDEflq5CwC+8X1X86ZfJotFGnQLg8cgJoA9AHXncmVQxF5ai34Wi0bSi1bU6GcAWB4Hjl5cvwAgq4nGi1ZcAfZzA4DGEI7arYP4+HLrMcCrDh/EXlq+ACCtCcB1BYjT/25aSEiLfg2B5/8A9+cDRtoTVtzoIADr4LQOzRBerFY8AHX1w+j1/0Vycm9yIQAw5M0TzRbNGVaJRsiJVsqMhp7niZ6c5+jU/y4AtEG7qlWKViSE0nQZzRNyFdHpgdtUqnUNjXbAiV7MiV7OtELrJotOyItWyopGGPZmGpH38ZL2dhiJ0YjGhunQydDJCOFBxF7EuAECilYkzRNyiItGC1e+oGPEvpznicHzpF+xBNPoAYae54NGyAGDVsoAT3WLxJ6c517DAAAAAAAAAABLRVJORUwgIFNZUwAAVao="
+    "6zyQRlJET1M1LjEAAgQEAAIAAgAA+MgAEQAMAAAIAAAAHAMAgAApJXrCXE5PIE5BTUUgICAgRkFUMTYgICD6/DHAjti9AHy44B+OwInuie+5AAHzpepefOAfAABgAI7YjtCNZqD7iFYkx0bAEADHRsIBAIxexsdGxKBji3Yci34eA3YOg9cAiXbSiX7UikYQmPdmFgHGEdeJdtaJftiLXguxBdPri0YRMdL391ABxoPXAIl22ol+3ItG1otW2F/EXlrolQDEflq5CwC+8X1X86ZfJotFGnQLg8cgJoA9AHXncmVQxF5ai34Wi0bSi1bU6GcAWB4Hjl5cvwAgq4nGi1ZcAfZzA4DGEI7arYP4+HLrMcCrDh/EXlq+ACCtCcB1BYjT/25aSEiLfg2B5/8A9+cDRtoTVtzoIADr4LQOzRBerFY8AHX1w+j1/0Vycm9yIQAw5M0TzRbNGVaJRsiJVsqMhp7niZ6c5+jU/y4AtEG7qlWKViSE0nQZzRNyFdHpgdtUqnUNjXbAiV7MiV7OtELrJotOyItWyopGGPZmGpH38ZL2dhiJ0YjGhunQydDJCOFBxF7EuAECilYkzRNyiItGC1e+oGPEvpznicHzpF+xBNPoAYae54NGyAGDVsoAT3WLxJ6c517DAAAAAAAAAABLRVJORUwgIFNZUwAAVao="
+)
+# FAT12 floppy boot sector extracted from the upstream FreeDOS 1.4 1.44MB
+# boot floppy at codercowboy/freedosbootdisks (OEM "FreeDOS ", 1.44M BPB at
+# 18 spt / 2 heads / media 0xF0). The boot code walks 12-bit FAT entries
+# correctly, unlike BOOTSECT_FAT16.BIN whose loader assumes 16-bit entries.
+# ``_write_floppy_boot_sector`` preserves bytes 11..61 of the target image
+# (which mformat populated with the correct FAT12 geometry), so this
+# sector's BPB is overwritten and only the boot code at 62..510 is used.
+_BUILTIN_FAT12_BOOT_SECTOR_B64 = (
+    "6zyQRnJlZURPUyAAAgIBAALgAEAL8AkAEgACAAAAAAAAAAAAAAAp/BIFpkZSRUVET1MgICAgRkFUMTIgICD6/DHAjti9AHy44B+OwInuie+5AAHzpepefOAfAABgAI7YjtCNZqD7gH4k/3UDiFYkx0bAEADHRsIBAOjpAEZyZWVET1MAi3Yci34eA3YOg9cAiXbSiX7UikYQmPdmFgHGEdeJdtaJftiLXguxBdPri0YRMdL384lG0AHGg9cAiXbaiX7ci0bWi1bYi37QxF5a6JsAci/Eflq5CwC+8X1X86ZfJotFGnQLg8cgJoA9AHXncllQxF5ai34Wi0bSi1bU6GsAWHJGHgeOXly/ACCricYB9gHG0e6tcwSxBNPogOQPPfgPcugxwKsOH8ReWr4AIK0JwHQkSEiLfg2B5/8A9+cDRtoTVtzoJABz5egXACBlcnIAMOTNFs0Zil4k/25aMdu0Ds0QXqxWPAB188NWiUbIiVbKjEbGiV7EtEG7qlWKViSE0nQZzRNyFdHpgdtUqnUNjXbAiV7MiV7OtELrLItOyItWyopGGPZmGpH38ZL2dhiJ0YjGhunQydDJikYYKOD+xAjhxF7EuAECilYkzRNzBjDkzRProotGC/Z2wAFGxoNGyAGDVsoAT3XqjkbGXsNLRVJORUwgIFNZUwAAVao="
 )
 DEFAULT_MBR_BOOT_CODE_CANDIDATES = (
     Path("/usr/lib/syslinux/bios/mbr.bin"),
@@ -458,7 +468,23 @@ class BootAssetResolver:
             return self._resolve_compaq331(request)
         raise ValidationError(f"Unsupported boot mode: {request.boot_mode.value}")
 
+    def _effective_filesystem_format(self, request: CreateRequest) -> DiskFormat:
+        """Return the actual FAT format that will live on the produced image.
+
+        ``request.disk_format`` is FAT16 / FAT32 for VHDs and is hard-coded
+        to FAT16 by the CLI for IMG floppies (see ``cli.py``). The
+        on-disk filesystem on every standard DOS floppy is **FAT12**,
+        though, so resolving boot assets needs to know that — otherwise
+        the resolver picks BOOTSECT_FAT16.BIN whose boot loader walks
+        the FAT as 16-bit entries and silently fails on FAT12 media.
+        """
+
+        if request.media_type is MediaType.IMG:
+            return DiskFormat.FAT12
+        return request.disk_format
+
     def _resolve_freedos(self, request: CreateRequest) -> BootAssets:
+        fs_format = self._effective_filesystem_format(request)
         if request.freedos_source is FreeDOSSource.LOCAL:
             if request.boot_assets_path is not None:
                 # Bare name like "freedos" → ./dosassets/freedos/. Full
@@ -481,17 +507,17 @@ class BootAssetResolver:
                         "or pass --boot-assets-path /path/to/freedos."
                     )
             if target.is_dir():
-                assets = self._resolve_freedos_from_directory(target, request.disk_format)
+                assets = self._resolve_freedos_from_directory(target, fs_format)
             elif target.is_file():
-                assets = self._resolve_freedos_from_image(target, request.disk_format)
+                assets = self._resolve_freedos_from_image(target, fs_format)
             else:
                 raise ValidationError(f"Boot assets path does not exist: {target}")
         else:
             image_url = request.freedos_download_url or FREEDOS_DEFAULT_IMAGE_URL
             image_path = self._download_freedos_image(image_url)
-            assets = self._resolve_freedos_from_image(image_path, request.disk_format)
+            assets = self._resolve_freedos_from_image(image_path, fs_format)
 
-        if request.disk_format is DiskFormat.FAT16:
+        if fs_format is DiskFormat.FAT16:
             search_roots: tuple[Path, ...] = (
                 request.path.expanduser().resolve().parent,
                 Path.cwd(),
@@ -2534,11 +2560,26 @@ class BootAssetResolver:
         return b"FRDOS5.1" in sector and b"KERNEL  SYS" in sector
 
     def _resolve_boot_template(self, directory: Path, disk_format: DiskFormat) -> Path:
-        candidates = (
-            ("BOOTSECT_FAT16.BIN", "BOOTSECT.BIN")
-            if disk_format is DiskFormat.FAT16
-            else ("BOOTSECT_FAT32.BIN", "BOOTSECT.BIN")
-        )
+        if disk_format is DiskFormat.FAT12:
+            # FAT12 needs a real FAT12 boot sector — BOOTSECT_FAT16.BIN's
+            # loader walks the FAT as 16-bit entries and silently fails to
+            # locate KERNEL.SYS on a FAT12 filesystem. Prefer an explicit
+            # local template; fall back to the built-in FreeDOS FAT12 boot
+            # sector (extracted from the upstream 1.44M boot floppy at
+            # codercowboy/freedosbootdisks). ``_write_floppy_boot_sector``
+            # preserves the on-disk BPB at bytes 11..61 so this template's
+            # 1.44M-specific BPB doesn't matter; only the boot code at
+            # bytes 62..510 is copied.
+            for candidate in ("BOOTSECT_FAT12.BIN", "BOOTSECT.BIN"):
+                located = self._find_file_case_insensitive(directory, candidate)
+                if located is not None:
+                    self._validate_boot_sector_file(located)
+                    return located
+            return self._materialize_builtin_fat12_boot_sector()
+        if disk_format is DiskFormat.FAT16:
+            candidates: tuple[str, ...] = ("BOOTSECT_FAT16.BIN", "BOOTSECT.BIN")
+        else:
+            candidates = ("BOOTSECT_FAT32.BIN", "BOOTSECT.BIN")
         for candidate in candidates:
             located = self._find_file_case_insensitive(directory, candidate)
             if located is not None:
@@ -2549,6 +2590,16 @@ class BootAssetResolver:
             f"Boot mode requires a boot sector template in {directory}. "
             f"Expected one of: {joined}"
         )
+
+    def _materialize_builtin_fat12_boot_sector(self) -> Path:
+        """Write the built-in FreeDOS FAT12 boot sector to cache and return its path."""
+
+        cache_path = self.cache_root / "freedos-fat12-bootsect.bin"
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        if not cache_path.exists() or cache_path.stat().st_size < 512:
+            cache_path.write_bytes(base64.b64decode(_BUILTIN_FAT12_BOOT_SECTOR_B64))
+        self._validate_boot_sector_file(cache_path)
+        return cache_path
 
     def _resolve_mbr_boot_template(self, directory: Path) -> Path | None:
         for candidate in ("MBR_FAT16.BIN", "MBR.BIN"):
