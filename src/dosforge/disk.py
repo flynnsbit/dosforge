@@ -25,7 +25,7 @@ from .legacy_dos_install import (
     msdos33_profile,
 )
 from .dependencies import BOOT_COMMANDS, REQUIRED_COMMANDS, assert_dependencies, find_missing
-from .errors import ValidationError
+from .errors import DosForgeError, ValidationError
 from .models import (
     BootMode,
     CreateRequest,
@@ -564,6 +564,37 @@ class DiskManager:
 
     def privilege_diagnostics(self) -> list[PrivilegeCheck]:
         checks: list[PrivilegeCheck] = []
+
+        if not self.backend.requires_sudo_for_disk_ops:
+            checks.append(
+                PrivilegeCheck(
+                    name="Privilege model",
+                    status="ok",
+                    detail=(
+                        f"{self.backend.name} backend does not require sudo or kernel "
+                        "mounts; all disk operations run as the current user via bundled "
+                        "binaries."
+                    ),
+                )
+            )
+            try:
+                assert_dependencies(media_type=MediaType.VHD)
+                checks.append(
+                    PrivilegeCheck(
+                        name="Required commands",
+                        status="ok",
+                        detail="All bundled tools resolved successfully.",
+                    )
+                )
+            except DosForgeError as exc:
+                checks.append(
+                    PrivilegeCheck(
+                        name="Required commands",
+                        status="fail",
+                        detail=str(exc),
+                    )
+                )
+            return checks
 
         missing_required = find_missing(REQUIRED_COMMANDS)
         if missing_required:

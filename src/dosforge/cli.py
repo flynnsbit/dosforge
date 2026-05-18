@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from .app import DosForgeApp
 from .commands import CommandRunner
 from .dependencies import assert_dependencies
 from .disk import DiskManager
@@ -231,6 +230,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command in (None, "tui"):
             ensure_startup_sudo_auth()
+            try:
+                from .app import DosForgeApp
+            except ImportError as exc:
+                print(
+                    "The dosforge TUI requires the 'textual' package, which is not "
+                    "available in this build. Run a CLI subcommand instead, e.g.:\n"
+                    "  dosforge create --help\n"
+                    "  dosforge check-deps\n"
+                    f"Underlying import error: {exc}",
+                    file=sys.stderr,
+                )
+                return 2
             DosForgeApp().run()
             return 0
 
