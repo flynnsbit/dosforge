@@ -189,6 +189,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def ensure_startup_sudo_auth(runner: CommandRunner | None = None) -> None:
+    # Platforms without kernel-mount / NBD / sudo (Windows) never need to
+    # cache sudo credentials at startup. The active backend's
+    # ``requires_sudo_for_disk_ops`` flag is the canonical signal.
+    from ._platform import get_backend
+
+    if not get_backend().requires_sudo_for_disk_ops:
+        return
+
     try:
         result = subprocess.run(
             ["sudo", "--preserve-env=HOME,PATH", "-v"],

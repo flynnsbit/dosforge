@@ -57,10 +57,30 @@ def test_ensure_startup_sudo_auth_rejects_missing_noninteractive_session(monkeyp
             del command, sudo, check, cwd, env
             return RunResult(command=("true",), returncode=1, stdout="", stderr="sudo: a password is required")
 
+    class FakeBackend:
+        requires_sudo_for_disk_ops = True
+
     monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: Result())
+    monkeypatch.setattr("dosforge._platform.get_backend", lambda: FakeBackend())
 
     with pytest.raises(ValidationError, match="non-interactive sudo is not available"):
         cli.ensure_startup_sudo_auth(runner=FakeRunner())
+
+
+def test_ensure_startup_sudo_auth_is_noop_when_backend_says_no_sudo(monkeypatch) -> None:
+    """On Windows (and any backend without sudo) the startup probe must skip."""
+
+    class FakeBackend:
+        requires_sudo_for_disk_ops = False
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("subprocess.run must not be called when sudo is not required")
+
+    monkeypatch.setattr(cli.subprocess, "run", fail_if_called)
+    monkeypatch.setattr("dosforge._platform.get_backend", lambda: FakeBackend())
+
+    # Should return None without raising.
+    cli.ensure_startup_sudo_auth()
 
 
 def test_create_parses_ibm_dos_version(monkeypatch, capsys) -> None:
