@@ -511,6 +511,11 @@ pytest -q -m native_86box
 
 ### Optional commit/push trailer cleanup hooks
 
+The trailer-cleanup script itself lives in the shared
+[`~/Projects/shared-scripts/`](../shared-scripts/) folder so it can be
+reused across repos. Set `SHARED_SCRIPTS` to override the default
+`$HOME/Projects/shared-scripts` location.
+
 If you want local hooks that strip the Copilot co-author trailer on commit (`commit-msg`) and also enforce cleanup before push:
 
 ```bash
@@ -520,5 +525,5 @@ If you want local hooks that strip the Copilot co-author trailer on commit (`com
 Manual dry-run check:
 
 ```bash
-./scripts/strip-copilot-coauthor.sh --range HEAD --dry-run
+~/Projects/shared-scripts/strip-copilot-coauthor.sh --range HEAD --dry-run
 ```

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel)"
-"$repo_root/scripts/strip-copilot-coauthor.sh" --commit-msg-file "$1"
+shared_scripts="${SHARED_SCRIPTS:-$HOME/Projects/shared-scripts}"
+"$shared_scripts/strip-copilot-coauthor.sh" --commit-msg-file "$1"

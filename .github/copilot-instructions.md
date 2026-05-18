@@ -25,16 +25,18 @@ Linting: there is currently no dedicated lint command/tool configured in this re
 
 ## Push workflow (REQUIRED)
 
-**Always run `./scripts/strip-copilot-coauthor.sh` before pushing to GitHub.**
+**Always run `~/Projects/shared-scripts/strip-copilot-coauthor.sh` before pushing to GitHub.**
 This repository must never publish the `Co-authored-by: Copilot ...`
-trailer on `origin`. The expected order before any `git push` is:
+trailer on `origin`. The script lives in the shared
+`~/Projects/shared-scripts/` folder (override with the `SHARED_SCRIPTS`
+env var). The expected order before any `git push` is:
 
 ```bash
 # Verify no trailer survives on the commits about to be pushed
-./scripts/strip-copilot-coauthor.sh --range origin/main..HEAD --dry-run
+~/Projects/shared-scripts/strip-copilot-coauthor.sh --range origin/main..HEAD --dry-run
 
 # If the dry-run reports any trailers, strip them in place
-./scripts/strip-copilot-coauthor.sh --range origin/main..HEAD --apply
+~/Projects/shared-scripts/strip-copilot-coauthor.sh --range origin/main..HEAD --apply
 
 # Then push
 git push origin main
