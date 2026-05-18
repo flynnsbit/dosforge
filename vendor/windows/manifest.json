@@ -6,10 +6,10 @@
     {
       "name": "qemu",
       "description": "QEMU for Windows (Stefan Weil's official x86_64 build). Provides qemu-img.exe and qemu-system-i386.exe used for VHD creation and DOS SYS install.",
-      "version_pin": "REPLACE_WITH_VERSION_DATESTAMP",
-      "download_url": "https://qemu.weilnetz.de/w64/qemu-w64-setup-REPLACE_WITH_VERSION_DATESTAMP.exe",
-      "archive_format": "innosetup",
-      "expected_sha256": "REPLACE_WITH_SHA256",
+      "version_pin": "20260501",
+      "download_url": "https://qemu.weilnetz.de/w64/qemu-w64-setup-20260501.exe",
+      "archive_format": "nsis",
+      "expected_sha256": "a8b29572afb4c6ad024b7de129c81033e9fd191b9e054e3a52ea0bed24ac19ef",
       "license_id": "GPL-2.0-only",
       "license_url": "https://gitlab.com/qemu-project/qemu/-/raw/master/LICENSE",
       "extracts": [
@@ -24,16 +24,44 @@
         {
           "from_in_archive_glob": "*.dll",
           "to_in_bin_dir": "."
+        },
+        {
+          "from_in_archive": "share/bios-256k.bin",
+          "to_in_bin": "bios-256k.bin"
+        },
+        {
+          "from_in_archive": "share/vgabios.bin",
+          "to_in_bin": "vgabios.bin"
+        },
+        {
+          "from_in_archive": "share/vgabios-stdvga.bin",
+          "to_in_bin": "vgabios-stdvga.bin"
+        },
+        {
+          "from_in_archive": "share/kvmvapic.bin",
+          "to_in_bin": "kvmvapic.bin"
+        },
+        {
+          "from_in_archive": "share/linuxboot_dma.bin",
+          "to_in_bin": "linuxboot_dma.bin"
+        },
+        {
+          "from_in_archive": "share/multiboot_dma.bin",
+          "to_in_bin": "multiboot_dma.bin"
+        },
+        {
+          "from_in_archive": "share/pvh.bin",
+          "to_in_bin": "pvh.bin"
         }
       ]
     },
     {
       "name": "mtools",
       "description": "MSYS2 mingw-w64 mtools package — provides mformat.exe, mcopy.exe, mattrib.exe, mdir.exe used for FAT12/16 system-file staging.",
-      "version_pin": "REPLACE_WITH_VERSION",
-      "download_url": "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-mtools-REPLACE_WITH_VERSION-any.pkg.tar.zst",
+      "version_pin": "4.0.49-1",
+      "download_url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-mtools-4.0.49-1-any.pkg.tar.zst",
       "archive_format": "zstandard_tar",
-      "expected_sha256": "REPLACE_WITH_SHA256",
+      "expected_sha256": "acf1c34cb3dc6a7a4496e01f7b308703fcd09c34373d9286f5d668a95c5aea83",
       "license_id": "GPL-3.0-or-later",
       "license_url": "https://www.gnu.org/licenses/gpl-3.0.txt",
       "extracts": [
@@ -60,6 +88,10 @@
         {
           "from_in_archive": "mingw64/bin/mdel.exe",
           "to_in_bin": "mdel.exe"
+        },
+        {
+          "from_in_archive": "mingw64/bin/mmd.exe",
+          "to_in_bin": "mmd.exe"
         }
       ]
     }

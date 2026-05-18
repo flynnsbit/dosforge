@@ -73,3 +73,14 @@ testing-notes.md.*
 vendor/windows/bin/
 vendor/windows/licenses/
 .vendor-cache/
+
+# Local Python venv created by scripts/install-windows-prereqs.ps1 bootstrap
+.venv/
+
+# Smoke-test workspace used during development (VHD/IMG artifacts +
+# throwaway PowerShell snippets used to verify end-to-end behavior).
+.smoke/
+
+# Editor / IDE workspace files
+.vscode/
+.idea/

@@ -128,6 +128,37 @@ def _extract_innosetup(archive: Path, extracts: list[dict[str, str]], staging: P
     )
 
 
+def _extract_nsis(archive: Path, extracts: list[dict[str, str]], staging: Path) -> None:
+    """Extract an NSIS installer (.exe) using 7-Zip.
+
+    Modern 7-Zip (>= ~23) recognises NSIS installer streams and can
+    extract their payload without running the installer. On Windows the
+    canonical install path is ``C:\\Program Files\\7-Zip\\7z.exe``; on
+    Linux / macOS use the packaged ``7z`` / ``7zz`` binary.
+    """
+
+    import subprocess
+
+    candidates = [
+        shutil.which("7z"),
+        shutil.which("7zz"),
+        r"C:\Program Files\7-Zip\7z.exe",
+        r"C:\Program Files (x86)\7-Zip\7z.exe",
+    ]
+    seven_zip = next((c for c in candidates if c and Path(c).exists()), None)
+    if seven_zip is None:
+        raise ManifestError(
+            "Extracting NSIS installers requires 7-Zip (>= 23). Install it "
+            "with your package manager (winget install 7zip.7zip / "
+            "apt-get install p7zip-full / brew install sevenzip).",
+        )
+    subprocess.run(
+        [seven_zip, "x", "-y", f"-o{staging}", str(archive)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+
 def _stage_extracts(component: dict[str, Any], staging: Path) -> None:
     """Copy the requested files from ``staging`` into ``vendor/windows/bin/``."""
 
@@ -208,6 +239,8 @@ def fetch_component(component: dict[str, Any], *, cache_dir: Path, force: bool) 
             _extract_tar(archive_path, component["extracts"], staging, compression=compression)
         elif archive_format == "innosetup":
             _extract_innosetup(archive_path, component["extracts"], staging)
+        elif archive_format == "nsis":
+            _extract_nsis(archive_path, component["extracts"], staging)
         else:
             raise ManifestError(f"unknown archive_format: {archive_format}")
         print(f"[{name}] staging artifacts")
