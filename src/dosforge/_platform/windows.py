@@ -47,6 +47,7 @@ _KNOWN_BUNDLED_TOOLS: frozenset[str] = frozenset(
         "mdir",
         "mtype",
         "mdel",
+        "mmd",
     }
 )
 
@@ -136,7 +137,10 @@ class WindowsBackend(PlatformBackend):
     ) -> tuple[str, ...]:
         commands: list[str] = []
         if media_type is MediaType.VHD:
-            commands.extend(("qemu-img", "mformat"))
+            # mcopy + mmd are needed when a custom payload is being copied
+            # into a non-bootable VHD (the existing mtools @@offset path).
+            # Bundling them unconditionally keeps `check-deps` honest.
+            commands.extend(("qemu-img", "mformat", "mcopy", "mmd"))
         if boot_mode is not BootMode.NONE:
             commands.extend(("mcopy", "mattrib"))
         if boot_mode in {BootMode.COMPAQ331, BootMode.MSDOS33, BootMode.MSDOS331} and (

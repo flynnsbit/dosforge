@@ -3,27 +3,42 @@
 from __future__ import annotations
 
 import os
+import shutil
 import struct
 import subprocess
 
 import pytest
 
 from dosforge._core import fat12_floppy, mbr, vhd_footer
+from dosforge._platform import get_backend
 from dosforge.models import FloppyType
 
 
 # -- VHD footer -----------------------------------------------------------
 
 
+def _resolve_qemu_img() -> str | None:
+    """Locate ``qemu-img`` cross-platform.
+
+    Prefers the platform backend's resolver (so on Windows the bundled
+    ``vendor/windows/bin/qemu-img.exe`` is found), falls back to PATH.
+    """
+
+    candidate = get_backend().tool_path("qemu-img")
+    if candidate and candidate != "qemu-img" and os.path.exists(candidate):
+        return candidate
+    return shutil.which("qemu-img")
+
+
 def _make_fixed_vhd(tmp_path, *, size_bytes: int = 10 * 1024 * 1024):
     """Allocate a fixed VHD via qemu-img (skipped if not available)."""
 
-    qemu_img = subprocess.run(["which", "qemu-img"], capture_output=True, text=True)
-    if qemu_img.returncode != 0:
+    qemu_img = _resolve_qemu_img()
+    if qemu_img is None:
         pytest.skip("qemu-img not available")
     path = tmp_path / "fixture.vhd"
     subprocess.run(
-        ["qemu-img", "create", "-f", "vpc", "-o", "subformat=fixed", str(path), str(size_bytes)],
+        [qemu_img, "create", "-f", "vpc", "-o", "subformat=fixed", str(path), str(size_bytes)],
         check=True,
         capture_output=True,
     )

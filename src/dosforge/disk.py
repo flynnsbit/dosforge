@@ -13,8 +13,10 @@ from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
-from .boot import BootAssetResolver, BootInstaller
-from .commands import CommandRunner
+from .boot import BootAssetResolver, BootInstaller, PartitionRef
+from .commands import CommandRunner, runner_for_backend
+from ._core import mbr as core_mbr
+from ._core import vhd_footer as core_vhd_footer
 from .legacy_dos_install import (
     Compaq331InstallSources,
     LegacyDosInstallProfile,
@@ -298,12 +300,12 @@ class DiskManager:
         from ._platform.base import PlatformBackend  # noqa: F401 — type only
 
         self.backend = backend or get_backend()
-        self.runner = runner or CommandRunner()
+        self.runner = runner or runner_for_backend(self.backend)
         self.state_store = state_store or StateStore()
         self.mount_root = mount_root or app_mount_root()
         self.mount_root.mkdir(parents=True, exist_ok=True)
         self.boot_resolver = boot_resolver or BootAssetResolver(self.runner)
-        self.boot_installer = boot_installer or BootInstaller(self.runner)
+        self.boot_installer = boot_installer or BootInstaller(self.runner, backend=self.backend)
         self.nbd_sys_block_root = nbd_sys_block_root or Path("/sys/class/block")
         self.nbd_dev_root = nbd_dev_root or Path("/dev")
         self.nbd_discovery_timeout = nbd_discovery_timeout
@@ -350,6 +352,14 @@ class DiskManager:
             if request.disk_format in (DiskFormat.FAT12, DiskFormat.FAT16)
             else None
         )
+
+        # On platforms without qemu-nbd (Windows), partition + format the
+        # VHD directly with pure-Python primitives + mtools' ``@@offset``
+        # syntax. Only non-bootable VHDs are supported by this path at the
+        # moment; bootable modes still require the Linux NBD route.
+        if not self.backend.supports_nbd:
+            self._create_and_prepare_vhd_no_kernel(request)
+            return
 
         def configure(nbd_device: str) -> None:
             partition_device = self._partition_and_format(
@@ -1379,6 +1389,135 @@ class DiskManager:
         handle.seek(-512, os.SEEK_END)
         handle.write(bytes(footer))
 
+    def _create_and_prepare_vhd_no_kernel(self, request: CreateRequest) -> None:
+        """No-kernel-mount VHD pipeline for Windows hosts.
+
+        Replaces the Linux qemu-nbd + parted + mkfs.fat flow. The VHD
+        file has already been allocated by ``_create_fixed_vhd`` (which
+        also wrote the correct footer CHS for the chosen machine target).
+        From here we:
+
+        1. Read the VHD footer to discover the canonical CHS triplet
+           (heads / sectors-per-track) that the partition entry must
+           encode for legacy BIOS INT 13h reads to line up with what
+           the emulator's hard disk controller reports.
+        2. Write a single-partition MBR at sector 0 using the pure-Python
+           writer in ``_core.mbr``. Layout matches what Linux parted
+           produces for ``boot_mode=NONE``: partition starts at LBA 2048
+           (1 MiB alignment), bootable flag set, partition type 0x06
+           (FAT16-CHS) or 0x0C (FAT32-LBA).
+        3. Format the partition in-place via ``mformat -i <vhd>@@<offset>``
+           passing the partition size via ``-T`` and the partition start
+           via ``-H``. Without those, mtools auto-detects from EOF which
+           would silently include the VHD footer in the data area.
+        4. Copy any custom payload via the existing mtools-based helper.
+
+        Bootable VHDs are explicitly out of scope at this layer (the
+        BootInstaller still depends on kernel mounts / NBD partition
+        devices). Callers that pass any non-``BootMode.NONE`` request
+        hit a ``ValidationError`` directing them to the Linux path.
+        """
+
+        if request.boot_mode not in (BootMode.NONE, BootMode.FREEDOS, BootMode.MSDOS71):
+            raise ValidationError(
+                "This boot mode is not yet supported on this platform. "
+                "On Windows, only --boot-mode none, --boot-mode freedos, and "
+                "--boot-mode msdos71 are currently implemented for VHD targets; "
+                "other boot modes (MS-DOS 3.x/5.x/6.22, PC-DOS, IBM DOS, Compaq "
+                "DOS) require the Linux side until the next phase of the port "
+                "lands. As a workaround, build those VHDs on Linux and copy them "
+                "over."
+            )
+        if (
+            request.boot_mode is BootMode.FREEDOS
+            and request.disk_format is not DiskFormat.FAT16
+        ):
+            raise ValidationError(
+                "FreeDOS VHDs on Windows are currently restricted to FAT16. "
+                "FAT32 support requires an FAT32 MBR boot code template that "
+                "the FreeDOS asset resolver does not yet produce — fix is "
+                "tracked in the next port phase."
+            )
+
+        target_path = request.path
+        footer = core_vhd_footer.read_footer(target_path)
+        total_sectors = footer.total_sectors
+
+        # Non-bootable VHDs use the modern 1 MiB-aligned partition start
+        # (LBA 2048). This matches what Linux parted produces with
+        # ``mkpart primary fat16/fat32 1MiB 100%``.
+        start_lba = 2048
+        partition_sectors = total_sectors - start_lba
+        if partition_sectors <= 0:
+            raise ValidationError(
+                f"VHD too small ({total_sectors} sectors) to host a partition "
+                f"starting at LBA {start_lba}."
+            )
+
+        # Partition type byte: byte-identical to what parted produces
+        # for the non-legacy boot-flag=on layout used by ``boot_mode=NONE``
+        # (see ``_partition_and_format`` for parity).
+        partition_type = 0x0C if request.disk_format is DiskFormat.FAT32 else 0x06
+
+        core_mbr.write_single_partition_mbr(
+            target_path,
+            partition=core_mbr.PartitionEntry(
+                bootable=True,
+                partition_type=partition_type,
+                first_lba=start_lba,
+                sector_count=partition_sectors,
+                chs_heads=footer.heads,
+                chs_spt=footer.sectors_per_track,
+            ),
+        )
+
+        partition_offset_bytes = start_lba * 512
+        partition_image = f"{target_path}@@{partition_offset_bytes}"
+
+        # Format the partition with mformat. -T pins the total-sectors
+        # count so mtools does not include the VHD footer in the data
+        # area, -H pins the BPB hidden-sectors field to the partition
+        # start so legacy DOS INT 13h reads land at the correct LBA.
+        format_cmd: list[str] = [
+            "mformat",
+            "-i",
+            partition_image,
+            "-T",
+            str(partition_sectors),
+            "-H",
+            str(start_lba),
+        ]
+        label = normalize_label(request.label)
+        if label:
+            format_cmd += ["-v", label]
+        if request.disk_format is DiskFormat.FAT32:
+            format_cmd.append("-F")
+        format_cmd.append("::")
+        self.runner.run(format_cmd)
+
+        if request.boot_mode in (BootMode.FREEDOS, BootMode.MSDOS71):
+            assets = self.boot_resolver.resolve(request)
+            partition_ref = PartitionRef.from_image(
+                image_path=target_path,
+                partition_offset_bytes=partition_offset_bytes,
+            )
+            self.boot_installer.make_partition_bootable(
+                disk_device=str(target_path),
+                partition_device=partition_image,
+                disk_format=request.disk_format,
+                assets=assets,
+                boot_mode=request.boot_mode,
+                partition_ref=partition_ref,
+            )
+
+        custom_payload = self._resolve_custom_payload_path(request)
+        if custom_payload is not None:
+            self._copy_custom_payload_to_vhd_via_mtools(
+                vhd_path=target_path,
+                partition_offset_bytes=partition_offset_bytes,
+                source_dir=custom_payload,
+            )
+
     def _create_and_prepare_floppy_img(self, request: CreateRequest) -> None:
         target_path = request.path.expanduser().resolve()
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2337,6 +2476,8 @@ class DiskManager:
             handle.write(b"\x55\xaa")
 
     def _ensure_sudo_ready(self) -> None:
+        if not self.backend.requires_sudo_for_disk_ops:
+            return
         result = self.runner.run(["true"], sudo=True, check=False)
         if result.returncode == 0:
             return

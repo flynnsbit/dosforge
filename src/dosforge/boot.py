@@ -381,6 +381,52 @@ class BootAssets:
     source_image_size_bytes: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PartitionRef:
+    """Address forms needed to install a boot loader into a partition.
+
+    ``disk_device`` and ``partition_device`` are the historical
+    str arguments that mtools (``mcopy -i``, ``mattrib -i``) and
+    Linux's ``dd`` already understand. On Linux they are typically
+    ``/dev/nbd0`` and ``/dev/nbd0p1``; on Windows they are
+    ``str(vhd_path)`` and ``f"{vhd_path}@@{partition_offset_bytes}"``
+    respectively.
+
+    The optional ``image_path`` + ``partition_offset_bytes`` fields
+    carry the absolute byte address into the on-disk image file —
+    used by :meth:`BootInstaller._patch_at_offset` to write directly
+    with Python file I/O on platforms (Windows) where no kernel
+    block device exists.
+    """
+
+    disk_device: str
+    partition_device: str
+    image_path: "Path | None" = None
+    partition_offset_bytes: int = 0
+
+    @classmethod
+    def from_block_devices(cls, *, disk_device: str, partition_device: str) -> "PartitionRef":
+        """Linux block-device form. Writes go via ``dd`` + sudo."""
+
+        return cls(
+            disk_device=disk_device,
+            partition_device=partition_device,
+            image_path=None,
+            partition_offset_bytes=0,
+        )
+
+    @classmethod
+    def from_image(cls, *, image_path: "Path", partition_offset_bytes: int) -> "PartitionRef":
+        """Windows raw-image form. Writes go via Python ``open(r+b)``."""
+
+        return cls(
+            disk_device=str(image_path),
+            partition_device=f"{image_path}@@{partition_offset_bytes}",
+            image_path=image_path,
+            partition_offset_bytes=partition_offset_bytes,
+        )
+
+
 class BootAssetResolver:
     def __init__(self, runner: CommandRunner, cache_root: Path | None = None) -> None:
         self.runner = runner
@@ -2552,11 +2598,78 @@ class BootInstaller:
         runner: CommandRunner,
         mount_root: Path | None = None,
         mbr_boot_candidates: tuple[Path, ...] | None = None,
+        *,
+        backend: "PlatformBackend | None" = None,
     ) -> None:
+        from ._platform import get_backend as _get_backend
+
         self.runner = runner
         self.mount_root = mount_root or (app_mount_root() / "boot-prep")
         self.mount_root.mkdir(parents=True, exist_ok=True)
         self.mbr_boot_candidates = mbr_boot_candidates or DEFAULT_MBR_BOOT_CODE_CANDIDATES
+        self.backend = backend or _get_backend()
+
+    # ------------------------------------------------------------------
+    # Low-level sector patching primitive used by every previously-``dd``
+    # write below. Dispatches on whether we have direct file access to the
+    # raw disk image (Windows, no kernel mount) or only a block device that
+    # requires sudo (Linux, qemu-nbd attached partition).
+    # ------------------------------------------------------------------
+
+    def _patch_at_offset(
+        self,
+        *,
+        image_path: "Path | None",
+        image_byte_offset: int,
+        device_path: str,
+        device_byte_offset: int,
+        data: bytes,
+    ) -> None:
+        """Write ``data`` at the chosen target's byte offset.
+
+        - When ``image_path`` is non-``None``, opens that file directly
+          with Python ``r+b`` access and seeks to ``image_byte_offset``.
+          Used on platforms without kernel mount (Windows), where the
+          VHD/IMG file itself is the only thing we can write through.
+        - Otherwise, falls back to ``dd`` with ``sudo=True`` writing to
+          ``device_path`` at ``device_byte_offset``. Used on Linux when
+          we have a qemu-nbd-attached block device.
+        """
+
+        if image_path is not None:
+            with image_path.open("r+b") as handle:
+                handle.seek(image_byte_offset)
+                handle.write(data)
+            return
+        self._dd_write(target=device_path, byte_offset=device_byte_offset, data=data)
+
+    def _dd_write(self, *, target: str, byte_offset: int, data: bytes) -> None:
+        """Stage ``data`` into a temp file and invoke ``dd`` (Linux path).
+
+        Keeps the existing Linux semantics — ``dd ... conv=notrunc``
+        with ``sudo=True`` — without introducing a Python ``open()`` on
+        a block device that requires root.
+        """
+
+        staging = self.mount_root / f"dd-write-{uuid4().hex}.bin"
+        try:
+            staging.write_bytes(data)
+            self.runner.run(
+                [
+                    "dd",
+                    f"if={staging}",
+                    f"of={target}",
+                    "bs=1",
+                    f"seek={byte_offset}",
+                    f"count={len(data)}",
+                    "conv=notrunc",
+                ],
+                sudo=True,
+            )
+        finally:
+            if staging.exists():
+                staging.unlink()
+
 
     def make_partition_bootable(
         self,
@@ -2567,16 +2680,28 @@ class BootInstaller:
         assets: BootAssets,
         bios_chs: tuple[int, int] | None = None,
         boot_mode: BootMode = BootMode.FREEDOS,
+        partition_ref: "PartitionRef | None" = None,
     ) -> None:
+        # ``partition_ref`` carries the raw image path + partition offset
+        # for platforms without a kernel block device (Windows). When
+        # set, low-level patches go through Python file I/O; otherwise
+        # they fall back to ``dd`` + sudo on the Linux block devices.
+        image_path = partition_ref.image_path if partition_ref is not None else None
+        partition_offset_bytes = (
+            partition_ref.partition_offset_bytes if partition_ref is not None else 0
+        )
         self._write_mbr_boot_code(
             disk_device=disk_device,
             template=assets.mbr_boot_code_template,
+            image_path=image_path,
         )
         self._write_boot_sector(
             partition_device=partition_device,
             disk_format=disk_format,
             template=assets.boot_sector_template,
             bios_chs=bios_chs,
+            image_path=image_path,
+            partition_offset_bytes=partition_offset_bytes,
         )
         self._copy_system_files(
             partition_device=partition_device,
@@ -2678,13 +2803,23 @@ class BootInstaller:
                 )
 
             if fdos_payload_dir is not None and fdos_payload_dir.is_dir():
-                self._copy_payload_via_mount(
-                    partition_device=partition_device,
-                    payload_dir=fdos_payload_dir,
-                    payload_target_dir=payload_target_dir,
-                )
+                if self.backend.supports_kernel_mount:
+                    self._copy_payload_via_mount(
+                        partition_device=partition_device,
+                        payload_dir=fdos_payload_dir,
+                        payload_target_dir=payload_target_dir,
+                    )
+                else:
+                    self._copy_payload_via_mtools(
+                        partition_device=partition_device,
+                        payload_dir=fdos_payload_dir,
+                        payload_target_dir=payload_target_dir,
+                    )
 
-            self.runner.run(["sync"], check=False)
+            # ``sync`` is Unix-only; on Windows the file handles closed
+            # by mtools have already flushed.
+            if self.backend.requires_sudo_for_disk_ops:
+                self.runner.run(["sync"], check=False)
         finally:
             for temp in temp_files:
                 if temp.exists():
@@ -2813,7 +2948,103 @@ class BootInstaller:
             if mountpoint.exists():
                 shutil.rmtree(mountpoint)
 
-    def write_mbr_only(self, *, disk_device: str, template: Path | None = None) -> None:
+    def _copy_payload_via_mtools(
+        self,
+        *,
+        partition_device: str,
+        payload_dir: Path,
+        payload_target_dir: str,
+    ) -> None:
+        """Mtools mirror of :meth:`_copy_payload_via_mount` (no kernel mount).
+
+        Walks ``payload_dir`` recursively. Directories are created on
+        the target via ``mmd``; files are copied via ``mcopy``. DOS
+        ``*_`` compressed payload files (e.g. ``EXPAND.EX_``) are
+        expanded to their canonical names (``EXPAND.EXE``) via
+        :func:`expand_dos_compressed_payload`, written to a temporary
+        host file, copied with ``mcopy``, and cleaned up. Destination
+        collisions follow the mount-based path's "first writer wins"
+        behavior — we track DOS paths already copied to avoid clobber.
+        """
+
+        # Ensure the top-level target directory exists.
+        target_root_dos = payload_target_dir.replace(os.sep, "/").rstrip("/")
+        if target_root_dos:
+            self.runner.run(
+                ["mmd", "-i", partition_device, f"::{target_root_dos}"],
+                check=False,
+            )
+
+        scheduled: set[str] = set()
+        temp_files: list[Path] = []
+
+        def _dos_path(rel: Path) -> str:
+            parts = [target_root_dos] if target_root_dos else []
+            parts.extend(rel.parts)
+            return "::" + "/".join(parts)
+
+        try:
+            for source in sorted(payload_dir.rglob("*")):
+                relative = source.relative_to(payload_dir)
+                if source.is_dir():
+                    dos_dest = _dos_path(relative)
+                    if dos_dest in scheduled:
+                        continue
+                    scheduled.add(dos_dest)
+                    self.runner.run(
+                        ["mmd", "-i", partition_device, dos_dest],
+                        check=False,
+                    )
+                    continue
+
+                if not source.is_file():
+                    continue
+
+                expanded_name = expanded_name_from_compressed(source.name)
+                if expanded_name is None:
+                    dos_dest = _dos_path(relative)
+                    if dos_dest in scheduled:
+                        continue
+                    scheduled.add(dos_dest)
+                    self.runner.run(
+                        ["mcopy", "-o", "-i", partition_device, str(source), dos_dest],
+                    )
+                    continue
+
+                # Compressed payload file: expand to the canonical name.
+                expanded_rel = relative.with_name(expanded_name)
+                dos_dest = _dos_path(expanded_rel)
+                if dos_dest in scheduled:
+                    continue
+                try:
+                    expanded_bytes = expand_dos_compressed_payload(source.read_bytes())
+                except OSError as exc:
+                    raise ValidationError(
+                        f"Unable to read compressed DOS payload file: {source}"
+                    ) from exc
+                except ValidationError as exc:
+                    raise ValidationError(
+                        f"Unable to expand compressed DOS payload file {source.name}"
+                    ) from exc
+                staging = self.mount_root / f"payload-{uuid4().hex}-{expanded_name}"
+                staging.write_bytes(expanded_bytes)
+                temp_files.append(staging)
+                scheduled.add(dos_dest)
+                self.runner.run(
+                    ["mcopy", "-o", "-i", partition_device, str(staging), dos_dest],
+                )
+        finally:
+            for staging in temp_files:
+                if staging.exists():
+                    staging.unlink()
+
+    def write_mbr_only(
+        self,
+        *,
+        disk_device: str,
+        template: Path | None = None,
+        image_path: "Path | None" = None,
+    ) -> None:
         """Write only the MBR boot code (sector 0 IPL), no VBR or system files.
 
         Used by boot modes (e.g. compaq331) that produce the partition boot
@@ -2821,13 +3052,19 @@ class BootInstaller:
         emulator's own SYS.COM). The standard MBR boot code chains to the
         partition's VBR, which the QEMU step will write.
         """
-        self._write_mbr_boot_code(disk_device=disk_device, template=template)
+        self._write_mbr_boot_code(
+            disk_device=disk_device,
+            template=template,
+            image_path=image_path,
+        )
 
     def patch_fat16_bpb_geometry(
         self,
         *,
         partition_device: str,
         bios_chs: tuple[int, int],
+        image_path: "Path | None" = None,
+        partition_offset_bytes: int = 0,
     ) -> None:
         """Patch BPB heads/spt to match BIOS-canonical geometry.
 
@@ -2840,17 +3077,33 @@ class BootInstaller:
         self._patch_fat16_bpb_geometry(
             partition_device=partition_device,
             bios_chs=bios_chs,
+            image_path=image_path,
+            partition_offset_bytes=partition_offset_bytes,
         )
 
-    def _write_mbr_boot_code(self, *, disk_device: str, template: Path | None = None) -> None:
+    def _write_mbr_boot_code(
+        self,
+        *,
+        disk_device: str,
+        template: Path | None = None,
+        image_path: "Path | None" = None,
+    ) -> None:
         mbr_code_path = template or self._find_mbr_boot_code()
         if not mbr_code_path.exists() or not mbr_code_path.is_file():
             raise ValidationError(f"MBR boot code file does not exist: {mbr_code_path}")
         if mbr_code_path.stat().st_size < 440:
             raise ValidationError(f"MBR boot code template must be at least 440 bytes: {mbr_code_path}")
-        self.runner.run(
-            ["dd", f"if={mbr_code_path}", f"of={disk_device}", "bs=440", "count=1", "conv=notrunc"],
-            sudo=True,
+        # Write exactly the boot-code region (bytes 0..439). Anything past
+        # that belongs to the partition table / disk signature / boot
+        # signature that ``_core.mbr.write_single_partition_mbr`` has
+        # already laid down.
+        mbr_bytes = mbr_code_path.read_bytes()[:440]
+        self._patch_at_offset(
+            image_path=image_path,
+            image_byte_offset=0,
+            device_path=disk_device,
+            device_byte_offset=0,
+            data=mbr_bytes,
         )
 
     def _find_mbr_boot_code(self) -> Path:
@@ -2870,6 +3123,8 @@ class BootInstaller:
         disk_format: DiskFormat,
         template: Path,
         bios_chs: tuple[int, int] | None = None,
+        image_path: "Path | None" = None,
+        partition_offset_bytes: int = 0,
     ) -> None:
         data = template.read_bytes()
         if len(data) < 512:
@@ -2878,126 +3133,136 @@ class BootInstaller:
         code_offset = disk_format.boot_code_offset
         if disk_format is DiskFormat.FAT16:
             code_offset = self._fat12_16_boot_code_offset(data)
-        self.runner.run(
-            ["dd", f"if={template}", f"of={partition_device}", "bs=1", "count=3", "conv=notrunc"],
-            sudo=True,
+        # Write the 3-byte JMP at the start of the partition VBR.
+        self._patch_at_offset(
+            image_path=image_path,
+            image_byte_offset=partition_offset_bytes + 0,
+            device_path=partition_device,
+            device_byte_offset=0,
+            data=data[0:3],
         )
         if disk_format is DiskFormat.FAT16 and code_offset == 54:
             # Legacy DOS 3.x style sectors expect OEM/extended header bytes from the source template.
-            self._copy_legacy_fat12_16_header(template=template, destination=partition_device)
-        self.runner.run(
-            [
-                "dd",
-                f"if={template}",
-                f"of={partition_device}",
-                "bs=1",
-                f"skip={code_offset}",
-                f"seek={code_offset}",
-                f"count={510 - code_offset}",
-                "conv=notrunc",
-            ],
-            sudo=True,
+            self._copy_legacy_fat12_16_header(
+                template=template,
+                destination=partition_device,
+                image_path=image_path,
+                partition_offset_bytes=partition_offset_bytes,
+            )
+        # Copy the boot code region (offset code_offset..510).
+        self._patch_at_offset(
+            image_path=image_path,
+            image_byte_offset=partition_offset_bytes + code_offset,
+            device_path=partition_device,
+            device_byte_offset=code_offset,
+            data=data[code_offset:510],
         )
-        self.runner.run(
-            ["dd", f"if={template}", f"of={partition_device}", "bs=1", "skip=510", "seek=510", "count=2", "conv=notrunc"],
-            sudo=True,
+        # Copy the 0x55 0xAA boot signature at offset 510.
+        self._patch_at_offset(
+            image_path=image_path,
+            image_byte_offset=partition_offset_bytes + 510,
+            device_path=partition_device,
+            device_byte_offset=510,
+            data=data[510:512],
         )
         if disk_format is DiskFormat.FAT16 and bios_chs is not None:
-            self._patch_fat16_bpb_geometry(partition_device=partition_device, bios_chs=bios_chs)
+            self._patch_fat16_bpb_geometry(
+                partition_device=partition_device,
+                bios_chs=bios_chs,
+                image_path=image_path,
+                partition_offset_bytes=partition_offset_bytes,
+            )
 
     def _write_floppy_boot_sector(self, *, image_path: Path, template: Path) -> None:
         data = template.read_bytes()
         if len(data) < 512:
             raise ValidationError(f"Boot template must be at least 512 bytes: {template}")
         code_offset = self._fat12_16_boot_code_offset(data)
-        self.runner.run(
-            ["dd", f"if={template}", f"of={str(image_path)}", "bs=1", "count=3", "conv=notrunc"],
-            sudo=True,
+        # Floppy IMGs always have partition_offset=0; we can use Python
+        # file I/O directly even on Linux since the IMG is a regular
+        # file (the existing Linux path used dd+sudo only because of the
+        # mount path's sudo coupling; the floppy file itself is owned
+        # by the user).
+        self._patch_at_offset(
+            image_path=image_path,
+            image_byte_offset=0,
+            device_path=str(image_path),
+            device_byte_offset=0,
+            data=data[0:3],
         )
         if code_offset == 54:
             # Legacy DOS 3.x style sectors expect OEM/extended header bytes from the source template.
-            self._copy_legacy_fat12_16_header(template=template, destination=str(image_path))
-        self.runner.run(
-            [
-                "dd",
-                f"if={template}",
-                f"of={str(image_path)}",
-                "bs=1",
-                f"skip={code_offset}",
-                f"seek={code_offset}",
-                f"count={510 - code_offset}",
-                "conv=notrunc",
-            ],
-            sudo=True,
+            self._copy_legacy_fat12_16_header(
+                template=template,
+                destination=str(image_path),
+                image_path=image_path,
+                partition_offset_bytes=0,
+            )
+        self._patch_at_offset(
+            image_path=image_path,
+            image_byte_offset=code_offset,
+            device_path=str(image_path),
+            device_byte_offset=code_offset,
+            data=data[code_offset:510],
         )
-        self.runner.run(
-            [
-                "dd",
-                f"if={template}",
-                f"of={str(image_path)}",
-                "bs=1",
-                "skip=510",
-                "seek=510",
-                "count=2",
-                "conv=notrunc",
-            ],
-            sudo=True,
+        self._patch_at_offset(
+            image_path=image_path,
+            image_byte_offset=510,
+            device_path=str(image_path),
+            device_byte_offset=510,
+            data=data[510:512],
         )
 
     def _fat12_16_boot_code_offset(self, sector: bytes) -> int:
         return 62 if sector[54:62] in (b"FAT12   ", b"FAT16   ") else 54
 
-    def _copy_legacy_fat12_16_header(self, *, template: Path, destination: str) -> None:
-        self.runner.run(
-            [
-                "dd",
-                f"if={template}",
-                f"of={destination}",
-                "bs=1",
-                "skip=3",
-                "seek=3",
-                "count=8",
-                "conv=notrunc",
-            ],
-            sudo=True,
+    def _copy_legacy_fat12_16_header(
+        self,
+        *,
+        template: Path,
+        destination: str,
+        image_path: "Path | None" = None,
+        partition_offset_bytes: int = 0,
+    ) -> None:
+        data = template.read_bytes()
+        # OEM ID at offset 3, 8 bytes long.
+        self._patch_at_offset(
+            image_path=image_path,
+            image_byte_offset=partition_offset_bytes + 3,
+            device_path=destination,
+            device_byte_offset=3,
+            data=data[3:11],
         )
-        self.runner.run(
-            [
-                "dd",
-                f"if={template}",
-                f"of={destination}",
-                "bs=1",
-                "skip=38",
-                "seek=38",
-                "count=16",
-                "conv=notrunc",
-            ],
-            sudo=True,
+        # Extended BPB at offset 38, 16 bytes long.
+        self._patch_at_offset(
+            image_path=image_path,
+            image_byte_offset=partition_offset_bytes + 38,
+            device_path=destination,
+            device_byte_offset=38,
+            data=data[38:54],
         )
 
-    def _patch_fat16_bpb_geometry(self, *, partition_device: str, bios_chs: tuple[int, int]) -> None:
+    def _patch_fat16_bpb_geometry(
+        self,
+        *,
+        partition_device: str,
+        bios_chs: tuple[int, int],
+        image_path: "Path | None" = None,
+        partition_offset_bytes: int = 0,
+    ) -> None:
         sectors_per_track, heads = bios_chs
         if sectors_per_track <= 0 or heads <= 0:
             return
-
-        patch_file = self.mount_root / f"fat16-geometry-{uuid4().hex}.bin"
-        patch_file.write_bytes(struct.pack("<HH", sectors_per_track, heads))
-        try:
-            self.runner.run(
-                [
-                    "dd",
-                    f"if={patch_file}",
-                    f"of={partition_device}",
-                    "bs=1",
-                    "seek=24",
-                    "count=4",
-                    "conv=notrunc",
-                ],
-                sudo=True,
-            )
-        finally:
-            if patch_file.exists():
-                patch_file.unlink()
+        # BPB sectors-per-track + heads live at offsets 24 / 26 within
+        # the partition's boot sector.
+        patch_bytes = struct.pack("<HH", sectors_per_track, heads)
+        self._patch_at_offset(
+            image_path=image_path,
+            image_byte_offset=partition_offset_bytes + 24,
+            device_path=partition_device,
+            device_byte_offset=24,
+            data=patch_bytes,
+        )
 
     def _read_first_sector(self, path: Path) -> bytes:
         data = path.read_bytes()[:512]
