@@ -196,15 +196,34 @@ def test_windows_vhd_pipeline_passes_F_flag_for_fat32(tmp_path: Path):
     assert "-F" in mformat_argv, "mformat must be told to use FAT32 (-F) for FAT32 requests"
 
 
-def test_windows_vhd_pipeline_rejects_unsupported_boot_modes(tmp_path: Path):
-    """Boot modes other than NONE and FREEDOS still raise."""
-    target = tmp_path / "boot.vhd"
-    request = _basic_request(target, boot_mode=BootMode.MSDOS622)
-    runner = FakeRunner(vhd_size_bytes=request.size_bytes)
-    manager = _manager(tmp_path, runner)
+def test_windows_vhd_pipeline_accepts_every_legacy_dos_mode(tmp_path: Path):
+    """All twelve boot modes (FREEDOS, MSDOS71, MSDOS33, ..., PCDOS71)
+    pass the Windows-VHD gate after the parity work landed. They may
+    fail later at the boot resolver step if no install media is in the
+    asset dir, but the gate itself should let them through.
 
-    with pytest.raises(ValidationError, match="not yet supported on this platform"):
-        manager.create_and_prepare(request)
+    Replaces the older ``test_windows_vhd_pipeline_rejects_unsupported_boot_modes``
+    which asserted msdos622 still raised "not yet supported on this
+    platform" — no longer true after the gate was lifted.
+    """
+    target = tmp_path / "boot.vhd"
+    legacy_modes = (
+        BootMode.MSDOS5,
+        BootMode.MSDOS622,
+        BootMode.PCDOS,
+        BootMode.PCDOS7,
+    )
+    for mode in legacy_modes:
+        request = _basic_request(target, boot_mode=mode)
+        runner = FakeRunner(vhd_size_bytes=request.size_bytes)
+        manager = _manager(tmp_path, runner)
+        try:
+            manager.create_and_prepare(request)
+        except ValidationError as exc:
+            message = str(exc)
+            assert "not yet supported on this platform" not in message, (
+                f"{mode.value} hit the unsupported-mode gate it should now pass: {message}"
+            )
 
 
 def test_windows_vhd_pipeline_rejects_freedos_fat32(tmp_path: Path):

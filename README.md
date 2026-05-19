@@ -1,13 +1,32 @@
 # dosforge
 
-`dosforge` is a DOS-focused image utility for Linux (Omarchy-friendly) with both a Textual TUI and CLI.
+`dosforge` is a DOS-focused image utility that runs on **Linux** (with a
+full Textual TUI + kernel-mount workflow) and **Windows** (CLI-first,
+no admin, no sudo, no kernel modules — single portable `dosforge.exe`).
 
-It can create, mount, browse, and unmount:
+It can create, browse, and modify:
 
 - fixed-size **VHD** images (FAT12/FAT16/FAT32)
-- floppy **IMG/IMA** images (FAT12)
+- floppy **IMG/IMA/VFD** images (FAT12)
 
-with optional boot/system file staging for FreeDOS and legacy MS-DOS / PC-DOS / Compaq DOS families.
+with optional boot/system-file staging for FreeDOS, MS-DOS 7.1, MS-DOS
+3.3 / 3.31 / 5.0 / 6.22, PC-DOS / PC-DOS 7.0 / **PC-DOS 7.1 (FAT32)**,
+Compaq DOS 3.31, and IBM 8088/V20 (DOS 3.3 / 5.0).
+
+## Platform support
+
+| Feature | Linux | Windows | Notes |
+|---|:---:|:---:|---|
+| Create VHD (all 12 boot modes) | ✅ | ✅ | every mode produces a bootable VHD |
+| Create floppy IMG (8 sizes, bootable + non-bootable) | ✅ | ✅ | |
+| `--dos-install-profile {minimal,full}` | ✅ | ✅ | C:\DOS\ tools tree on FULL |
+| MartyPC Xebec / XT-IDE / JR-IDE machine targets | ✅ | ✅ | all 127 AT geometries + 4 Xebec types |
+| `.7z` auto-extract (WinWorldPC archives) | ✅ | ✅ | drop into `dosassets/<mode>/`, transparent unpack |
+| Custom-payload directory copy | ✅ | ✅ | VHD + IMG, both platforms |
+| `dosforge ls / cat / get / put / rm / mkdir` | ✅ | ✅ | mtools-based, no mount required |
+| `dosforge mount / unmount` | ✅ | ❌ | Linux-only (qemu-nbd + kernel mount). On Windows use the `ls/cat/get/put/rm/mkdir` verbs instead. |
+| `open_in_files` | ✅ (xdg-open) | ✅ (Explorer) | |
+| Textual TUI | ✅ | ⚠️ | TUI works but is iterated on the CLI surface; richer support on Linux. |
 
 ## Demo
 
@@ -40,12 +59,15 @@ https://github.com/user-attachments/assets/90a2c9c1-31c0-4d65-88cc-2e0df4d8758e
   - IBM DOS 3.3 / 5.0
   - MS-DOS 3.3 / 3.31 / 5.0 / 6.22
   - PC-DOS / PC-DOS 7.0 (XDF)
+  - **PC-DOS 7.1** — the only PC-DOS variant with FAT32 + LBA support; uses a QEMU-driven `FORMAT32 /S` install (see [`vogons.org/viewtopic.php?t=93030`](https://www.vogons.org/viewtopic.php?t=93030))
   - Compaq DOS 3.31
+- **mtools-based image content verbs** (`ls`, `cat`, `get`, `put`, `rm`, `mkdir`) — browse and edit any VHD/IMG without mounting it; auto-detects the first MBR partition on VHDs.
 - **Emulator-specific machine targets** — generic (86Box / QEMU) plus
   MartyPC IBM/Xebec, MartyPC XT-IDE, and MartyPC JR-IDE with the exact
   CHS geometries each controller validates against
 - Automatic DOS boot-template extraction from install images when possible
-- Mount + open in file manager from TUI and CLI (`.vhd`, `.img`, `.ima`)
+- **`.7z` auto-extraction** — drop a WinWorldPC archive into `dosassets/<mode>/` and dosforge unpacks it transparently
+- Mount + open in file manager from TUI and CLI (Linux: `.vhd`/`.img`/`.ima`; Windows: file manager only — use the mtools verbs instead of mount)
 - Optional custom payload directory copy into created media (`--custom-payload-path`)
 
 ## Supported image modes

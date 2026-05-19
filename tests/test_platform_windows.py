@@ -32,7 +32,9 @@ def test_windows_backend_reports_no_kernel_mount_no_nbd_no_sudo():
     assert backend.supports_kernel_mount is False
     assert backend.supports_nbd is False
     assert backend.requires_sudo_for_disk_ops is False
-    assert backend.supports_external_file_manager is False
+    # External file manager is now supported on Windows via os.startfile
+    # (see DiskManager.open_in_files). Linux uses xdg-open; both return True.
+    assert backend.supports_external_file_manager is True
 
 
 def test_windows_backend_state_dir_uses_localappdata(monkeypatch):

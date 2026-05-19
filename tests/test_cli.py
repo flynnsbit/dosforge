@@ -19,7 +19,10 @@ def test_main_tui_primes_sudo_before_running_app(monkeypatch) -> None:
             calls["run"] += 1
 
     monkeypatch.setattr(cli, "ensure_startup_sudo_auth", fake_auth)
-    monkeypatch.setattr(cli, "DosForgeApp", FakeApp)
+    # DosForgeApp is imported lazily inside cli.main() (so the CLI can run
+    # without textual installed); patch the source module so the lazy
+    # import resolves to the fake.
+    monkeypatch.setattr("dosforge.app.DosForgeApp", FakeApp)
 
     assert cli.main(["tui"]) == 0
     assert calls == {"auth": 1, "run": 1}
