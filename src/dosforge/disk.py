@@ -1669,18 +1669,34 @@ class DiskManager:
             )
 
         # Legacy DOS modes that use the QEMU SYS install: MS-DOS 3.30,
-        # MS-DOS 3.31, Compaq DOS 3.31, IBM DOS 3.3 (via ibm8088).
+        # MS-DOS 3.31, Compaq DOS 3.31, IBM DOS 3.3 (via ibm8088),
+        # PC-DOS 7.1.
         if legacy_qemu_install:
-            # compaq331 / msdos331 need an MBR IPL written now — the
-            # QEMU SYS step writes the partition VBR but not the MBR's
-            # boot code. msdos33 / ibm8088+dos33 use FORMAT C: /S which
-            # writes both, so the MBR IPL would just be overwritten.
-            if request.boot_mode in (BootMode.COMPAQ331, BootMode.MSDOS331):
+            # compaq331 / msdos331 / pcdos71 need an MBR IPL written
+            # now — the QEMU SYS / FORMAT32 step writes the partition
+            # VBR but not the MBR's boot code, so bytes 0-439 of the
+            # disk are zeroes and the BIOS hangs immediately on the
+            # invalid instruction stream when it jumps to the MBR.
+            # msdos33 / ibm8088+dos33 use FORMAT C: /S which writes
+            # both MBR and VBR, so writing the IPL here would just be
+            # overwritten.
+            if request.boot_mode in (
+                BootMode.COMPAQ331,
+                BootMode.MSDOS331,
+                BootMode.PCDOS71,
+            ):
                 self.boot_installer.write_mbr_only(
                     disk_device=str(target_path),
                     image_path=target_path,
                 )
-                if fat_bios_chs is not None:
+                # FAT16 BPB heads/spt patch only applies to the two
+                # FAT16 legacy modes — PC-DOS 7.1 is FAT32 with a
+                # different BPB extension layout and FORMAT32 already
+                # wrote correct geometry matching the VHD footer.
+                if (
+                    request.boot_mode in (BootMode.COMPAQ331, BootMode.MSDOS331)
+                    and fat_bios_chs is not None
+                ):
                     self.boot_installer.patch_fat16_bpb_geometry(
                         partition_device=partition_image,
                         bios_chs=fat_bios_chs,
