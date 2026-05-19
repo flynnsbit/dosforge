@@ -741,3 +741,114 @@ class TestNegativeCases:
             "--boot-assets-path", str(FREEDOS_ASSETS),
         )
         assert_clean_error(result, contains="FAT16")
+
+
+# --------------------------------------------------------------------------
+# 9. Image-content verbs (mtools wrappers — ls/cat/get/put/rm/mkdir)
+# --------------------------------------------------------------------------
+
+
+class TestImageContentVerbs:
+    """End-to-end checks of the mtools-backed image-content verbs that
+    let users browse / extract / modify a disk image without mounting it.
+    Exercises a flat FAT12 floppy AND a partitioned VHD so the
+    auto-partition-detection path is covered.
+    """
+
+    @pytest.fixture
+    def scratch_vhd(self, tmp_path: Path) -> Path:
+        """A non-bootable 32 MiB FAT16 VHD with the partition created."""
+
+        vhd = tmp_path / "scratch.vhd"
+        result = run_cli(
+            "create",
+            "--media-type", "vhd",
+            "--format", "fat16",
+            "--size", "32M",
+            "--path", str(vhd),
+        )
+        assert_success(result)
+        return vhd
+
+    @pytest.fixture
+    def scratch_img(self, tmp_path: Path) -> Path:
+        """A non-bootable 1.44 MB FAT12 floppy."""
+
+        img = tmp_path / "scratch.img"
+        result = run_cli(
+            "create",
+            "--media-type", "img",
+            "--floppy-type", "1440k",
+            "--path", str(img),
+        )
+        assert_success(result)
+        return img
+
+    def test_put_get_ls_roundtrip_vhd(self, tmp_path: Path, scratch_vhd: Path):
+        source = tmp_path / "HELLO.TXT"
+        source.write_text("hello from dosforge\r\n", encoding="ascii")
+        # put
+        put = run_cli("put", str(scratch_vhd), str(source))
+        assert_success(put)
+        # ls confirms the file landed
+        ls = run_cli("ls", str(scratch_vhd))
+        assert_success(ls)
+        assert "HELLO" in ls.stdout
+        assert "TXT" in ls.stdout
+        # cat returns the contents
+        cat = run_cli("cat", str(scratch_vhd), "/HELLO.TXT")
+        assert_success(cat)
+        assert "hello from dosforge" in cat.stdout
+        # get pulls it back to a different local path
+        out = tmp_path / "out" / "out.txt"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        get = run_cli("get", str(scratch_vhd), "/HELLO.TXT", str(out))
+        assert_success(get)
+        assert out.is_file()
+        assert out.read_bytes() == source.read_bytes()
+
+    def test_mkdir_then_put_into_subdir(self, tmp_path: Path, scratch_vhd: Path):
+        source = tmp_path / "config.sys"
+        source.write_text("FILES=8\r\n", encoding="ascii")
+        mk = run_cli("mkdir", str(scratch_vhd), "/TOOLS")
+        assert_success(mk)
+        put = run_cli("put", str(scratch_vhd), str(source), "/TOOLS/CONFIG.SYS")
+        assert_success(put)
+        ls = run_cli("ls", str(scratch_vhd), "/TOOLS")
+        assert_success(ls)
+        assert "CONFIG" in ls.stdout and "SYS" in ls.stdout
+
+    def test_rm_removes_file(self, tmp_path: Path, scratch_vhd: Path):
+        source = tmp_path / "DELETE.ME"
+        source.write_bytes(b"junk")
+        run_cli("put", str(scratch_vhd), str(source))
+        ls_before = run_cli("ls", str(scratch_vhd))
+        assert "DELETE" in ls_before.stdout
+        rm = run_cli("rm", str(scratch_vhd), "/DELETE.ME")
+        assert_success(rm)
+        ls_after = run_cli("ls", str(scratch_vhd))
+        assert "DELETE" not in ls_after.stdout
+
+    def test_ls_flat_floppy_img(self, scratch_img: Path):
+        """Flat IMG (no partition table) is handled identically — the
+        resolver returns the bare path as the mtools target."""
+
+        ls = run_cli("ls", str(scratch_img))
+        assert_success(ls)
+        # Empty floppy should still list a header without errors.
+        assert "Directory" in ls.stdout or "free" in ls.stdout
+
+    def test_mount_emits_clean_windows_error(self, scratch_vhd: Path):
+        """On Windows, `mount` should redirect to the new verbs, not crash."""
+
+        result = run_cli("mount", "--path", str(scratch_vhd))
+        assert result.returncode != 0
+        assert "Traceback" not in result.stderr
+        assert "Linux-only" in result.stderr
+        assert "dosforge ls" in result.stderr
+
+    def test_unmount_emits_clean_windows_error(self):
+        result = run_cli("unmount", "--mount-point", "C:\\nope")
+        assert result.returncode != 0
+        assert "Traceback" not in result.stderr
+        assert "Linux-only" in result.stderr

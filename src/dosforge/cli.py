@@ -184,6 +184,84 @@ def build_parser() -> argparse.ArgumentParser:
         "list-bios-drive-types",
         help="Print the Phoenix and AMI classic AT BIOS HDD type tables and exit.",
     )
+
+    # ----------------------------------------------------------------
+    # Image-content verbs (mtools-based, no mount required). These
+    # work cross-platform against .vhd / .img / .ima / .vfd / .dsk /
+    # .xdf files. For partitioned VHDs the first non-empty primary
+    # partition entry is auto-selected (override with --partition).
+    # ----------------------------------------------------------------
+    ls_cmd = subcommands.add_parser(
+        "ls",
+        help="List DOS directory contents inside a disk image (no mount).",
+    )
+    ls_cmd.add_argument("image", help="Path to .vhd / .img / .ima / .vfd file.")
+    ls_cmd.add_argument("path", nargs="?", default="/", help="DOS directory path (default: /).")
+    ls_cmd.add_argument("--partition", type=int, default=None, help="1-indexed partition (VHD only).")
+    ls_cmd.add_argument("--all", action="store_true", dest="show_hidden", help="Show hidden + system files.")
+
+    cat_cmd = subcommands.add_parser(
+        "cat",
+        help="Print the contents of a file inside a disk image to stdout.",
+    )
+    cat_cmd.add_argument("image", help="Path to .vhd / .img / .ima / .vfd file.")
+    cat_cmd.add_argument("path", help="DOS file path (e.g. /CONFIG.SYS).")
+    cat_cmd.add_argument("--partition", type=int, default=None)
+    cat_cmd.add_argument(
+        "--binary",
+        action="store_true",
+        help="Write raw bytes to stdout (default: decode CP437 with line-end normalization).",
+    )
+
+    get_cmd = subcommands.add_parser(
+        "get",
+        help="Copy a file out of a disk image to the local filesystem.",
+    )
+    get_cmd.add_argument("image", help="Path to .vhd / .img / .ima / .vfd file.")
+    get_cmd.add_argument("dos_path", help="Source DOS path inside the image.")
+    get_cmd.add_argument(
+        "local_path",
+        nargs="?",
+        default=".",
+        help="Local destination file or directory (default: current dir).",
+    )
+    get_cmd.add_argument("--partition", type=int, default=None)
+
+    put_cmd = subcommands.add_parser(
+        "put",
+        help="Copy a local file into a disk image.",
+    )
+    put_cmd.add_argument("image", help="Path to .vhd / .img / .ima / .vfd file.")
+    put_cmd.add_argument("local_path", help="Local source file.")
+    put_cmd.add_argument(
+        "dos_path",
+        nargs="?",
+        default=None,
+        help="Destination DOS path inside the image (default: /<basename>).",
+    )
+    put_cmd.add_argument("--partition", type=int, default=None)
+    put_cmd.add_argument(
+        "--no-overwrite",
+        action="store_true",
+        help="Fail if the destination file already exists.",
+    )
+
+    rm_cmd = subcommands.add_parser(
+        "rm",
+        help="Delete a file inside a disk image.",
+    )
+    rm_cmd.add_argument("image")
+    rm_cmd.add_argument("dos_path")
+    rm_cmd.add_argument("--partition", type=int, default=None)
+
+    mkdir_cmd = subcommands.add_parser(
+        "mkdir",
+        help="Create a directory inside a disk image.",
+    )
+    mkdir_cmd.add_argument("image")
+    mkdir_cmd.add_argument("dos_path")
+    mkdir_cmd.add_argument("--partition", type=int, default=None)
+
     return parser
 
 
@@ -330,6 +408,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if args.command == "mount":
+            from ._platform import get_backend
+
+            if not get_backend().supports_kernel_mount:
+                print(
+                    "`dosforge mount` requires kernel mount support, which is "
+                    "Linux-only.\n"
+                    "On Windows, use the mtools wrapper subcommands instead:\n"
+                    "  dosforge ls <image> [path]      # list directory\n"
+                    "  dosforge cat <image> <path>     # print file contents\n"
+                    "  dosforge get <image> <path> [local]   # copy file out\n"
+                    "  dosforge put <image> <local> [path]   # copy file in\n"
+                    "  dosforge rm <image> <path>      # delete file\n"
+                    "  dosforge mkdir <image> <path>   # create directory",
+                    file=sys.stderr,
+                )
+                return 1
             record = manager.mount_vhd(Path(args.path))
             print(f"Mounted {record.vhd_path} to {record.mount_point} via {record.nbd_device}")
             if args.open:
@@ -338,6 +432,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if args.command == "unmount":
+            from ._platform import get_backend
+
+            if not get_backend().supports_kernel_mount:
+                print(
+                    "`dosforge unmount` requires kernel mount support, which "
+                    "is Linux-only. On Windows there's nothing to unmount — "
+                    "the mtools-based ls/cat/get/put/rm/mkdir verbs operate "
+                    "directly on the image file without a persistent mount.",
+                    file=sys.stderr,
+                )
+                return 1
             record = manager.unmount(Path(args.mount_point))
             print(f"Unmounted {record.mount_point} and disconnected {record.nbd_device}")
             return 0
@@ -386,6 +491,70 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "       --bios-drive-type auto:2     (alias for phoenix:2)"
             )
             return 0
+
+        # --------------------------------------------------------------
+        # Image-content verbs (cross-platform, no mount).
+        # --------------------------------------------------------------
+        if args.command in ("ls", "cat", "get", "put", "rm", "mkdir"):
+            from . import image_ops
+
+            if args.command == "ls":
+                output = image_ops.ls(
+                    Path(args.image),
+                    args.path,
+                    partition=args.partition,
+                    all_files=args.show_hidden,
+                )
+                if output:
+                    print(output)
+                return 0
+
+            if args.command == "cat":
+                data = image_ops.cat(
+                    Path(args.image),
+                    args.path,
+                    partition=args.partition,
+                )
+                if args.binary:
+                    sys.stdout.buffer.write(data)
+                else:
+                    # Decode CP437 (DOS) and normalize CRLF to the host
+                    # line ending. Falls back to lossy decoding for any
+                    # bytes outside CP437.
+                    text = data.decode("cp437", errors="replace").replace("\r\n", "\n")
+                    sys.stdout.write(text)
+                return 0
+
+            if args.command == "get":
+                written = image_ops.get(
+                    Path(args.image),
+                    args.dos_path,
+                    Path(args.local_path),
+                    partition=args.partition,
+                )
+                print(f"Copied {args.dos_path} -> {written}")
+                return 0
+
+            if args.command == "put":
+                landed = image_ops.put(
+                    Path(args.image),
+                    Path(args.local_path),
+                    args.dos_path,
+                    partition=args.partition,
+                    overwrite=not args.no_overwrite,
+                )
+                print(f"Copied {args.local_path} -> {args.image}:{landed}")
+                return 0
+
+            if args.command == "rm":
+                image_ops.rm(Path(args.image), args.dos_path, partition=args.partition)
+                print(f"Deleted {args.dos_path} from {args.image}")
+                return 0
+
+            if args.command == "mkdir":
+                image_ops.mkdir(Path(args.image), args.dos_path, partition=args.partition)
+                print(f"Created directory {args.dos_path} in {args.image}")
+                return 0
     except DosForgeError as exc:
         print(str(exc), file=sys.stderr)
         return 1

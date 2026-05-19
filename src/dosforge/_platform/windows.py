@@ -124,7 +124,7 @@ class WindowsBackend(PlatformBackend):
 
     @property
     def supports_external_file_manager(self) -> bool:
-        return False
+        return True
 
     # -- Dependency lists ----------------------------------------------------
 

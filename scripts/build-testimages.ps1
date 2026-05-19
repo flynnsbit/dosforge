@@ -255,6 +255,51 @@ Build-Image "vhd-pcdos71-fat32-2g" @(
     '--boot-assets-path',(Join-Path $repoRoot 'dosassets\pcdos71')
 )
 
+# MS-DOS 3.30 bootable 360K floppy (verified working on Windows after
+# the mtools cwd fix that landed earlier in this port).
+Build-Image "img-msdos33-360k" @(
+    'create', '--media-type','img', '--floppy-type','360k',
+    '--img-system-format', '--boot-mode','msdos33',
+    '--path',(Join-Path $OutDir 'img-msdos33-360k.img'),
+    '--boot-assets-path',(Join-Path $repoRoot 'dosassets\msdos33')
+)
+
+# MS-DOS 5.0 bootable 720K floppy
+Build-Image "img-msdos5-720k" @(
+    'create', '--media-type','img', '--floppy-type','720k',
+    '--img-system-format', '--boot-mode','msdos5',
+    '--path',(Join-Path $OutDir 'img-msdos5-720k.img'),
+    '--boot-assets-path',(Join-Path $repoRoot 'dosassets\msdos5')
+)
+
+# MS-DOS 6.22 bootable 1.44 MB floppy
+Build-Image "img-msdos622-1440k" @(
+    'create', '--media-type','img', '--floppy-type','1440k',
+    '--img-system-format', '--boot-mode','msdos622',
+    '--path',(Join-Path $OutDir 'img-msdos622-1440k.img'),
+    '--boot-assets-path',(Join-Path $repoRoot 'dosassets\msdos622')
+)
+
+# IBM PC-DOS 7.0 bootable 1.44 MB floppy (direct system-file assets in
+# dosassets\pcdos7\ — works on Windows even though the install media
+# itself is XDF and can't be extracted natively).
+Build-Image "img-pcdos7-1440k" @(
+    'create', '--media-type','img', '--floppy-type','1440k',
+    '--img-system-format', '--boot-mode','pcdos7',
+    '--path',(Join-Path $OutDir 'img-pcdos7-1440k.img'),
+    '--boot-assets-path',(Join-Path $repoRoot 'dosassets\pcdos7')
+)
+
+# MS-DOS 3.30 on MartyPC Xebec Type 1 (10 MiB / FAT12) — the smallest
+# vintage MFM geometry dosforge supports.
+Build-Image "vhd-msdos33-xebec-type1-fat12" @(
+    'create', '--media-type','vhd', '--format','fat12',
+    '--machine-target','martypc-xebec', '--martypc-xebec-drive-type','type1',
+    '--path',(Join-Path $OutDir 'vhd-msdos33-xebec-type1-fat12.vhd'),
+    '--boot-mode','msdos33',
+    '--boot-assets-path',(Join-Path $repoRoot 'dosassets\msdos33')
+)
+
 # ============================================================================
 # Floppy IMGs (system-format = bootable)
 # ============================================================================

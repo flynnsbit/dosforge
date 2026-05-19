@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import struct
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -743,6 +744,12 @@ class DiskManager:
         target = path.expanduser().resolve()
         if not target.exists():
             raise ValidationError(f"Cannot open missing path: {target}")
+        # Windows: use the shell's "open" verb via os.startfile (opens
+        # Explorer for directories, default handler for files). Linux:
+        # delegate to xdg-open through the existing run_detached helper.
+        if sys.platform == "win32":
+            os.startfile(str(target))  # type: ignore[attr-defined]
+            return
         self.runner.run_detached(["xdg-open", str(target)])
 
     def fetch_freedos_assets(self, destination: Path | None = None, download_url: str | None = None) -> Path:
@@ -1791,11 +1798,22 @@ class DiskManager:
             )
         custom_payload = self._resolve_custom_payload_path(request)
         if custom_payload is not None:
-            self._copy_custom_payload_to_filesystem(
-                partition_device=str(target_path),
-                source_dir=custom_payload,
-                boot_mode=request.boot_mode,
-            )
+            if self.backend.supports_kernel_mount:
+                self._copy_custom_payload_to_filesystem(
+                    partition_device=str(target_path),
+                    source_dir=custom_payload,
+                    boot_mode=request.boot_mode,
+                )
+            else:
+                # No kernel mount available (Windows): use mtools to write
+                # directly into the FAT12 floppy. Matches Linux behavior of
+                # skipping protected DOS system files so img_system_format's
+                # IO.SYS / IBMBIO.COM etc. aren't clobbered.
+                self._copy_custom_payload_to_img_via_mtools(
+                    image_path=target_path,
+                    source_dir=custom_payload,
+                    boot_mode=request.boot_mode,
+                )
 
     def _create_fixed_img(self, path: Path, floppy_type: FloppyType) -> None:
         with path.open("wb") as handle:
@@ -2070,6 +2088,40 @@ class DiskManager:
             elif entry.is_file():
                 self.runner.run(
                     ["mcopy", "-i", partition_image, "-o", str(entry), dest],
+                )
+
+    def _copy_custom_payload_to_img_via_mtools(
+        self,
+        *,
+        image_path: Path,
+        source_dir: Path,
+        boot_mode: BootMode = BootMode.NONE,
+    ) -> None:
+        """Copy a directory's contents to A:\\ via mtools (no loop mount).
+
+        Floppy-IMG counterpart of ``_copy_custom_payload_to_vhd_via_mtools``.
+        Used on backends where ``supports_kernel_mount`` is False
+        (Windows). Mirrors the Linux ``_copy_custom_payload_to_filesystem``
+        protected-file filter so ``img_system_format``-staged DOS system
+        files (IO.SYS, IBMBIO.COM, COMMAND.COM, …) aren't clobbered by
+        same-named entries in the user's payload directory.
+        """
+        protected = self._protected_boot_filenames(boot_mode)
+        for entry in sorted(source_dir.rglob("*")):
+            relative = entry.relative_to(source_dir)
+            dest = "::" + str(relative).replace(os.sep, "/")
+            if entry.is_dir():
+                self.runner.run(
+                    ["mmd", "-i", str(image_path), dest],
+                    check=False,
+                )
+            elif entry.is_file():
+                # Skip protected DOS system files at the root only.
+                # Same-named files in subdirectories are passthrough.
+                if relative.parent == Path(".") and entry.name.upper() in protected:
+                    continue
+                self.runner.run(
+                    ["mcopy", "-i", str(image_path), "-o", str(entry), dest],
                 )
 
     def _copy_custom_payload_to_filesystem(
