@@ -1693,15 +1693,41 @@ class DiskManager:
                 vhd_path=target_path,
                 partition_offset_bytes=partition_offset_bytes,
             )
+            # PC-DOS 7.1's FORMAT32 /S writes the system files with
+            # only the Archive bit set. PC-DOS 7.1's boot sector locates
+            # IBMBIO.COM by scanning for an entry with +System+Hidden
+            # attributes in the root directory — without those bits the
+            # loader prints "Non-System disk" or silently fails to
+            # transfer control. Per the vogons.org PC-DOS 7.1 guide
+            # (step 8) we apply +R +S +H ourselves.
+            if request.boot_mode is BootMode.PCDOS71:
+                for sysfile in ("IBMBIO.COM", "IBMDOS.COM"):
+                    self.runner.run(
+                        [
+                            "mattrib",
+                            "-i",
+                            partition_image,
+                            "+r",
+                            "+s",
+                            "+h",
+                            f"::{sysfile}",
+                        ],
+                        check=False,
+                    )
             self._stage_legacy_dos_full_profile_payload(
                 request=request,
                 vhd_path=target_path,
                 partition_offset_bytes=partition_offset_bytes,
             )
-            self._patch_partition_bpb_to_footer_geometry(
-                vhd_path=target_path,
-                partition_offset_bytes=partition_offset_bytes,
-            )
+            # Skip the FAT16 BPB heads/spt patch on PC-DOS 7.1: the
+            # partition is FAT32 (different BPB extension layout) and
+            # FORMAT32 already wrote the geometry matching SeaBIOS,
+            # which equals the VHD footer CHS on every supported target.
+            if request.boot_mode is not BootMode.PCDOS71:
+                self._patch_partition_bpb_to_footer_geometry(
+                    vhd_path=target_path,
+                    partition_offset_bytes=partition_offset_bytes,
+                )
 
         custom_payload = self._resolve_custom_payload_path(request)
         if custom_payload is not None:
