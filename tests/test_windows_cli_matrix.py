@@ -697,15 +697,10 @@ class TestBootableFreedosFloppy:
 # --------------------------------------------------------------------------
 
 
-UNSUPPORTED_VHD_BOOT_MODES = [
-    ("msdos33", []),
-    ("msdos331", []),
-    ("msdos5", []),
-    ("msdos622", []),
-    ("compaq331", []),
-    ("pcdos", []),
-    ("pcdos7", []),
-    ("ibm8088", ["--ibm-dos-version", "dos33"]),
+UNSUPPORTED_VHD_BOOT_MODES: list[tuple[str, list[str]]] = [
+    # All previously-unsupported VHD boot modes (msdos5, msdos622, pcdos,
+    # pcdos7) now run on Windows via the static-template asset resolver
+    # path. The negative-case list is intentionally empty.
 ]
 
 

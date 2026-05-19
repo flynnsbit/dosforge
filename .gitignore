@@ -46,10 +46,15 @@
 !/dosassets/pcdos6/readme.txt
 /dosassets/pcdos7/*
 !/dosassets/pcdos7/readme.txt
+/dosassets/pcdos71/*
+!/dosassets/pcdos71/readme.txt
+/dosassets/pcdos2000/*
+!/dosassets/pcdos2000/readme.txt
 
 /payload/
 /to-do/
 /win21-*/
+/testimages/
 
 # Build artifacts and test outputs
 /build/

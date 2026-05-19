@@ -222,6 +222,7 @@ class DosForgeApp(App[None]):
                         ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
                         ("PC-DOS bootable", BootMode.PCDOS.value),
                         ("PC-DOS 7.0 bootable (XDF media)", BootMode.PCDOS7.value),
+                        ("PC-DOS 7.1 bootable (FAT32)", BootMode.PCDOS71.value),
                         ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
                     ],
                     value=BootMode.NONE.value,
@@ -478,6 +479,7 @@ class DosForgeApp(App[None]):
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS7,
+            BootMode.PCDOS71,
             BootMode.COMPAQ331,
         }
         show_dos_profile = boot_controls_active and boot_mode in dos_boot_modes

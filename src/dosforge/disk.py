@@ -23,6 +23,7 @@ from .legacy_dos_install import (
     LegacyDosQemuInstaller,
     compaq331_profile,
     msdos33_profile,
+    pcdos71_profile,
 )
 from .dependencies import BOOT_COMMANDS, REQUIRED_COMMANDS, assert_dependencies, find_missing
 from .errors import DosForgeError, ValidationError
@@ -79,7 +80,10 @@ class _LegacyDosInstallDescriptor:
     asset_fallback_dirs: tuple[str, ...]
     preferred_image_names: tuple[str, ...]
     system_file_marker: str
-    profile_builder: Callable[[Path], LegacyDosInstallProfile]
+    profile_builder: Callable[[Path, Path], LegacyDosInstallProfile]
+    """Build the profile from ``(install_image, boot_assets_dir)``. Most
+    profiles ignore the assets dir; pcdos71 uses it to locate
+    FORMAT32.COM for the install floppy."""
 
 
 _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
@@ -120,6 +124,20 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
         preferred_image_names=("DISK01.IMG", "DISK01.IMA", "DISK1.IMG", "DISK1.IMA"),
         system_file_marker="IO.SYS",
         profile_builder=msdos33_profile,
+    ),
+    BootMode.PCDOS71: _LegacyDosInstallDescriptor(
+        label="PC-DOS 7.1",
+        asset_fallback_dirs=("pcdos71",),
+        # tk_raid.vfd / install.vfd is our preferred install image — a
+        # pre-built bootable PC-DOS 7.1 floppy from the IBM ServerGuide
+        # Scripting Toolkit. The installer rewrites its AUTOEXEC.BAT to
+        # drive FORMAT32 against the target VHD.
+        preferred_image_names=(
+            "INSTALL.VFD", "INSTALL.IMG",
+            "TK_RAID.VFD", "TK_RAID2.VFD",
+        ),
+        system_file_marker="IBMBIO.COM",
+        profile_builder=pcdos71_profile,
     ),
 }
 
@@ -179,7 +197,7 @@ def _chs_to_partition_table_bytes(*, cyl: int, head: int, sector: int) -> bytes:
 def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
     """Return True for boot modes whose install step is driven by QEMU.
 
-    Currently four flows go through ``_install_legacy_dos_via_qemu``:
+    Currently five flows go through ``_install_legacy_dos_via_qemu``:
 
     - ``BootMode.COMPAQ331`` — Compaq DOS 3.31 (FAT16B + SYS C:).
     - ``BootMode.MSDOS331`` — MS-DOS 3.31 reuses the Compaq pipeline
@@ -191,6 +209,8 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
       The static-template install path produced an unbootable VHD
       (DOS 3.30 boot sectors are floppy-flavoured and reject a generic
       hard-disk BPB), so we redirect through the proven QEMU path.
+    - ``BootMode.PCDOS71`` — PC-DOS 7.1 (FAT32 via FORMAT32 inside QEMU,
+      using a custom install floppy built from tk_raid.vfd + FORMAT32.COM).
 
     Other ``IBM8088`` versions (DOS 5.0) still use the regular
     ``make_partition_bootable`` flow because their static template is
@@ -200,6 +220,7 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
         BootMode.COMPAQ331,
         BootMode.MSDOS331,
         BootMode.MSDOS33,
+        BootMode.PCDOS71,
     ):
         return True
     if (
@@ -844,6 +865,34 @@ class DiskManager:
         }
         if request.boot_mode in legacy_fat16_modes and request.disk_format is not DiskFormat.FAT16:
             raise ValidationError("Legacy DOS boot profiles support FAT16 only.")
+        # PC-DOS 7.1 is the unique pre-Windows IBM DOS that supports FAT32
+        # via FORMAT32.COM. Accept FAT16 too for compatibility with smaller
+        # / vintage targets.
+        if (
+            request.boot_mode is BootMode.PCDOS71
+            and request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT32)
+        ):
+            raise ValidationError(
+                "PC-DOS 7.1 boot mode supports FAT16 and FAT32."
+            )
+        # PC-DOS FORMAT32 refuses to format partitions below ~1 GiB
+        # ("The drive specified is too small to use FAT32."). The
+        # threshold matches Win9x's FAT32 minimum cluster-count math
+        # for the default 4 KiB cluster size (65525 clusters * 4 KiB
+        # ~ 256 MiB) but PC-DOS uses a larger default, so set the
+        # bar at 1 GiB to give FORMAT32 enough room.
+        if (
+            request.boot_mode is BootMode.PCDOS71
+            and request.disk_format is DiskFormat.FAT32
+            and request.size_bytes < 1024 * 1024 * 1024
+        ):
+            raise ValidationError(
+                "PC-DOS 7.1 FAT32 partitions must be at least 1 GiB. "
+                "PC-DOS FORMAT32 rejects smaller partitions with "
+                "'The drive specified is too small to use FAT32.' "
+                "Use --size 1G (or larger), or pick --format fat16 for "
+                "smaller drives."
+            )
         # MSDOS33 accepts FAT16 (default) and FAT12 (only for MartyPC Xebec
         # Type 1, validated above).
         if (
@@ -896,6 +945,7 @@ class DiskManager:
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS7,
+            BootMode.PCDOS71,
             BootMode.COMPAQ331,
         }
         if request.boot_mode not in boot_dos_modes:
@@ -1449,15 +1499,25 @@ class DiskManager:
         hit a ``ValidationError`` directing them to the Linux path.
         """
 
-        if request.boot_mode not in (BootMode.NONE, BootMode.FREEDOS, BootMode.MSDOS71):
+        if request.boot_mode not in (
+            BootMode.NONE,
+            BootMode.FREEDOS,
+            BootMode.MSDOS71,
+            BootMode.MSDOS33,
+            BootMode.MSDOS331,
+            BootMode.COMPAQ331,
+            BootMode.IBM8088,
+            BootMode.MSDOS5,
+            BootMode.MSDOS622,
+            BootMode.PCDOS,
+            BootMode.PCDOS7,
+            BootMode.PCDOS71,
+        ):
             raise ValidationError(
                 "This boot mode is not yet supported on this platform. "
-                "On Windows, only --boot-mode none, --boot-mode freedos, and "
-                "--boot-mode msdos71 are currently implemented for VHD targets; "
-                "other boot modes (MS-DOS 3.x/5.x/6.22, PC-DOS, IBM DOS, Compaq "
-                "DOS) require the Linux side until the next phase of the port "
-                "lands. As a workaround, build those VHDs on Linux and copy them "
-                "over."
+                "On Windows, supported VHD boot modes are: none, freedos (FAT16), "
+                "msdos71, msdos33, msdos331, compaq331, ibm8088 (dos33), "
+                "msdos5, msdos622, pcdos, pcdos7, pcdos71."
             )
         if (
             request.boot_mode is BootMode.FREEDOS
@@ -1473,11 +1533,27 @@ class DiskManager:
         target_path = request.path
         footer = core_vhd_footer.read_footer(target_path)
         total_sectors = footer.total_sectors
+        fat_bios_chs = (
+            self._read_vpc_bios_chs_geometry(target_path)
+            if request.disk_format in (DiskFormat.FAT12, DiskFormat.FAT16)
+            else None
+        )
 
-        # Non-bootable VHDs use the modern 1 MiB-aligned partition start
-        # (LBA 2048). This matches what Linux parted produces with
-        # ``mkpart primary fat16/fat32 1MiB 100%``.
-        start_lba = 2048
+        legacy_qemu_install = _uses_legacy_dos_qemu_install(request)
+        msdos33_layout = _uses_msdos33_filesystem_layout(request)
+        pcdos71_layout = request.boot_mode is BootMode.PCDOS71
+
+        # Partition start: legacy DOS-3.x modes get a track-aligned
+        # partition at LBA = spt (or 63 by default) to mirror the layout
+        # that real DOS FDISK / MS-DOS 3.x install produces. PC-DOS 7.1
+        # is LBA-aware so it gets the same modern 1 MiB alignment used by
+        # FreeDOS / MS-DOS 7.1 / non-bootable. Everything else legacy gets
+        # the spt-aligned offset.
+        if legacy_qemu_install and not pcdos71_layout:
+            start_lba = _partition_offset_bytes_for(request) // 512
+        else:
+            start_lba = 2048
+
         partition_sectors = total_sectors - start_lba
         if partition_sectors <= 0:
             raise ValidationError(
@@ -1485,10 +1561,20 @@ class DiskManager:
                 f"starting at LBA {start_lba}."
             )
 
-        # Partition type byte: byte-identical to what parted produces
-        # for the non-legacy boot-flag=on layout used by ``boot_mode=NONE``
-        # (see ``_partition_and_format`` for parity).
-        partition_type = 0x0C if request.disk_format is DiskFormat.FAT32 else 0x06
+        # Partition type byte: legacy DOS gets 0x04 (FAT16 <32 MiB,
+        # pre-FAT16B) or 0x01 (FAT12); pcdos71 gets 0x0C (FAT32 LBA) or
+        # 0x0E (FAT16 LBA); modern gets 0x0C / 0x06. MSDOS331 caps at 32
+        # MiB so also gets 0x04.
+        if msdos33_layout or request.boot_mode is BootMode.MSDOS331:
+            partition_type = 0x01 if request.disk_format is DiskFormat.FAT12 else 0x04
+        elif pcdos71_layout and request.disk_format is DiskFormat.FAT32:
+            partition_type = 0x0C
+        elif pcdos71_layout:
+            partition_type = 0x0E  # FAT16 LBA
+        elif request.disk_format is DiskFormat.FAT32:
+            partition_type = 0x0C
+        else:
+            partition_type = 0x06
 
         core_mbr.write_single_partition_mbr(
             target_path,
@@ -1505,28 +1591,68 @@ class DiskManager:
         partition_offset_bytes = start_lba * 512
         partition_image = f"{target_path}@@{partition_offset_bytes}"
 
-        # Format the partition with mformat. -T pins the total-sectors
-        # count so mtools does not include the VHD footer in the data
-        # area, -H pins the BPB hidden-sectors field to the partition
-        # start so legacy DOS INT 13h reads land at the correct LBA.
-        format_cmd: list[str] = [
-            "mformat",
-            "-i",
-            partition_image,
-            "-T",
-            str(partition_sectors),
-            "-H",
-            str(start_lba),
-        ]
-        label = normalize_label(request.label)
-        if label:
-            format_cmd += ["-v", label]
-        if request.disk_format is DiskFormat.FAT32:
-            format_cmd.append("-F")
-        format_cmd.append("::")
-        self.runner.run(format_cmd)
+        # Filesystem layout step:
+        # - msdos33_layout: skip mformat. DOS 3.30 FORMAT C: /S writes
+        #   the FAT/BPB from scratch inside QEMU. Zero the first 2 MiB
+        #   so FORMAT doesn't see a stale BPB and try to preserve it.
+        # - pcdos71_layout: same idea — FORMAT32 inside QEMU writes the
+        #   FAT32 BPB and boot sector. Zero a wider region (the FAT32
+        #   reserved-sectors area is larger; FSInfo + backup BPB live at
+        #   sector 6 by default).
+        # - compaq331 / msdos331: use mformat for a DOS-3-compatible
+        #   layout (reserved_sec_count=1) that SYS C: will accept.
+        # - everything else: standard mformat with -T/-H.
+        if msdos33_layout:
+            self._zero_image_region(target_path, partition_offset_bytes, 2 * 1024 * 1024)
+        elif pcdos71_layout:
+            self._zero_image_region(target_path, partition_offset_bytes, 4 * 1024 * 1024)
+        else:
+            format_cmd: list[str] = [
+                "mformat",
+                "-i",
+                partition_image,
+                "-T",
+                str(partition_sectors),
+                "-H",
+                str(start_lba),
+            ]
+            label = normalize_label(request.label)
+            if label:
+                format_cmd += ["-v", label]
+            if request.disk_format is DiskFormat.FAT32:
+                format_cmd.append("-F")
+            format_cmd.append("::")
+            self.runner.run(format_cmd)
 
-        if request.boot_mode in (BootMode.FREEDOS, BootMode.MSDOS71):
+        # XT-class machine targets (MartyPC Xebec on msdos33-layout) need
+        # an MS-DOS 3.3-style MBR + track-aligned partition entry that
+        # MartyPC's pre-LBA Xebec controller will accept. Rewrite the
+        # MBR here, while QEMU isn't running and we have exclusive file
+        # access. The new partition entry points subsequent FORMAT C: /S
+        # at LBA = spt, which is what real DOS 3.3 FDISK produces on MFM
+        # controllers.
+        if _needs_xt_class_mbr_rewrite(request):
+            spec = request.martypc_xebec_drive_type.spec
+            fs_type = 0x01 if request.disk_format is DiskFormat.FAT12 else 0x04
+            self._rewrite_mbr_for_xt_class(
+                vhd_path=target_path,
+                cylinders=spec.cylinders,
+                heads=spec.heads,
+                sectors_per_track=spec.sectors_per_track,
+                fs_type=fs_type,
+            )
+
+        # Static-template boot installer path: FreeDOS / MS-DOS 7.1 plus
+        # the legacy MS-DOS / PC-DOS variants that resolve through the
+        # _resolve_legacy_dos asset extractor (msdos5/msdos622/pcdos/pcdos7).
+        if request.boot_mode in (
+            BootMode.FREEDOS,
+            BootMode.MSDOS71,
+            BootMode.MSDOS5,
+            BootMode.MSDOS622,
+            BootMode.PCDOS,
+            BootMode.PCDOS7,
+        ):
             assets = self.boot_resolver.resolve(request)
             partition_ref = PartitionRef.from_image(
                 image_path=target_path,
@@ -1537,8 +1663,44 @@ class DiskManager:
                 partition_device=partition_image,
                 disk_format=request.disk_format,
                 assets=assets,
+                bios_chs=fat_bios_chs,
                 boot_mode=request.boot_mode,
                 partition_ref=partition_ref,
+            )
+
+        # Legacy DOS modes that use the QEMU SYS install: MS-DOS 3.30,
+        # MS-DOS 3.31, Compaq DOS 3.31, IBM DOS 3.3 (via ibm8088).
+        if legacy_qemu_install:
+            # compaq331 / msdos331 need an MBR IPL written now — the
+            # QEMU SYS step writes the partition VBR but not the MBR's
+            # boot code. msdos33 / ibm8088+dos33 use FORMAT C: /S which
+            # writes both, so the MBR IPL would just be overwritten.
+            if request.boot_mode in (BootMode.COMPAQ331, BootMode.MSDOS331):
+                self.boot_installer.write_mbr_only(
+                    disk_device=str(target_path),
+                    image_path=target_path,
+                )
+                if fat_bios_chs is not None:
+                    self.boot_installer.patch_fat16_bpb_geometry(
+                        partition_device=partition_image,
+                        bios_chs=fat_bios_chs,
+                        image_path=target_path,
+                        partition_offset_bytes=partition_offset_bytes,
+                    )
+
+            self._install_legacy_dos_via_qemu(
+                request=request,
+                vhd_path=target_path,
+                partition_offset_bytes=partition_offset_bytes,
+            )
+            self._stage_legacy_dos_full_profile_payload(
+                request=request,
+                vhd_path=target_path,
+                partition_offset_bytes=partition_offset_bytes,
+            )
+            self._patch_partition_bpb_to_footer_geometry(
+                vhd_path=target_path,
+                partition_offset_bytes=partition_offset_bytes,
             )
 
         custom_payload = self._resolve_custom_payload_path(request)
@@ -1644,7 +1806,7 @@ class DiskManager:
             runner=self.runner,
             cache_root=cache_root,
         )
-        profile = descriptor.profile_builder(install_image)
+        profile = descriptor.profile_builder(install_image, boot_assets_dir)
         # MBR partition usually starts at LBA 63 (parted's legacy DOS
         # layout). XT-class targets (MartyPC Xebec on msdos33) get a
         # track-aligned partition at LBA = spt instead — see
@@ -2270,6 +2432,28 @@ class DiskManager:
             ],
             sudo=True,
         )
+
+    def _zero_image_region(
+        self,
+        image_path: Path,
+        byte_offset: int,
+        bytes_to_zero: int,
+    ) -> None:
+        """Zero ``bytes_to_zero`` bytes starting at ``byte_offset`` in ``image_path``.
+
+        Cross-platform Python file I/O equivalent to ``dd if=/dev/zero
+        of=... seek=... bs=1M``. Used by the Windows VHD pipeline before
+        a DOS-3.30 FORMAT C: /S step inside QEMU, so leftover bytes do
+        not look like a valid filesystem to FORMAT.
+        """
+        chunk = b"\x00" * (1024 * 1024)
+        remaining = bytes_to_zero
+        with image_path.open("r+b") as fh:
+            fh.seek(byte_offset)
+            while remaining > 0:
+                write_len = min(remaining, len(chunk))
+                fh.write(chunk[:write_len])
+                remaining -= write_len
 
     def _with_connected_nbd(
         self,

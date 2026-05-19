@@ -60,7 +60,11 @@ _MSDOS71_INSTALL_PAK = "DOS71_1S.PAK"
 _MSDOS71_OPTIONAL_INSTALL_PAK = "DOS71_2S.PAK"
 _MSDOS71_PAK_PASSWORD = b":MSDOS"
 _MSDOS71_BOOTSECTOR_SOURCES = ("SYS.COM", "FORMAT.COM")
-_MSDOS71_IMAGE_SUFFIXES = (".img", ".ima", ".dsk", ".xdf")
+_MSDOS71_IMAGE_SUFFIXES = (".img", ".ima", ".dsk", ".xdf", ".vfd")
+_SEVEN_ZIP_SUFFIXES = (".7z",)
+_LEGACY_DOS_SYSTEM_FILE_NAMES = frozenset(
+    name for required_set in _LEGACY_DOS_SYSTEM_FILE_SETS for name in required_set
+) | {"KERNEL.SYS", "BOOTSECT_FAT16.BIN", "BOOTSECT_FAT32.BIN"}
 _MSDOS71_ROOT_FILES_EXCLUDED_FROM_DOS_DIR = {
     "IO.SYS",
     "MSDOS.SYS",
@@ -464,6 +468,8 @@ class BootAssetResolver:
             return self._resolve_pcdos(request)
         if request.boot_mode is BootMode.PCDOS7:
             return self._resolve_pcdos7(request)
+        if request.boot_mode is BootMode.PCDOS71:
+            return self._resolve_pcdos71(request)
         if request.boot_mode is BootMode.COMPAQ331:
             return self._resolve_compaq331(request)
         raise ValidationError(f"Unsupported boot mode: {request.boot_mode.value}")
@@ -945,6 +951,28 @@ class BootAssetResolver:
             install_profile=request.msdos_install_profile,
         )
 
+    def _resolve_pcdos71(self, request: CreateRequest) -> BootAssets:
+        """PC-DOS 7.1 (IBM ServerGuide Scripting Toolkit).
+
+        On VHD this is handled by the QEMU-driven FORMAT32 install
+        (see :func:`disk._uses_legacy_dos_qemu_install`); the asset
+        resolver only runs to discover the FULL-profile DOS\\ tool
+        payload + CONFIG.SYS/AUTOEXEC.BAT after the system files are
+        already staged by FORMAT32. ``prefer_install_image_boot_sector``
+        is False because there's no install-image boot sector worth
+        extracting — FORMAT32 itself writes a proper FAT32 boot sector
+        at install time and we don't overlay anything on top of it.
+        """
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="PC-DOS 7.1",
+            version_subdir_name="pcdos71",
+            cache_tag="pcdos71",
+            prefer_install_image_boot_sector=False,
+            default_asset_dirs=("pcdos71",),
+            install_profile=request.msdos_install_profile,
+        )
+
     def _resolve_compaq331(self, request: CreateRequest) -> BootAssets:
         return self._resolve_legacy_dos(
             request=request,
@@ -969,7 +997,7 @@ class BootAssetResolver:
         prefer_directory_boot_template: bool = True,
         install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL,
     ) -> BootAssets:
-        if request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12):
+        if request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12, DiskFormat.FAT32):
             raise ValidationError(
                 f"{profile_label} boot mode requires FAT16 (or FAT12 for the MartyPC Xebec Type 1 preset)."
             )
@@ -1819,12 +1847,19 @@ class BootAssetResolver:
         )
 
     def _collect_msdos71_install_images(self, directory: Path) -> list[Path]:
-        images = [
-            entry
-            for entry in directory.iterdir()
-            if entry.is_file() and entry.suffix.lower() in _MSDOS71_IMAGE_SUFFIXES
-        ]
-        return sorted(images)
+        images: list[Path] = []
+        for search_dir in self._iter_asset_search_dirs(directory):
+            try:
+                for entry in search_dir.iterdir():
+                    if entry.is_file() and entry.suffix.lower() in _MSDOS71_IMAGE_SUFFIXES:
+                        images.append(entry)
+            except OSError:
+                continue
+        # de-dupe by resolved path while preserving sorted order
+        unique: dict[Path, Path] = {}
+        for image in images:
+            unique[image.resolve()] = image
+        return sorted(unique.values())
 
     def _msdos71_cache_key(self, directory: Path, image_paths: list[Path]) -> str:
         parts = [str(directory.resolve())]
@@ -1857,12 +1892,18 @@ class BootAssetResolver:
         if destination.exists() and destination.stat().st_size > 0:
             return True
         destination.parent.mkdir(parents=True, exist_ok=True)
+        # Pass the destination via cwd + bare filename so mtools does not
+        # interpret the leading "C:" of a Windows absolute path as an
+        # unconfigured DOS drive ("Drive 'C:' not supported"). The local
+        # source/destination of an out-of-image copy is the only spot in
+        # mtools' argv where this matters on Windows.
         mtools_image = self._mtools_image_path(image_path)
         for candidate in (dos_name, dos_name.upper(), dos_name.lower()):
             if destination.exists():
                 destination.unlink()
             result = self.runner.run(
-                ["mcopy", "-i", str(mtools_image), f"::{candidate}", str(destination)],
+                ["mcopy", "-i", str(mtools_image), f"::{candidate}", destination.name],
+                cwd=destination.parent,
                 check=False,
             )
             if result.returncode == 0 and destination.exists() and destination.stat().st_size > 0:
@@ -2304,9 +2345,14 @@ class BootAssetResolver:
         output_path = output_dir / dos_name
         if output_path.exists() and output_path.stat().st_size > 0:
             return output_path
+        # Pass cwd + bare filename so mtools does not parse the leading
+        # "C:" of the Windows destination as an unconfigured DOS drive
+        # ("Drive 'C:' not supported"). Linux-safe: subprocess just runs
+        # with that cwd, and mcopy resolves the bare filename relative to it.
         mtools_image = self._mtools_image_path(image_path)
         result = self.runner.run(
-            ["mcopy", "-i", str(mtools_image), f"::{dos_name}", str(output_path)],
+            ["mcopy", "-i", str(mtools_image), f"::{dos_name}", dos_name],
+            cwd=output_dir,
             check=False,
         )
         if result.returncode == 0 and output_path.exists():
@@ -2621,17 +2667,129 @@ class BootAssetResolver:
 
     def _find_file_case_insensitive(self, directory: Path, file_name: str) -> Path | None:
         expected = file_name.upper()
-        for entry in directory.iterdir():
-            if entry.is_file() and entry.name.upper() == expected:
-                return entry
+        for search_dir in self._iter_asset_search_dirs(directory):
+            try:
+                for entry in search_dir.iterdir():
+                    if entry.is_file() and entry.name.upper() == expected:
+                        return entry
+            except OSError:
+                continue
         return None
 
     def _find_directory_case_insensitive(self, directory: Path, name: str) -> Path | None:
         expected = name.upper()
-        for entry in directory.iterdir():
-            if entry.is_dir() and entry.name.upper() == expected:
-                return entry
+        for search_dir in self._iter_asset_search_dirs(directory):
+            try:
+                for entry in search_dir.iterdir():
+                    if entry.is_dir() and entry.name.upper() == expected:
+                        return entry
+            except OSError:
+                continue
         return None
+
+    def _iter_asset_search_dirs(self, directory: Path) -> list[Path]:
+        """Return ``directory`` plus any directories materialized from
+        ``.7z`` archives found inside it.
+
+        WinWorldPC release archives ship the DOS install diskettes inside
+        a single ``.7z`` archive that, when extracted, produces one top-
+        level folder named after the title (e.g. ``Microsoft DOS 7.1
+        (3.5)/disk01.img``). Pre-extracting by hand is a footgun: users
+        drop the .7z into ``dosassets/<mode>/`` and expect dosforge to
+        find the disks. This helper makes that work transparently.
+
+        Extraction is cached by archive path + size + mtime under
+        ``cache_root/seven-zip/<hash>/``. Subsequent runs skip extraction
+        when the marker file is present. If ``py7zr`` is not installed
+        the directory is returned unchanged and any required-asset errors
+        surface from the normal resolver path.
+        """
+        try:
+            archives = [
+                entry for entry in directory.iterdir()
+                if entry.is_file() and entry.suffix.lower() in _SEVEN_ZIP_SUFFIXES
+            ]
+        except OSError:
+            return [directory]
+        if not archives:
+            return [directory]
+
+        extracted_root = self.cache_root / "seven-zip"
+        extracted_root.mkdir(parents=True, exist_ok=True)
+
+        search_dirs: list[Path] = [directory]
+        seen = {directory.resolve()}
+        for archive in archives:
+            extract_dir = self._ensure_seven_zip_extracted(archive, extracted_root)
+            if extract_dir is None:
+                continue
+            for candidate in self._iter_useful_subdirs(extract_dir):
+                resolved = candidate.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                search_dirs.append(candidate)
+        return search_dirs
+
+    def _ensure_seven_zip_extracted(self, archive: Path, extracted_root: Path) -> Path | None:
+        try:
+            stat = archive.stat()
+        except OSError:
+            return None
+        key = self._hash_value(
+            f"{archive.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"
+        )
+        safe_stem = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in archive.stem)[:48]
+        extract_dir = extracted_root / f"{safe_stem}-{key[:12]}"
+        marker = extract_dir / ".extracted.ok"
+        if marker.exists():
+            return extract_dir
+        try:
+            import py7zr
+        except ImportError:
+            return None
+        try:
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir, ignore_errors=True)
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            with py7zr.SevenZipFile(archive, "r") as z:
+                z.extractall(path=extract_dir)
+            marker.write_text("ok")
+        except Exception:
+            return None
+        return extract_dir
+
+    def _iter_useful_subdirs(self, root: Path) -> list[Path]:
+        """Yield ``root`` plus any sub-directories that contain DOS install
+        media (.img/.ima/.dsk/.xdf), known DOS system files, or boot-sector
+        templates. Skips Artwork/, screenshots/, etc.
+        """
+        useful: list[Path] = []
+        if not root.is_dir():
+            return useful
+        candidates = [root]
+        for entry in root.rglob("*"):
+            if entry.is_dir():
+                candidates.append(entry)
+        for candidate in candidates:
+            try:
+                entries = list(candidate.iterdir())
+            except OSError:
+                continue
+            has_useful = False
+            for entry in entries:
+                if not entry.is_file():
+                    continue
+                upper = entry.name.upper()
+                if entry.suffix.lower() in _MSDOS71_IMAGE_SUFFIXES:
+                    has_useful = True
+                    break
+                if upper in _LEGACY_DOS_SYSTEM_FILE_NAMES:
+                    has_useful = True
+                    break
+            if has_useful:
+                useful.append(candidate)
+        return useful
 
     def _require_file_case_insensitive(self, directory: Path, file_name: str) -> Path:
         found = self._find_file_case_insensitive(directory, file_name)
@@ -3161,11 +3319,18 @@ class BootInstaller:
         for candidate in self.mbr_boot_candidates:
             if candidate.exists() and candidate.is_file():
                 return candidate
-        candidates_text = ", ".join(str(path) for path in self.mbr_boot_candidates)
-        raise ValidationError(
-            "Unable to locate syslinux MBR boot code file. Install syslinux package and ensure one of these exists: "
-            f"{candidates_text}"
-        )
+        # No syslinux mbr.bin on this host (Windows, or a Linux box
+        # without syslinux installed). Materialize our built-in
+        # FreeDOS-derived MBR boot code into the BootInstaller cache and
+        # use that. It's the same generic MS-DOS-style IPL the rest of
+        # the resolver uses for the FAT16 reference boot records.
+        cache_path = self.mount_root / "fat16-builtin-mbr.bin"
+        if not cache_path.is_file() or cache_path.stat().st_size < 440:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_bytes(
+                base64.b64decode(_BUILTIN_FAT16_MBR_BOOT_CODE_B64)[:440]
+            )
+        return cache_path
 
     def _write_boot_sector(
         self,

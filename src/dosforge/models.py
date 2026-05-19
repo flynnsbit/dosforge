@@ -71,6 +71,7 @@ class BootMode(str, Enum):
     MSDOS622 = "msdos622"
     PCDOS = "pcdos"
     PCDOS7 = "pcdos7"
+    PCDOS71 = "pcdos71"
     COMPAQ331 = "compaq331"
 
 

@@ -14,6 +14,7 @@ descriptors so each legacy-DOS boot mode can reuse the same flow.
 
 from __future__ import annotations
 
+import os
 import shutil
 import time
 from dataclasses import dataclass
@@ -68,9 +69,28 @@ class LegacyDosInstallProfile:
     DOS FORMAT.COM does a sector-by-sector verify pass.
     """
 
+    pre_install_deletes: tuple[str, ...] = ()
+    """Files/dirs (DOS-style root-relative names, no leading ``::``) to
+    delete from the install floppy before injecting the auto-install
+    AUTOEXEC.BAT. Used to clear out unrelated payload that ships on
+    re-purposed bootable floppies (e.g. tk_raid.vfd from the IBM
+    ServerGuide Scripting Toolkit) so the rest of the install can
+    write its own files."""
+
+    pre_install_copies: tuple[tuple[Path, str], ...] = ()
+    """``(host_source, floppy_destination)`` pairs to mcopy into the
+    install floppy before booting QEMU. Used by ``format32`` to inject
+    FORMAT32.COM (and any other tools the auto-install script needs)
+    so the install media boots a self-contained installer."""
+
+    install_label: str = "DOS"
+    """Volume label written by FORMAT32 in the ``format32`` flow.
+    Ignored by other install methods."""
+
 
 # Pre-built profile descriptors keyed by short identifier.
-def compaq331_profile(install_image: Path) -> LegacyDosInstallProfile:
+def compaq331_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    _ = boot_assets_dir  # unused; declared for shared profile_builder signature
     return LegacyDosInstallProfile(
         label="Compaq DOS 3.31",
         install_image=install_image,
@@ -88,7 +108,8 @@ def compaq331_profile(install_image: Path) -> LegacyDosInstallProfile:
     )
 
 
-def msdos33_profile(install_image: Path) -> LegacyDosInstallProfile:
+def msdos33_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    _ = boot_assets_dir  # unused; declared for shared profile_builder signature
     return LegacyDosInstallProfile(
         label="MS-DOS 3.30",
         install_image=install_image,
@@ -97,6 +118,76 @@ def msdos33_profile(install_image: Path) -> LegacyDosInstallProfile:
         # FORMAT does a sector-by-sector verify pass on the entire partition.
         # 20-32 MiB takes a few minutes in software emulation. Allow up to 5min.
         timeout_seconds=300.0,
+    )
+
+
+def pcdos71_profile(
+    install_image: Path,
+    boot_assets_dir: Path | None = None,
+    *,
+    install_label: str = "DOS71",
+) -> LegacyDosInstallProfile:
+    """PC-DOS 7.1 FAT32 install profile.
+
+    ``install_image`` should be a known-bootable PC-DOS 7.1 1.44 MB
+    floppy (the SGTK ``tk_raid.vfd`` works) — the boot sector and IBMBIO/
+    IBMDOS/COMMAND on it are reused. ``boot_assets_dir`` must contain
+    ``DOS/FORMAT32.COM`` (the FAT32-aware formatter), which is copied
+    into the install floppy so the auto-install script can run it.
+
+    The installer:
+
+    1. Deletes the install floppy's incidental payload (STKHDER.BAT,
+       USRVARS.BAT, tkzip.exe, DOS\\ tree, CONFIG.SYS, AUTOEXEC.BAT) so
+       FORMAT32 has room to operate.
+    2. Copies FORMAT32.COM from the SGTK into the install floppy.
+    3. Generates an AUTOEXEC.BAT that runs FORMAT32 twice
+       (FORMAT32 /Q /V:LABEL then FORMAT32 /Q /S /V:LABEL — per the
+       vogons.org guide the /S transfer only works on the second pass)
+       and writes the C:\\VHDMK.OK marker on success.
+
+    Per https://www.vogons.org/viewtopic.php?t=93030 — FORMAT32's /S
+    writes a proper FAT32 boot sector with OEM 'IBM  7.1' and transfers
+    IBMBIO.COM, IBMDOS.COM, and COMMAND.COM in the required cluster order.
+    """
+    if boot_assets_dir is None:
+        raise ValidationError(
+            "pcdos71_profile requires the boot assets directory so it can "
+            "locate FORMAT32.COM for the install floppy."
+        )
+    format32 = boot_assets_dir / "DOS" / "FORMAT32.COM"
+    if not format32.is_file():
+        # Tolerate flat layouts: DOS/FORMAT32.COM or just FORMAT32.COM.
+        alt = boot_assets_dir / "FORMAT32.COM"
+        if alt.is_file():
+            format32 = alt
+        else:
+            raise ValidationError(
+                "pcdos71_profile: FORMAT32.COM not found under "
+                f"{boot_assets_dir}. Expected it at DOS/FORMAT32.COM "
+                "(IBM ServerGuide Scripting Toolkit layout) or at the root."
+            )
+    return LegacyDosInstallProfile(
+        label="PC-DOS 7.1",
+        install_image=install_image,
+        required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+        install_method="format32",
+        # Two passes of FORMAT32 /Q on a FAT32 partition. /Q is fast
+        # but verification + boot-sector write still take time. 5 min
+        # is comfortable for partitions up to a few hundred MiB.
+        timeout_seconds=300.0,
+        # tk_raid.vfd has ~90 KB of free space, more than enough for
+        # FORMAT32.COM (20 KB) + YES.TXT + the replacement CONFIG.SYS /
+        # AUTOEXEC.BAT we inject below. No need to delete the existing
+        # payload (tkzip.exe, DOS\, USRVARS.BAT, …) — mcopy -o overwrites
+        # CONFIG.SYS / AUTOEXEC.BAT and the unused leftover files just
+        # sit on the floppy. Skipping the deletes also avoids needing
+        # mdeltree (not in the bundled mtools on Windows).
+        pre_install_deletes=(),
+        pre_install_copies=(
+            (format32, "FORMAT32.COM"),
+        ),
+        install_label=install_label,
     )
 
 
@@ -138,18 +229,32 @@ class LegacyDosQemuInstaller:
             )
 
         work_floppy = self._prepare_install_floppy(profile)
+        qemu_failed = False
         try:
-            self._run_qemu(
-                vhd_path=vhd_path,
-                install_floppy=work_floppy,
-                partition_offset_bytes=partition_offset_bytes,
-                profile=profile,
-            )
-        finally:
             try:
-                work_floppy.unlink()
-            except FileNotFoundError:
-                pass
+                self._run_qemu(
+                    vhd_path=vhd_path,
+                    install_floppy=work_floppy,
+                    partition_offset_bytes=partition_offset_bytes,
+                    profile=profile,
+                )
+            except Exception:
+                qemu_failed = True
+                # Preserve the install floppy for postmortem (A:\STEP.TXT
+                # records which step the AUTOEXEC.BAT got to; FMT*_OUT.TXT
+                # captures FORMAT32's stdout/stderr).
+                postmortem = self.cache_root / f"FAILED-{work_floppy.name}"
+                try:
+                    shutil.copy2(work_floppy, postmortem)
+                except OSError:
+                    pass
+                raise
+        finally:
+            if not qemu_failed:
+                try:
+                    work_floppy.unlink()
+                except (FileNotFoundError, PermissionError):
+                    pass
 
         self._verify_install(
             vhd_path=vhd_path,
@@ -164,6 +269,26 @@ class LegacyDosQemuInstaller:
         self.cache_root.mkdir(parents=True, exist_ok=True)
         work = self.cache_root / f"legacydos-sys-{uuid4().hex[:10]}.img"
         shutil.copy(profile.install_image, work)
+
+        # Optional pre-install scrub: delete files/dirs that came with a
+        # repurposed bootable floppy (e.g. tk_raid.vfd) so FORMAT32 has
+        # room to land. mdel handles files; mdeltree handles directories.
+        for name in profile.pre_install_deletes:
+            self.runner.run(
+                ["mdeltree", "-i", str(work), f"::{name}"],
+                check=False,
+            )
+            self.runner.run(
+                ["mdel", "-i", str(work), f"::{name}"],
+                check=False,
+            )
+
+        # Optional pre-install copies: stage tools the auto-install
+        # script needs (e.g. FORMAT32.COM for PC-DOS 7.1).
+        for src, dst_name in profile.pre_install_copies:
+            self.runner.run(
+                ["mcopy", "-o", "-i", str(work), str(src), f"::{dst_name}"],
+            )
 
         config_sys = b"FILES=8\r\nBUFFERS=8\r\n"
 
@@ -183,6 +308,29 @@ class LegacyDosQemuInstaller:
                 b"ECHO step=after-format > A:\\STEP.TXT\r\n"
                 b"COPY A:\\COMMAND.COM C:\\ > A:\\CP_OUT.TXT\r\n"
                 b"ECHO step=after-copy > A:\\STEP.TXT\r\n"
+                b"ECHO OK> C:\\VHDMK.OK\r\n"
+                b"ECHO step=done > A:\\STEP.TXT\r\n"
+                b":HALT\r\n"
+                b"GOTO HALT\r\n"
+            )
+            self._mcopy_text(work, "YES.TXT", yes_input)
+        elif profile.install_method == "format32":
+            # PC-DOS 7.1: FORMAT32 /Q must run twice to reliably transfer
+            # system files. Per vogons.org/viewtopic.php?t=93030:
+            #   "FORMAT32 would surely fail to transfer system files on
+            #    first format. Only after doing a second format would the
+            #    system files get transferred."
+            # FORMAT32 /Q still prompts for confirmation; feed Y\r\n.
+            yes_input = b"Y\r\nY\r\nY\r\nY\r\n"
+            label = profile.install_label.encode("ascii", "ignore")[:11] or b"DOS71"
+            autoexec_bat = (
+                b"@ECHO OFF\r\n"
+                b"PROMPT $p$g\r\n"
+                b"ECHO step=before-format1 > A:\\STEP.TXT\r\n"
+                b"FORMAT32 C: /Q /V:" + label + b" < A:\\YES.TXT > A:\\FMT1_OUT.TXT\r\n"
+                b"ECHO step=after-format1 > A:\\STEP.TXT\r\n"
+                b"FORMAT32 C: /Q /S /V:" + label + b" < A:\\YES.TXT > A:\\FMT2_OUT.TXT\r\n"
+                b"ECHO step=after-format2 > A:\\STEP.TXT\r\n"
                 b"ECHO OK> C:\\VHDMK.OK\r\n"
                 b"ECHO step=done > A:\\STEP.TXT\r\n"
                 b":HALT\r\n"
@@ -233,8 +381,15 @@ class LegacyDosQemuInstaller:
         profile: LegacyDosInstallProfile,
     ) -> None:
         diagnostics_log = self.cache_root / f"legacydos-qemu-{uuid4().hex[:8]}.log"
+        # Resolve qemu-system-i386 through the runner's tool_resolver
+        # (Windows bundles the binary under vendor/windows/bin/) and
+        # also tell QEMU where to find its BIOS firmware via -L.
+        from ._platform import get_backend
+
+        backend = get_backend()
+        qemu_path = backend.tool_path("qemu-system-i386")
         cmd = [
-            "qemu-system-i386",
+            qemu_path,
             "-machine",
             "pc",
             "-cpu",
@@ -242,6 +397,8 @@ class LegacyDosQemuInstaller:
             "-m",
             "16",
             "-display",
+            "none",
+            "-nic",
             "none",
             "-serial",
             f"file:{diagnostics_log}",
@@ -253,6 +410,14 @@ class LegacyDosQemuInstaller:
             "-boot",
             "a",
         ]
+        # On Windows the BIOS firmware (bios-256k.bin, vgabios.bin, etc.)
+        # is bundled alongside the qemu exe instead of in a system
+        # /usr/share/qemu/ tree. Point -L at that directory so QEMU can
+        # find the BIOS at start-up. A no-op when qemu_path is just a
+        # bare name (Linux PATH lookup).
+        if os.path.isabs(qemu_path):
+            cmd.insert(1, str(Path(qemu_path).parent))
+            cmd.insert(1, "-L")
 
         import subprocess
 
