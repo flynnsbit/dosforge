@@ -98,7 +98,7 @@ def test_validate_accepts_ibm8088_dos50_504mb() -> None:
 
 
 def test_fetch_freedos_assets_uses_working_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("dosforge.disk.find_missing", lambda commands: [])
+    monkeypatch.setattr("dosforge.disk.find_missing", lambda commands, **_: [])
     monkeypatch.chdir(tmp_path)
     manager = DiskManager()
 

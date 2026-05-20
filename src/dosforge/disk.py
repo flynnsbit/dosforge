@@ -753,9 +753,19 @@ class DiskManager:
         self.runner.run_detached(["xdg-open", str(target)])
 
     def fetch_freedos_assets(self, destination: Path | None = None, download_url: str | None = None) -> Path:
-        missing = find_missing(("mcopy", "mkfs.fat"))
+        # The hard requirement is mcopy (used to extract files from the
+        # downloaded FreeDOS install image). The BOOTSECT_FAT32.BIN that
+        # `_write_fat32_boot_template` produces requires either mkfs.fat
+        # (Linux) or mformat (Windows / no-kernel-mount backends); only
+        # one of them needs to be present.
+        required = ["mcopy"]
+        fat32_formatter = "mkfs.fat" if self.backend.supports_kernel_mount else "mformat"
+        required.append(fat32_formatter)
+        missing = find_missing(tuple(required), backend=self.backend)
         if missing:
-            raise ValidationError(f"Missing required tools for FreeDOS extraction: {', '.join(missing)}")
+            raise ValidationError(
+                f"Missing required tools for FreeDOS extraction: {', '.join(missing)}"
+            )
         target = (
             destination
             if destination is not None

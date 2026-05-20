@@ -17,6 +17,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .commands import CommandRunner
+from .dependencies import find_missing
 from .errors import ValidationError
 from .mscompress import compressed_variant_name, expand_dos_compressed_payload, expanded_name_from_compressed
 from .models import (
@@ -2554,8 +2555,29 @@ class BootAssetResolver:
             return
 
         image_path = self.cache_root / "fat32-template.img"
+        # On Linux mkfs.fat creates the image + filesystem in one step
+        # (`-C` allocates the file). On Windows we don't ship mkfs.fat
+        # — but we DO ship mformat (mtools), which can format an
+        # existing image in place. Pre-allocate the file with truncate
+        # so mformat has something to write into.
         if not image_path.exists() or image_path.stat().st_size < 512:
-            self.runner.run(["mkfs.fat", "-F", "32", "-C", str(image_path), "65536"])
+            if find_missing(("mkfs.fat",)):
+                # No mkfs.fat — use mformat with a pre-allocated file.
+                # 64 MiB = 65536 KiB matches the original mkfs.fat call.
+                size_bytes = 65536 * 1024
+                with image_path.open("wb") as handle:
+                    handle.truncate(size_bytes)
+                self.runner.run(
+                    [
+                        "mformat",
+                        "-i", str(image_path),
+                        "-T", str(size_bytes // 512),
+                        "-F",  # force FAT32
+                        "::",
+                    ]
+                )
+            else:
+                self.runner.run(["mkfs.fat", "-F", "32", "-C", str(image_path), "65536"])
 
         with image_path.open("rb") as handle:
             boot_sector = handle.read(512)
