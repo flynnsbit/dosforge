@@ -127,17 +127,42 @@ Boot prep:
 
 ## Install
 
+### Linux
+
 ```bash
 python -m pip install -e .
 ```
 
+Then run `dosforge` from anywhere.
+
+### Windows
+
+```powershell
+# One-time setup (fetches QEMU + mtools + py7zr into vendor/windows/bin/
+# and builds the PyInstaller bundle under dist\dosforge\).
+.\.venv\Scripts\python.exe -m pip install -e .[dev]
+.\.venv\Scripts\python.exe -m PyInstaller windows\dosforge.spec --noconfirm
+
+# Run from the repo root. PowerShell autocompletes .ps1 / .bat:
+.\dosforge ls testimages\vhd-msdos622-128m.vhd /
+.\dosforge create --media-type vhd --format fat32 --size 2G ^
+    --boot-mode pcdos71 --path C:\temp\pcdos71.vhd
+```
+
+The root-level `dosforge.bat` / `dosforge.ps1` are thin wrappers that
+forward every argument to `dist\dosforge\dosforge.exe`. Use `.bat`
+if PowerShell's execution policy blocks the `.ps1` script.
+
 ## Run
 
 ```bash
-dosforge
+dosforge        # Linux: launches the TUI (sudo auth happens up-front)
+.\dosforge      # Windows: launches the TUI in the current terminal
 ```
 
-`dosforge` performs startup sudo auth for TUI (`sudo -v`) so credential prompts happen up front.
+`dosforge` performs startup sudo auth for the TUI (`sudo -v`) on Linux
+so credential prompts happen up front. The Windows backend reports
+`requires_sudo_for_disk_ops=False`, so no sudo prompts ever appear.
 
 ## TUI usage
 
