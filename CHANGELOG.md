@@ -6,6 +6,113 @@ The format is loosely based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-05-19
+
+**Windows port complete — feature parity with Linux.**
+
+### Added — Windows platform
+
+- **Single-file installer & launcher.** New `dosforge.bat` and
+  `dosforge.ps1` at the repo root forward every argument to the
+  PyInstaller bundle at `dist\dosforge\dosforge.exe`. Just run
+  `.\dosforge` from the project root.
+- **Native VHD mount on Windows** via `Mount-DiskImage` (Storage
+  module, built into Windows 8+; requires admin elevation). Mounts
+  to a real drive letter, tracked in dosforge's state store. Without
+  admin: clear elevation hint + no-admin alternatives (the mtools
+  verbs below).
+- **mtools-based image content verbs** that work cross-platform
+  WITHOUT mounting. Drop-in replacement for `mount` on Windows when
+  you don't want to elevate, and useful on Linux too:
+  - `dosforge ls <image> [path]`
+  - `dosforge cat <image> <path>`
+  - `dosforge get <image> <dos-path> [local]`
+  - `dosforge put <image> <local> [dos-path]`
+  - `dosforge rm <image> <path>`
+  - `dosforge mkdir <image> <path>`
+  Auto-detects partition offsets on VHDs; works on flat
+  `.img`/`.ima`/`.vfd`/`.dsk`/`.xdf` too.
+- **PC-DOS 7.1 boot mode (FAT32)** — the only PC-DOS variant with
+  FAT32+LBA support, sourced from the IBM ServerGuide Scripting
+  Toolkit per [vogons.org/viewtopic.php?t=93030](https://www.vogons.org/viewtopic.php?t=93030).
+  Driven by an in-QEMU `FORMAT32 /Q /S` install that writes the
+  correct `IBM  7.1` boot sector and stages
+  IBMBIO.COM+IBMDOS.COM+COMMAND.COM in the cluster order PC-DOS 7.1's
+  boot loader requires (plus the +R+S+H attribute fix). Tested
+  end-to-end with the full SGTK utility tree under `C:\DOS\`.
+- **MS-DOS 5.0, 6.22, PC-DOS, PC-DOS 7.0 boot modes on Windows.**
+  Previously Linux-only. Now driven by the static-template
+  resolver path against the Windows bundle.
+- **`.7z` and `.zip` archive auto-extraction.** Drop a WinWorldPC
+  archive into `dosassets/<mode>/` and dosforge transparently
+  unpacks it on the next resolver run, materializing the
+  `.img`/`.xdf`/`.ima`/`.dsk`/`.vfd` install media and DOS system
+  files into the asset directory alongside the archive. User files
+  never overwritten.
+- **`open_in_files` works on Windows** via `os.startfile`. The TUI's
+  "Open in file manager" buttons now open Explorer.
+- **Cross-platform file picker.** TUI's Browse buttons use native
+  Win32 dialogs (`tkinter.filedialog`) on Windows; zenity on Linux.
+- **VHDs are now fully allocated on Windows** (de-sparsed after
+  `qemu-img` creation). Without this, `Mount-DiskImage`, Windows
+  Disk Management's "Attach VHD", 7-Zip's VHD reader, and several
+  other tools all reject the file. Adds a one-time 5–15s per 100 MiB
+  cost at creation.
+- **`Fetch latest FreeDOS` button** now works on Windows. Falls back
+  to `mformat` when `mkfs.fat` (Linux-only) isn't present.
+
+### Added — boot-mode coverage
+
+- **MartyPC Xebec Type 1 (10 MiB FAT12) + MS-DOS 3.3** boot path
+  verified on Windows end-to-end.
+- **`testimages/` build harness** (`scripts/build-testimages.ps1`)
+  produces a bootable image for every supported `(media, boot mode,
+  machine target)` combination. **29 images built clean on Windows**
+  including FreeDOS, MS-DOS 3.30/3.31/5.0/6.22/7.1, PC-DOS 7.0/7.1,
+  Compaq DOS 3.31, IBM 8088 DOS 3.3, plus the FULL DOS install
+  profile (C:\DOS\ tools tree) variants of each.
+
+### Changed
+
+- TUI: `mount`/`unmount` buttons and the privilege-diagnostics
+  button are now backend-gated. Sudo re-auth wrapper short-circuits
+  on backends that don't require sudo.
+- Error messages for missing install media now dump the relevant
+  `dosassets/<mode>/readme.txt` so you know exactly which files to
+  drop in and where to source them (typically WinWorldPC).
+- Matrix test (`test_windows_cli_matrix.py`): 34 PASS + 1 SKIP.
+  12 platform-neutral unit-test files re-enabled on Windows
+  (was 27 PASS + 1 SKIP; now **295 PASS + 79 SKIP** total).
+
+### Fixed
+
+- PC-DOS 7.1 boot — three sequential fixes:
+  1. Apply +R +S +H to IBMBIO.COM/IBMDOS.COM after FORMAT32 /S
+     (PC-DOS boot loader scans for entries with System+Hidden set).
+  2. Write the MBR boot code explicitly (FORMAT32 writes the VBR
+     but not the MBR; bytes 0–439 were all zero before this).
+  3. Ship a PC-DOS-dialect CONFIG.SYS (`LASTDRIVE=Z` not `LASTDRIVE=26`,
+     no `DOS=HIGH,UMB,AUTO`).
+- mtools out-of-image destination paths on Windows. mtools parses
+  any positional arg starting with `<letter>:` as a DOS drive
+  (`Drive 'C:' not supported`); fixed by passing `cwd=output_dir`
+  + bare filename for every `mcopy` extraction call.
+- FreeDOS auto-fetch on Windows (was: `Missing required tools for
+  FreeDOS extraction: mkfs.fat`). Now uses `mformat` as a fallback.
+
+### Notes
+
+- Linux behavior is unchanged — every Linux-only code path
+  (`qemu-nbd`, kernel `mount`, sudo, syslinux MBR) still runs as
+  before. The Windows port is additive.
+- `dosforge mount`/`unmount` are now available on Windows but
+  require admin elevation (Mount-DiskImage loads the storage
+  virtualization driver). For unprivileged image access, use the
+  new `dosforge ls/cat/get/put/rm/mkdir` verbs instead.
+- Floppy IMG (raw `.img`/`.ima`) cannot be mounted natively on
+  Windows — `Mount-DiskImage` only supports `.vhd`/`.vhdx`/`.iso`.
+  Use the mtools verbs for floppy IMGs.
+
 ## [0.2.2] — 2026-05-17
 
 ### Changed

@@ -1,10 +1,10 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "dosforge"
-version = "0.2.2"
+version = "0.3.0"
 description = "Textual TUI for creating and managing DOS-compatible VHD and floppy IMG files on Linux."
 readme = "README.md"
 requires-python = ">=3.11"
