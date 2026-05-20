@@ -2,8 +2,10 @@ name: Release Windows bundle
 
 # Triggered automatically when a tag matching ``v*`` is pushed. Builds
 # the PyInstaller Windows bundle on a windows-latest runner, zips it,
-# and creates the GitHub release with the zip attached. Re-runnable
-# via workflow_dispatch with the tag name.
+# and creates the GitHub release with the zip attached. A second job
+# builds the lite bundle (readmes-only dosassets) and uploads it as an
+# additional release asset. Both jobs are re-runnable via
+# workflow_dispatch with the tag name.
 
 on:
   push:
@@ -17,7 +19,7 @@ on:
         type: string
 
 permissions:
-  contents: write  # required for `gh release create`
+  contents: write  # required for `gh release create` / `gh release upload`
 
 jobs:
   build-windows:
@@ -100,4 +102,65 @@ jobs:
           } else {
             gh release create $tag $artifact --title $title --generate-notes
           }
+          Write-Host "SHA256: $env:sha256"
+
+  build-windows-lite:
+    runs-on: windows-latest
+    needs: build-windows  # wait for the release to exist before uploading
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+          python -m pip install pyinstaller py7zr zstandard
+
+      - name: Fetch bundled Windows vendor binaries (QEMU, mtools)
+        run: python scripts/fetch-windows-vendor.py
+
+      - name: Build PyInstaller lite bundle
+        run: python -m PyInstaller windows/dosforge-lite.spec --noconfirm
+
+      - name: Compute version from tag
+        id: vars
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag || github.ref_name }}"
+          $version = $tag -replace '^v',''
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "tag=$tag"          | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Zip the lite bundle
+        shell: pwsh
+        run: |
+          $artifact = "dosforge-${{ steps.vars.outputs.version }}-lite-windows-x64.zip"
+          Compress-Archive -Path dist\dosforge\* -DestinationPath $artifact -CompressionLevel Optimal
+          $hash = (Get-FileHash $artifact -Algorithm SHA256).Hash
+          Write-Host "Artifact: $artifact"
+          Write-Host "SHA256:   $hash"
+          "artifact=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "sha256=$hash"       | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload lite artifact to existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.vars.outputs.tag }}"
+          $artifact = $env:artifact
+          # Upload to the release that build-windows already created
+          gh release upload $tag $artifact --clobber
+          Write-Host "Lite artifact uploaded."
           Write-Host "SHA256: $env:sha256"

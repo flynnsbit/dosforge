@@ -23,6 +23,23 @@ APP_NAME = "dosforge"
 DOS_ASSETS_SUBDIR = "dosassets"
 
 
+def _bundle_dosassets_dir() -> Path | None:
+    """Return the bundled ``dosassets/`` directory when set by the launcher.
+
+    The PyInstaller entry-point (``windows/dosforge_entry.py``) sets
+    ``DOSFORGE_DOSASSETS_DIR`` when running as a frozen bundle so that
+    asset resolution works regardless of the user's working directory.
+    This is intentionally a bundle-only mechanism — the env var is never
+    set in editable-install / dev runs.
+    """
+    env_value = os.environ.get("DOSFORGE_DOSASSETS_DIR")
+    if env_value:
+        path = Path(env_value)
+        if path.is_dir():
+            return path
+    return None
+
+
 def xdg_state_home() -> Path:
     """Legacy XDG helper — Linux-only.
 
@@ -54,7 +71,15 @@ def app_state_file() -> Path:
 
 
 def dos_assets_root(base: Path | None = None) -> Path:
-    """Return the ``dosassets/`` directory under ``base`` (default cwd)."""
+    """Return the ``dosassets/`` directory under ``base`` (default cwd).
+
+    When running as a frozen PyInstaller bundle the launcher sets
+    ``DOSFORGE_DOSASSETS_DIR`` to the bundled (or adjacent) asset
+    directory; that takes precedence over the cwd-relative fallback.
+    """
+    bundled = _bundle_dosassets_dir()
+    if bundled is not None:
+        return bundled
     return (base if base is not None else Path.cwd()) / DOS_ASSETS_SUBDIR
 
 
@@ -69,9 +94,10 @@ def resolve_dos_asset_dir(
 
     1. If ``name_or_path`` is an absolute path or contains a path separator,
        use it verbatim (after ``expanduser`` + ``resolve``).
-    2. Otherwise treat it as a bare boot-asset name and try
-       ``<base>/dosassets/<name>`` first.
-    3. Fall back to ``<base>/<name>`` so users who organise their assets
+    2. When ``DOSFORGE_DOSASSETS_DIR`` is set (frozen bundle), try
+       ``<bundled_dir>/<name>`` first.
+    3. Otherwise try ``<base>/dosassets/<name>``.
+    4. Fall back to ``<base>/<name>`` so users who organise their assets
        at the project root (rather than under ``dosassets/``) still work.
 
     Returns ``None`` if none of the candidates resolve to a directory.
@@ -83,10 +109,14 @@ def resolve_dos_asset_dir(
         resolved = path_form.resolve()
         return resolved if resolved.is_dir() else None
 
-    candidates = [
+    candidates: list[Path] = []
+    bundled = _bundle_dosassets_dir()
+    if bundled is not None:
+        candidates.append((bundled / raw).resolve())
+    candidates.extend([
         (base_dir / DOS_ASSETS_SUBDIR / raw).resolve(),
         (base_dir / raw).resolve(),
-    ]
+    ])
     for candidate in candidates:
         if candidate.is_dir():
             return candidate
@@ -96,8 +126,12 @@ def resolve_dos_asset_dir(
 def describe_dos_asset_locations(name: str, *, base: Path | None = None) -> str:
     """Format the expected lookup locations for ``name`` in error messages."""
     base_dir = base if base is not None else Path.cwd()
-    locations = [
-        f"./{DOS_ASSETS_SUBDIR}/{name}/",
-        f"./{name}/",
-    ]
-    return ", ".join(str((base_dir / loc).resolve()) for loc in locations)
+    locations: list[str] = []
+    bundled = _bundle_dosassets_dir()
+    if bundled is not None:
+        locations.append(str((bundled / name).resolve()))
+    locations.extend([
+        str((base_dir / DOS_ASSETS_SUBDIR / name).resolve()),
+        str((base_dir / name).resolve()),
+    ])
+    return ", ".join(locations)

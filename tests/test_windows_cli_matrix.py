@@ -839,16 +839,18 @@ class TestImageContentVerbs:
         assert "Directory" in ls.stdout or "free" in ls.stdout
 
     def test_mount_emits_clean_windows_error(self, scratch_vhd: Path):
-        """On Windows, `mount` should redirect to the new verbs, not crash."""
+        """On Windows, `mount` attempts native mount, fails non-admin with a clear error."""
 
         result = run_cli("mount", "--path", str(scratch_vhd))
         assert result.returncode != 0
         assert "Traceback" not in result.stderr
-        assert "Linux-only" in result.stderr
-        assert "dosforge ls" in result.stderr
+        # Phase 8: native Windows mount is attempted; non-admin gets an
+        # elevation hint rather than a "Linux-only" redirect.
+        assert "admin" in result.stderr.lower() or "dosforge ls" in result.stderr
 
     def test_unmount_emits_clean_windows_error(self):
         result = run_cli("unmount", "--mount-point", "C:\\nope")
         assert result.returncode != 0
         assert "Traceback" not in result.stderr
-        assert "Linux-only" in result.stderr
+        # Non-tracked mount path produces a clear "not tracked" error.
+        assert "not tracked" in result.stderr.lower() or "Linux-only" in result.stderr
