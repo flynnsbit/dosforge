@@ -1,0 +1,103 @@
+name: Release Windows bundle
+
+# Triggered automatically when a tag matching ``v*`` is pushed. Builds
+# the PyInstaller Windows bundle on a windows-latest runner, zips it,
+# and creates the GitHub release with the zip attached. Re-runnable
+# via workflow_dispatch with the tag name.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to (re)build the release for (e.g. v0.3.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write  # required for `gh release create`
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+          python -m pip install pyinstaller py7zr
+
+      - name: Fetch bundled Windows vendor binaries (QEMU, mtools)
+        run: python scripts/fetch-windows-vendor.py
+
+      - name: Build PyInstaller bundle
+        run: python -m PyInstaller windows/dosforge.spec --noconfirm
+
+      - name: Compute version from tag
+        id: vars
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag || github.ref_name }}"
+          $version = $tag -replace '^v',''
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "tag=$tag"          | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Zip the bundle
+        shell: pwsh
+        run: |
+          $artifact = "dosforge-${{ steps.vars.outputs.version }}-windows-x64.zip"
+          Compress-Archive -Path dist\dosforge\* -DestinationPath $artifact -CompressionLevel Optimal
+          $hash = (Get-FileHash $artifact -Algorithm SHA256).Hash
+          Write-Host "Artifact: $artifact"
+          Write-Host "SHA256:   $hash"
+          "artifact=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "sha256=$hash"       | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Locate release notes
+        id: notes
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.vars.outputs.tag }}"
+          $notesFile = "releases/$tag-release-notes.md"
+          if (Test-Path $notesFile) {
+            "notes_path=$notesFile" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "Using release notes from $notesFile"
+          } else {
+            Write-Host "No tag-specific notes; will let gh autogenerate from commits"
+            "notes_path=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      - name: Create GitHub release with asset attached
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.vars.outputs.tag }}"
+          $artifact = $env:artifact
+          $notesPath = "${{ steps.notes.outputs.notes_path }}"
+          $title = "dosforge ${{ steps.vars.outputs.version }}"
+
+          # Delete any pre-existing release for this tag (so the workflow is re-runnable)
+          gh release delete $tag --yes --cleanup-tag=false 2>$null
+
+          if ($notesPath) {
+            gh release create $tag $artifact --title $title --notes-file $notesPath
+          } else {
+            gh release create $tag $artifact --title $title --generate-notes
+          }
+          Write-Host "SHA256: $env:sha256"
