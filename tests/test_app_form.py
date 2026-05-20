@@ -573,3 +573,78 @@ def test_create_shows_error_when_sudo_reauth_fails(tmp_path) -> None:
             assert "Sudo re-authentication failed." == str(app.query_one("#status").render()).strip()
 
     asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: every TUI manager call must work on the actual backend.
+#
+# Why: the existing form tests stub out the underlying manager methods, so
+# they verify the TUI's state-machine wiring but not the manager-side
+# dependency / capability checks. When fetch_freedos_assets unconditionally
+# required mkfs.fat (not in the Windows bundle), the stubbed-out test passed
+# while the real-world Windows TUI raised at runtime
+# ("Missing required tools for FreeDOS extraction: mkfs.fat").
+#
+# These tests call the manager methods directly against the real backend
+# WITHOUT mocking, except for the genuinely slow / external parts
+# (downloading FreeDOS, real-disk QEMU install, etc.) which are stubbed
+# at the deepest practical layer so the dependency / capability checks
+# above them still run for real.
+# ---------------------------------------------------------------------------
+
+
+def test_preflight_passes_on_active_backend(monkeypatch) -> None:
+    """on_mount calls manager.preflight() — must not raise on either backend."""
+
+    from dosforge.disk import DiskManager
+
+    # Stub _ensure_sudo_ready (Linux interactive auth) — assert_dependencies
+    # is the part we actually want to exercise for real.
+    monkeypatch.setattr(DiskManager, "_ensure_sudo_ready", lambda self: None)
+    DiskManager().preflight()
+
+
+def test_privilege_diagnostics_summary_runs_on_active_backend() -> None:
+    """The 'Run privilege diagnostics' button must not crash on either platform."""
+
+    from dosforge.disk import DiskManager
+
+    ok, summary = DiskManager().privilege_diagnostics_summary()
+    assert isinstance(ok, bool)
+    assert isinstance(summary, str)
+    assert summary  # non-empty
+
+
+def test_list_mounts_runs_on_active_backend() -> None:
+    """The TUI's _refresh_mounts() reads from list_mounts() — must work."""
+
+    from dosforge.disk import DiskManager
+
+    # Returns a list of MountRecord; may be empty. Just ensure no exception.
+    assert isinstance(DiskManager().list_mounts(), list)
+
+
+def test_fetch_freedos_assets_passes_dependency_check(monkeypatch, tmp_path) -> None:
+    """Regression guard for the mkfs.fat-only-on-Linux bug.
+
+    fetch_freedos_assets's dependency check must succeed on whichever
+    backend is active. We stub only the actual download/extract step
+    (export_latest_freedos_assets) so the dependency check above it
+    still runs against the real find_missing + backend.tool_path.
+    """
+
+    from dosforge.disk import DiskManager
+
+    manager = DiskManager()
+    captured: dict[str, Path] = {}
+
+    def fake_export(destination, image_url=None, *, include_full_fdos=False):
+        del image_url, include_full_fdos
+        captured["destination"] = destination
+        destination.mkdir(parents=True, exist_ok=True)
+        return destination.resolve()
+
+    monkeypatch.setattr(manager.boot_resolver, "export_latest_freedos_assets", fake_export)
+    target = manager.fetch_freedos_assets(destination=tmp_path / "freedos")
+    assert target == (tmp_path / "freedos").resolve()
+    assert captured["destination"] == (tmp_path / "freedos")
