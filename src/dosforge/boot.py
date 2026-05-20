@@ -63,6 +63,8 @@ _MSDOS71_PAK_PASSWORD = b":MSDOS"
 _MSDOS71_BOOTSECTOR_SOURCES = ("SYS.COM", "FORMAT.COM")
 _MSDOS71_IMAGE_SUFFIXES = (".img", ".ima", ".dsk", ".xdf", ".vfd")
 _SEVEN_ZIP_SUFFIXES = (".7z",)
+_ZIP_SUFFIXES = (".zip",)
+_ARCHIVE_SUFFIXES = _SEVEN_ZIP_SUFFIXES + _ZIP_SUFFIXES
 _LEGACY_DOS_SYSTEM_FILE_NAMES = frozenset(
     name for required_set in _LEGACY_DOS_SYSTEM_FILE_SETS for name in required_set
 ) | {"KERNEL.SYS", "BOOTSECT_FAT16.BIN", "BOOTSECT_FAT32.BIN"}
@@ -1081,10 +1083,77 @@ class BootAssetResolver:
                     return image_assets
 
         raise ValidationError(
-            f"{profile_label} assets were not found. Provide either direct files "
-            "(IO.SYS+MSDOS.SYS+COMMAND.COM or IBMBIO.COM+IBMDOS.COM+COMMAND.COM, plus BOOTSECT_FAT16.BIN/BOOTSECT.BIN) "
-            f"or floppy images (*.img/*.ima/*.dsk/*.xdf) under {directory}."
+            self._asset_not_found_message(
+                profile_label=profile_label,
+                directory=directory,
+                generic_hint=(
+                    "Provide either direct files "
+                    "(IO.SYS+MSDOS.SYS+COMMAND.COM or IBMBIO.COM+IBMDOS.COM+COMMAND.COM, plus BOOTSECT_FAT16.BIN/BOOTSECT.BIN) "
+                    "or floppy images (*.img/*.ima/*.dsk/*.xdf)."
+                ),
+            )
         )
+
+    def _asset_not_found_message(
+        self,
+        *,
+        profile_label: str,
+        directory: Path,
+        generic_hint: str,
+    ) -> str:
+        """Compose a "DOS assets not found" error that surfaces the
+        per-mode ``readme.txt`` contents when one is present.
+
+        Each ``dosassets/<mode>/readme.txt`` documents exactly which
+        files dosforge expects for that boot mode and where to source
+        them from (typically WinWorldPC). When the resolver fails to
+        find the install media, dumping the readme into the error
+        message is the difference between "huh, what now?" and "oh,
+        I need Disk1.img + Disk2.img + Disk3.img from the MS-DOS 6.22
+        archive on WinWorldPC". Falls back to ``generic_hint`` if no
+        readme is present.
+        """
+        readme_text = self._read_asset_readme(directory)
+        if readme_text:
+            return (
+                f"{profile_label} assets were not found under {directory}.\n"
+                f"\n"
+                f"Per the local readme for this mode:\n"
+                f"------------------------------------------------------------\n"
+                f"{readme_text}\n"
+                f"------------------------------------------------------------\n"
+            )
+        return (
+            f"{profile_label} assets were not found under {directory}. "
+            f"{generic_hint}"
+        )
+
+    def _read_asset_readme(self, directory: Path) -> str:
+        """Return the trimmed contents of ``<directory>/readme.txt`` if
+        present, capped at ~2 KB so a misplaced novel doesn't dominate
+        the error output. Searches case-insensitively. Returns ``""``
+        if no readme is found / readable.
+        """
+        if not directory.is_dir():
+            return ""
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            return ""
+        for entry in entries:
+            if not entry.is_file():
+                continue
+            if entry.name.lower() != "readme.txt":
+                continue
+            try:
+                text = entry.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return ""
+            stripped = text.strip()
+            if len(stripped) > 2048:
+                return stripped[:2048].rstrip() + "\n[...truncated...]"
+            return stripped
+        return ""
 
     def _resolve_legacy_assets_directory(self, *, request: CreateRequest, fallback_dirs: tuple[str, ...]) -> Path:
         if request.boot_assets_path is not None:
@@ -1754,10 +1823,16 @@ class BootAssetResolver:
         install_images = self._collect_msdos71_install_images(directory)
         if not install_images:
             raise ValidationError(
-                "MS-DOS 7.1 assets were not found. Provide either direct files "
-                "(IO.SYS, MSDOS.SYS, COMMAND.COM, HIMEM.SYS, IFSHLP.SYS, "
-                "BOOTSECT_FAT16.BIN/BOOTSECT_FAT32.BIN) "
-                "or DOS71 install disk images (*.img/*.ima/*.dsk/*.xdf)."
+                self._asset_not_found_message(
+                    profile_label="MS-DOS 7.1",
+                    directory=directory,
+                    generic_hint=(
+                        "Provide either direct files "
+                        "(IO.SYS, MSDOS.SYS, COMMAND.COM, HIMEM.SYS, IFSHLP.SYS, "
+                        "BOOTSECT_FAT16.BIN/BOOTSECT_FAT32.BIN) "
+                        "or DOS71 install disk images (*.img/*.ima/*.dsk/*.xdf)."
+                    ),
+                )
             )
 
         cache_key = self._msdos71_cache_key(directory, install_images)
@@ -2711,25 +2786,42 @@ class BootAssetResolver:
 
     def _iter_asset_search_dirs(self, directory: Path) -> list[Path]:
         """Return ``directory`` plus any directories materialized from
-        ``.7z`` archives found inside it.
+        archives (``.7z`` / ``.zip``) found inside it.
 
         WinWorldPC release archives ship the DOS install diskettes inside
-        a single ``.7z`` archive that, when extracted, produces one top-
-        level folder named after the title (e.g. ``Microsoft DOS 7.1
-        (3.5)/disk01.img``). Pre-extracting by hand is a footgun: users
-        drop the .7z into ``dosassets/<mode>/`` and expect dosforge to
-        find the disks. This helper makes that work transparently.
+        a single ``.7z`` (or sometimes ``.zip``) archive that, when
+        extracted, produces one top-level folder named after the title
+        (e.g. ``Microsoft DOS 7.1 (3.5)/disk01.img``). Pre-extracting by
+        hand is a footgun: users drop the archive into
+        ``dosassets/<mode>/`` and expect dosforge to find the disks.
+        This helper makes that work transparently.
 
-        Extraction is cached by archive path + size + mtime under
-        ``cache_root/seven-zip/<hash>/``. Subsequent runs skip extraction
-        when the marker file is present. If ``py7zr`` is not installed
-        the directory is returned unchanged and any required-asset errors
-        surface from the normal resolver path.
+        Two-tier extraction strategy:
+
+        1. **Cache-based extraction** — every archive is extracted to a
+           per-archive cache directory under
+           ``cache_root/seven-zip/<sanitized-stem>-<hash>/``. The cache
+           is reused on subsequent runs (keyed by archive path + size +
+           mtime). Cache dirs are also added to the search path so the
+           resolver finds extracted files via mtools.
+        2. **Surface materialization** — any DOS install media
+           (``.img`` / ``.ima`` / ``.dsk`` / ``.xdf`` / ``.vfd``) and
+           known DOS system files (IO.SYS, IBMBIO.COM, COMMAND.COM,
+           etc.) found inside the cache extraction are *copied* into
+           the user's asset directory itself so they appear "right
+           there" alongside the archive. Existing files in the asset
+           directory are never overwritten — if the user manually
+           dropped a Disk1.img and ALSO dropped a .7z containing
+           Disk1.img, the user's file wins.
+
+        If ``py7zr`` (for .7z) or ``zipfile`` (always available) is
+        unavailable the directory is returned unchanged and any
+        required-asset errors surface from the normal resolver path.
         """
         try:
             archives = [
                 entry for entry in directory.iterdir()
-                if entry.is_file() and entry.suffix.lower() in _SEVEN_ZIP_SUFFIXES
+                if entry.is_file() and entry.suffix.lower() in _ARCHIVE_SUFFIXES
             ]
         except OSError:
             return [directory]
@@ -2742,7 +2834,7 @@ class BootAssetResolver:
         search_dirs: list[Path] = [directory]
         seen = {directory.resolve()}
         for archive in archives:
-            extract_dir = self._ensure_seven_zip_extracted(archive, extracted_root)
+            extract_dir = self._ensure_archive_extracted(archive, extracted_root)
             if extract_dir is None:
                 continue
             for candidate in self._iter_useful_subdirs(extract_dir):
@@ -2751,9 +2843,21 @@ class BootAssetResolver:
                     continue
                 seen.add(resolved)
                 search_dirs.append(candidate)
+            # Materialize useful files directly into the asset dir so
+            # the user sees the install media land "right there".
+            self._materialize_useful_files_into_asset_dir(
+                extract_root=extract_dir,
+                asset_dir=directory,
+            )
         return search_dirs
 
-    def _ensure_seven_zip_extracted(self, archive: Path, extracted_root: Path) -> Path | None:
+    def _ensure_archive_extracted(self, archive: Path, extracted_root: Path) -> Path | None:
+        """Extract ``archive`` (``.7z`` or ``.zip``) to a per-archive
+        cache directory under ``extracted_root``. Cached on subsequent
+        runs via a ``.extracted.ok`` marker file. Returns the extract
+        directory, or None if the archive couldn't be unpacked (missing
+        backend, unsupported format, etc.).
+        """
         try:
             stat = archive.stat()
         except OSError:
@@ -2766,20 +2870,70 @@ class BootAssetResolver:
         marker = extract_dir / ".extracted.ok"
         if marker.exists():
             return extract_dir
-        try:
-            import py7zr
-        except ImportError:
-            return None
+
+        suffix = archive.suffix.lower()
         try:
             if extract_dir.exists():
                 shutil.rmtree(extract_dir, ignore_errors=True)
             extract_dir.mkdir(parents=True, exist_ok=True)
-            with py7zr.SevenZipFile(archive, "r") as z:
-                z.extractall(path=extract_dir)
+            if suffix == ".7z":
+                try:
+                    import py7zr
+                except ImportError:
+                    return None
+                with py7zr.SevenZipFile(archive, "r") as z:
+                    z.extractall(path=extract_dir)
+            elif suffix == ".zip":
+                with zipfile.ZipFile(archive) as z:
+                    z.extractall(path=extract_dir)
+            else:
+                return None
             marker.write_text("ok")
         except Exception:
             return None
         return extract_dir
+
+    def _materialize_useful_files_into_asset_dir(
+        self,
+        *,
+        extract_root: Path,
+        asset_dir: Path,
+    ) -> None:
+        """Copy any DOS install media / system files from ``extract_root``
+        (the archive's cache extraction directory) into ``asset_dir``
+        (the user's ``dosassets/<mode>/`` folder) so the user sees them
+        appear next to the archive.
+
+        Never overwrites existing files in ``asset_dir`` — user-provided
+        files take precedence. Skips Artwork/, screenshots, and any
+        files that aren't DOS install media (.img/.ima/.dsk/.xdf/.vfd)
+        or known DOS system files (IO.SYS, IBMBIO.COM, COMMAND.COM,
+        BOOTSECT_*.BIN, etc.). Mtime/permission errors are silently
+        ignored — best-effort UX, not a correctness guarantee.
+        """
+        if not extract_root.is_dir() or not asset_dir.is_dir():
+            return
+        for entry in extract_root.rglob("*"):
+            if not entry.is_file():
+                continue
+            name = entry.name
+            upper = name.upper()
+            is_install_media = entry.suffix.lower() in _MSDOS71_IMAGE_SUFFIXES
+            is_dos_system_file = upper in _LEGACY_DOS_SYSTEM_FILE_NAMES
+            if not (is_install_media or is_dos_system_file):
+                continue
+            # Always materialize at the asset_dir root (flat layout); the
+            # WinWorldPC wrapper folder is uninteresting from the
+            # resolver's perspective.
+            destination = asset_dir / name
+            if destination.exists():
+                # Don't overwrite user-provided files. If the user has
+                # an asset they want to keep, their copy wins.
+                continue
+            try:
+                shutil.copy2(entry, destination)
+            except OSError:
+                continue
 
     def _iter_useful_subdirs(self, root: Path) -> list[Path]:
         """Yield ``root`` plus any sub-directories that contain DOS install

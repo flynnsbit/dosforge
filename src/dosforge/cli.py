@@ -410,11 +410,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "mount":
             from ._platform import get_backend
 
-            if not get_backend().supports_kernel_mount:
+            backend = get_backend()
+            # On Linux, kernel mount is always available. On Windows we
+            # have native Mount-DiskImage for VHDs (admin required) and
+            # nothing for IMG floppies (Mount-DiskImage rejects raw images).
+            if not backend.supports_kernel_mount and sys.platform != "win32":
                 print(
-                    "`dosforge mount` requires kernel mount support, which is "
-                    "Linux-only.\n"
-                    "On Windows, use the mtools wrapper subcommands instead:\n"
+                    "`dosforge mount` requires kernel mount support.\n"
+                    "On this platform use the mtools wrapper subcommands instead:\n"
                     "  dosforge ls <image> [path]      # list directory\n"
                     "  dosforge cat <image> <path>     # print file contents\n"
                     "  dosforge get <image> <path> [local]   # copy file out\n"
@@ -424,7 +427,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            record = manager.mount_vhd(Path(args.path))
+            try:
+                record = manager.mount_vhd(Path(args.path))
+            except DosForgeError as exc:
+                msg = str(exc)
+                # IMG on Windows lands here because _mount_vhd_native_windows
+                # is VHD-only. Redirect to mtools verbs cleanly.
+                if sys.platform == "win32" and Path(args.path).suffix.lower() in (".img", ".ima", ".vfd"):
+                    print(
+                        f"`dosforge mount` does not support floppy IMGs on Windows "
+                        f"(Mount-DiskImage only handles .vhd/.vhdx/.iso).\n"
+                        f"Use the mtools verbs instead: `dosforge ls/get/put/rm/mkdir <image>`.\n"
+                        f"Original error: {msg}",
+                        file=sys.stderr,
+                    )
+                    return 1
+                raise
             print(f"Mounted {record.vhd_path} to {record.mount_point} via {record.nbd_device}")
             if args.open:
                 manager.open_in_files(record.mount_point)
@@ -434,17 +452,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "unmount":
             from ._platform import get_backend
 
-            if not get_backend().supports_kernel_mount:
-                print(
-                    "`dosforge unmount` requires kernel mount support, which "
-                    "is Linux-only. On Windows there's nothing to unmount — "
-                    "the mtools-based ls/cat/get/put/rm/mkdir verbs operate "
-                    "directly on the image file without a persistent mount.",
-                    file=sys.stderr,
-                )
-                return 1
+            # Both Linux (kernel mount) and Windows (Mount-DiskImage) record
+            # mounts in the same state store; unmount() dispatches by record.
             record = manager.unmount(Path(args.mount_point))
-            print(f"Unmounted {record.mount_point} and disconnected {record.nbd_device}")
+            if record.nbd_device == "win-diskimage":
+                print(f"Dismounted {record.vhd_path} (was {record.mount_point})")
+            else:
+                print(f"Unmounted {record.mount_point} and disconnected {record.nbd_device}")
             return 0
 
         if args.command == "list-mounts":

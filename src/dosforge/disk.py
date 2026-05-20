@@ -68,6 +68,23 @@ from .size import (
 from .state import StateStore
 
 
+def _is_windows_admin() -> bool:
+    """Return True if the current process has Windows admin rights.
+
+    No-op on non-Windows platforms (returns True so the elevation gate
+    is a no-op there). Uses ctypes to call ``IsUserAnAdmin`` which
+    works whether or not Hyper-V / Storage cmdlets are available.
+    """
+
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())  # type: ignore[attr-defined]
+    except Exception:
+        return False
+
+
 @dataclass(frozen=True, slots=True)
 class _LegacyDosInstallDescriptor:
     """Per-boot-mode metadata for the QEMU-driven SYS install flow.
@@ -503,6 +520,11 @@ class DiskManager:
 
         media_type = self._media_type_for_path(image_path)
         self.preflight(media_type=media_type)
+        # Windows native mount path (Mount-DiskImage). VHD only; floppy
+        # IMG isn't supported by Mount-DiskImage at all (it only handles
+        # .vhd/.vhdx/.iso) so we don't try it.
+        if sys.platform == "win32" and media_type is MediaType.VHD:
+            return self._mount_vhd_native_windows(image_path)
         if media_type is MediaType.IMG:
             return self._mount_floppy_img(image_path)
         return self._mount_vhd(image_path)
@@ -512,6 +534,12 @@ class DiskManager:
         if record is None:
             raise ValidationError(f"Mount point is not tracked by dosforge: {mount_point}")
 
+        # Windows native unmount: nbd_device == "win-diskimage" sentinel.
+        if record.nbd_device == "win-diskimage":
+            self._unmount_vhd_native_windows(record)
+            self.state_store.remove_mount(record.mount_point)
+            return record
+
         self.preflight(media_type=MediaType.VHD if self._is_nbd_record(record) else MediaType.IMG)
         self.runner.run(["umount", str(record.mount_point)], sudo=True)
         if self._is_nbd_record(record):
@@ -520,6 +548,97 @@ class DiskManager:
         if record.mount_point.exists():
             record.mount_point.rmdir()
         return record
+
+    def _mount_vhd_native_windows(self, vhd_path: Path) -> MountRecord:
+        """Mount a VHD as a real Windows drive letter via Mount-DiskImage.
+
+        Built-in to Windows 8+ (Storage module); does NOT need Hyper-V.
+        Does require admin elevation — Mount-DiskImage for VHDs loads
+        the storage virtualization driver. ISOs mount unprivileged but
+        VHDs always need admin. We surface that as a clear error with
+        the elevation hint when the call fails for that reason.
+
+        The resulting mount uses Windows's native FAT driver, so it's
+        readable/writable by Explorer, PowerShell, and every other
+        Windows tool — much friendlier than the mtools wrappers when
+        the user has admin and wants full file-manager access.
+        """
+
+        if not _is_windows_admin():
+            raise ValidationError(
+                "Native VHD mount on Windows requires admin elevation "
+                "(Mount-DiskImage loads the storage virtualization driver). "
+                "Either:\n"
+                "  - Restart dosforge from an elevated PowerShell:\n"
+                "      Start-Process powershell -Verb RunAs\n"
+                "      cd C:\\Projects\\dosforge ; .\\dosforge\n"
+                "  - Or use the no-admin alternatives:\n"
+                "      dosforge ls    <image> [path]   (browse)\n"
+                "      dosforge get   <image> <dos-path> [local]  (extract)\n"
+                "      dosforge put   <image> <local> [dos-path]  (inject)"
+            )
+
+        ps_script = (
+            f"$ErrorActionPreference='Stop';"
+            f"$img = Mount-DiskImage -ImagePath '{vhd_path}' -PassThru;"
+            f"$vol = $img | Get-Disk | Get-Partition | Get-Volume | Where-Object DriveLetter;"
+            f"if (-not $vol) {{ throw 'Mounted but no drive letter assigned' }};"
+            f"$vol.DriveLetter"
+        )
+        result = self.runner.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            if "required privilege is not held" in stderr.lower():
+                raise ValidationError(
+                    "Native VHD mount failed: admin elevation required. "
+                    "Restart dosforge from an elevated PowerShell.\n"
+                    f"Details: {stderr}"
+                )
+            raise ValidationError(
+                f"Native VHD mount failed: {stderr or 'unknown error'}"
+            )
+        drive_letter = (result.stdout or "").strip()
+        if not drive_letter:
+            raise ValidationError(
+                "Mount-DiskImage succeeded but no drive letter was assigned. "
+                "The VHD may be partitionless or use an unsupported filesystem."
+            )
+
+        mount_point = Path(f"{drive_letter}:\\")
+        record = MountRecord.create(
+            vhd_path=vhd_path,
+            nbd_device="win-diskimage",
+            partition_device=f"{drive_letter}:",
+            mount_point=mount_point,
+        )
+        self.state_store.add_mount(record)
+        return record
+
+    def _unmount_vhd_native_windows(self, record: MountRecord) -> None:
+        """Dismount a VHD previously mounted via _mount_vhd_native_windows."""
+
+        ps_script = (
+            f"$ErrorActionPreference='Stop';"
+            f"Dismount-DiskImage -ImagePath '{record.vhd_path}' | Out-Null"
+        )
+        result = self.runner.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            if "required privilege is not held" in stderr.lower():
+                raise ValidationError(
+                    "Dismount-DiskImage failed: admin elevation required. "
+                    "Restart dosforge from an elevated PowerShell.\n"
+                    f"Details: {stderr}"
+                )
+            raise ValidationError(
+                f"Native VHD dismount failed: {stderr or 'unknown error'}"
+            )
 
     def list_mounts(self) -> list[MountRecord]:
         return self.state_store.list_mounts()
@@ -1341,6 +1460,7 @@ class DiskManager:
                 heads=heads,
                 sectors_per_track=spt,
             )
+            self._densify_file_for_windows(path)
             return
 
         self.runner.run(
@@ -1359,6 +1479,69 @@ class DiskManager:
         # directly. mkfs.fat then writes a matching BPB through qemu-nbd, and
         # IO.SYS's LBA->CHS arithmetic at boot lines up with what BIOS reports.
         self._normalize_vhd_footer_geometry(path)
+        self._densify_file_for_windows(path)
+
+    def _densify_file_for_windows(self, path: Path) -> None:
+        """Clear the NTFS sparse attribute and materialize every byte.
+
+        qemu-img produces fixed VHDs as NTFS-sparse files on Windows (only
+        the small written regions — header, footer, allocated clusters —
+        consume real disk space; the rest is a logical hole that returns
+        zeros on read). Several Windows tools refuse sparse VHDs:
+
+        - ``Mount-DiskImage`` errors with "Virtual hard disk files must be
+          uncompressed and unencrypted and must not be sparse" before we
+          can wire up native VHD mounting on Windows.
+        - Windows Disk Management → "Attach VHD" rejects the file
+          silently with the same constraint.
+        - Some third-party tools (7-Zip, Disk2vhd, etc.) refuse to read
+          or convert sparse VHDs.
+
+        Two steps to fully densify the file:
+
+        1. Clear the FILE_ATTRIBUTE_SPARSE_FILE flag via ``fsutil sparse
+           setflag``. New writes after this point won't be sparse.
+        2. Read every chunk and write it back to the same offset. Reads
+           through sparse holes return zeros; writing those zeros back
+           materializes the disk extent. Done in 4 MiB chunks; ~5-15s
+           per 100 MiB on SSD, scales linearly. The footer + any
+           previously-written content is preserved verbatim.
+
+        No-op on non-Windows platforms (Linux supports sparse VHDs via
+        qemu-nbd and has no need to densify).
+        """
+
+        if sys.platform != "win32":
+            return
+        try:
+            self.runner.run(
+                ["fsutil", "sparse", "setflag", str(path), "0"],
+                check=False,
+            )
+        except Exception:
+            # fsutil may not be in PATH in unusual environments; the
+            # densify loop below still does the materialization.
+            pass
+
+        chunk_size = 4 * 1024 * 1024
+        with path.open("r+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            total = handle.tell()
+            handle.seek(0)
+            while True:
+                offset = handle.tell()
+                if offset >= total:
+                    break
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
+                handle.seek(offset)
+                handle.write(chunk)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except OSError:
+                pass
 
     def _normalize_vhd_size_for_chs(self, request: CreateRequest) -> int:
         """Determine the byte-exact size to pass to ``qemu-img create``.
@@ -1863,12 +2046,23 @@ class DiskManager:
             system_file_marker=descriptor.system_file_marker,
         )
         if install_image is None:
-            raise ValidationError(
+            base_msg = (
                 f"{descriptor.label} boot mode requires a bootable install diskette "
-                f"(with SYS.COM and {descriptor.system_file_marker}) in the boot assets "
-                f"directory. Preferred names: {', '.join(descriptor.preferred_image_names)}. "
+                f"(with SYS.COM and {descriptor.system_file_marker}) in the boot "
+                f"assets directory. Preferred names: "
+                f"{', '.join(descriptor.preferred_image_names)}. "
                 f"Checked: {boot_assets_dir}"
             )
+            readme = self.boot_resolver._read_asset_readme(boot_assets_dir)
+            if readme:
+                base_msg = (
+                    f"{base_msg}\n\n"
+                    f"Per the local readme for this mode:\n"
+                    f"------------------------------------------------------------\n"
+                    f"{readme}\n"
+                    f"------------------------------------------------------------\n"
+                )
+            raise ValidationError(base_msg)
 
         cache_root = app_cache_dir() / "legacy-dos-install"
         cache_root.mkdir(parents=True, exist_ok=True)

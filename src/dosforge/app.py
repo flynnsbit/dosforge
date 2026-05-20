@@ -293,17 +293,24 @@ class DosForgeApp(App[None]):
             self._set_status("Preflight check passed. Select or create an image to begin.")
         except DosForgeError as exc:
             self._set_status(str(exc), error=True)
-        # One-shot backend-based gating: on backends without
-        # supports_kernel_mount (Windows), hide the mount/unmount widgets
-        # entirely and surface the mtools ls/extract verbs instead. On
-        # Linux, hide the mtools verbs since mount + open-in-Files covers
-        # the same workflow with the user's regular file manager.
-        supports_mount = self.manager.backend.supports_kernel_mount
+        # Backend-based gating: Linux uses kernel mount; Windows has
+        # Mount-DiskImage for VHDs (admin required at runtime). Both
+        # show the mount/unmount UI. On either backend we ALSO show the
+        # mtools ls/extract verbs as the no-admin alternative — they're
+        # the only way to browse images without admin elevation on
+        # Windows, and they work for IMG floppies which Mount-DiskImage
+        # doesn't support.
+        import sys as _sys
+
+        supports_mount = self.manager.backend.supports_kernel_mount or _sys.platform == "win32"
         self.query_one("#mount-btn", Button).display = supports_mount
         self.query_one("#unmount-input", Input).display = supports_mount
         self.query_one("#unmount-btn", Button).display = supports_mount
-        self.query_one("#ls-btn", Button).display = not supports_mount
-        self.query_one("#extract-row", Horizontal).display = not supports_mount
+        # mtools verbs visible on Windows always; on Linux only when
+        # kernel mount is unavailable (currently never).
+        show_mtools_verbs = _sys.platform == "win32"
+        self.query_one("#ls-btn", Button).display = show_mtools_verbs
+        self.query_one("#extract-row", Horizontal).display = show_mtools_verbs
         # Privilege diagnostics button only makes sense on sudo backends.
         if not self.manager.backend.requires_sudo_for_disk_ops:
             self.query_one("#diag-btn", Button).display = False
