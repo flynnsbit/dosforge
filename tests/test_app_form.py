@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from textual.widgets import Button, Checkbox, DirectoryTree, Input, Select
 
 from dosforge.app import DosForgeApp
@@ -502,6 +504,14 @@ def test_create_refreshes_browser_tree(monkeypatch, tmp_path) -> None:
     asyncio.run(run())
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "Sudo re-auth path is Linux-only. On Windows the WindowsBackend "
+        "reports requires_sudo_for_disk_ops=False, so _run_with_sudo_reauth "
+        "early-returns without entering the reauth dance — by design."
+    ),
+)
 def test_create_reauthenticates_and_retries_when_sudo_expires(monkeypatch, tmp_path) -> None:
     async def run() -> None:
         app = DosForgeApp()
@@ -532,6 +542,13 @@ def test_create_reauthenticates_and_retries_when_sudo_expires(monkeypatch, tmp_p
     asyncio.run(run())
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "Sudo re-auth path is Linux-only — see "
+        "test_create_reauthenticates_and_retries_when_sudo_expires."
+    ),
+)
 def test_create_shows_error_when_sudo_reauth_fails(tmp_path) -> None:
     async def run() -> None:
         app = DosForgeApp()

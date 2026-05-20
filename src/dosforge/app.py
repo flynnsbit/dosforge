@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable
 from typing import cast
@@ -152,11 +153,27 @@ class DosForgeApp(App[None]):
                 yield Label("Browse images and asset folders")
                 yield ParentDirectoryTree(str(Path.cwd()), id="vhd-tree")
                 yield Static("Selected image: (none)", id="selected-vhd")
+                # Linux-only: kernel-mount + qemu-nbd path. Hidden on
+                # backends without supports_kernel_mount (Windows).
                 yield Button("Mount selected image", id="mount-btn", variant="primary")
                 yield Input(placeholder="Mounted path to unmount", id="unmount-input")
                 yield Button("Unmount mount path", id="unmount-btn", variant="warning")
+                # Cross-platform: mtools-based image content verbs. Shown
+                # on backends without supports_kernel_mount as the
+                # browse/extract alternative to mount/unmount.
+                yield Button(
+                    "List contents (ls)",
+                    id="ls-btn",
+                    variant="primary",
+                )
+                with Horizontal(classes="path-row", id="extract-row"):
+                    yield Input(
+                        placeholder="DOS path inside image (e.g. /CONFIG.SYS)",
+                        id="extract-input",
+                    )
+                    yield Button("Extract", id="extract-btn")
                 with Horizontal(classes="path-row", id="open-path-row"):
-                    yield Input(placeholder="Path to open in Omarchy Files", id="open-input")
+                    yield Input(placeholder="Path to open in file manager", id="open-input")
                     yield Button("📁", id="browse-open-btn")
                 yield Button("Open path in Files", id="open-btn")
                 yield Static("No active mounts tracked.", id="mounts")
@@ -276,6 +293,20 @@ class DosForgeApp(App[None]):
             self._set_status("Preflight check passed. Select or create an image to begin.")
         except DosForgeError as exc:
             self._set_status(str(exc), error=True)
+        # One-shot backend-based gating: on backends without
+        # supports_kernel_mount (Windows), hide the mount/unmount widgets
+        # entirely and surface the mtools ls/extract verbs instead. On
+        # Linux, hide the mtools verbs since mount + open-in-Files covers
+        # the same workflow with the user's regular file manager.
+        supports_mount = self.manager.backend.supports_kernel_mount
+        self.query_one("#mount-btn", Button).display = supports_mount
+        self.query_one("#unmount-input", Input).display = supports_mount
+        self.query_one("#unmount-btn", Button).display = supports_mount
+        self.query_one("#ls-btn", Button).display = not supports_mount
+        self.query_one("#extract-row", Horizontal).display = not supports_mount
+        # Privilege diagnostics button only makes sense on sudo backends.
+        if not self.manager.backend.requires_sudo_for_disk_ops:
+            self.query_one("#diag-btn", Button).display = False
         self._sync_create_form_visibility()
         self._refresh_mounts()
 
@@ -329,6 +360,10 @@ class DosForgeApp(App[None]):
             self._handle_mount_selected()
         elif button_id == "unmount-btn":
             self._handle_unmount()
+        elif button_id == "ls-btn":
+            self._handle_image_ls()
+        elif button_id == "extract-btn":
+            self._handle_image_extract()
         elif button_id == "open-btn":
             self._handle_open()
         elif button_id == "fetch-freedos-btn":
@@ -613,7 +648,7 @@ class DosForgeApp(App[None]):
     def _handle_open(self) -> None:
         path_text = self.query_one("#open-input", Input).value.strip()
         if not path_text:
-            self._set_status("Enter a path to open in Omarchy Files.", error=True)
+            self._set_status("Enter a path to open in the file manager.", error=True)
             return
         try:
             self.manager.open_in_files(Path(path_text))
@@ -621,6 +656,82 @@ class DosForgeApp(App[None]):
             self._set_status(str(exc), error=True)
             return
         self._set_status(f"Opened in Files: {path_text}")
+
+    def _handle_image_ls(self) -> None:
+        """List the root directory of the currently selected image via mtools.
+
+        Cross-platform alternative to `mount`+browse — works against any
+        VHD/IMG/IMA/VFD without needing kernel-mount or admin. Output is
+        dumped into the status pane.
+        """
+
+        image = self._selected_image_for_image_ops()
+        if image is None:
+            return
+        from . import image_ops
+
+        try:
+            listing = image_ops.ls(image, "/", all_files=True)
+        except DosForgeError as exc:
+            self._set_status(str(exc), error=True)
+            return
+        if not listing:
+            self._set_status(f"{image.name}: (empty)")
+            return
+        self._set_status(f"Contents of {image.name}:\n{listing}")
+
+    def _handle_image_extract(self) -> None:
+        """Extract a file from the selected image to the user's chosen path.
+
+        Reads the DOS path from #extract-input and writes the file next
+        to the image (or asks via the file picker if no path was given).
+        Cross-platform via mtools.
+        """
+
+        image = self._selected_image_for_image_ops()
+        if image is None:
+            return
+        dos_path = self.query_one("#extract-input", Input).value.strip()
+        if not dos_path:
+            self._set_status(
+                "Enter a DOS path to extract (e.g. /CONFIG.SYS) in the box "
+                "next to the Extract button.",
+                error=True,
+            )
+            return
+
+        from . import image_ops
+
+        # Default destination: image directory, DOS basename.
+        basename = dos_path.replace("\\", "/").rstrip("/").split("/")[-1] or "FILE"
+        local_dest = image.parent / basename
+        try:
+            written = image_ops.get(image, dos_path, local_dest)
+        except DosForgeError as exc:
+            self._set_status(str(exc), error=True)
+            return
+        self._set_status(f"Extracted {image.name}:{dos_path} -> {written}")
+
+    def _selected_image_for_image_ops(self) -> Path | None:
+        """Resolve the image targeted by `ls` / `extract` from the form state.
+
+        Priority: the currently selected image (from the directory tree),
+        then the value of the create-path input box. Returns None and
+        sets an error status if neither is usable.
+        """
+
+        if self.selected_image is not None:
+            return self.selected_image
+        path_text = self.query_one("#create-path", Input).value.strip()
+        if path_text:
+            candidate = Path(path_text).expanduser().resolve()
+            if candidate.is_file():
+                return candidate
+        self._set_status(
+            "Select a .vhd / .img / .ima / .vfd file in the tree first.",
+            error=True,
+        )
+        return None
 
     def _handle_fetch_freedos(self) -> None:
         url_text = self.query_one("#freedos-url", Input).value.strip()
@@ -762,6 +873,17 @@ class DosForgeApp(App[None]):
         self.query_one("#vhd-tree", DirectoryTree).reload()
 
     def _run_with_sudo_reauth(self, operation: Callable[[], None]) -> bool:
+        # On backends that don't require sudo (Windows), call the
+        # operation directly — there's no privilege-escalation step
+        # to wrap, and the sudo password dialog should never appear.
+        if not self.manager.backend.requires_sudo_for_disk_ops:
+            try:
+                operation()
+                return True
+            except DosForgeError as exc:
+                self._set_status(str(exc), error=True)
+                return False
+
         try:
             operation()
             return True
@@ -856,10 +978,82 @@ class DosForgeApp(App[None]):
             title = "Select path"
 
         start_path = self._path_picker_start_path(target)
-        chosen = self._run_zenity_picker(mode=mode, title=title, start_path=start_path)
+        # Windows: native Win32 file dialogs via tkinter.filedialog
+        # (bundled with CPython; no extra runtime deps). Linux: zenity.
+        if sys.platform == "win32":
+            chosen = self._run_tkinter_picker(mode=mode, title=title, start_path=start_path)
+        else:
+            chosen = self._run_zenity_picker(mode=mode, title=title, start_path=start_path)
         if chosen is None:
             return None
         return Path(chosen).expanduser().resolve()
+
+    def _run_tkinter_picker(self, *, mode: str, title: str, start_path: Path) -> str | None:
+        """Native Win32 file-dialog picker via tkinter.filedialog.
+
+        Runs in a worker thread because Textual's event loop owns the
+        main thread, and tkinter's mainloop wants the main thread —
+        but for a one-shot dialog we don't enter mainloop, we just
+        create a hidden root, call the dialog directly, then destroy it.
+        Returns the selected path string, or None if cancelled.
+        """
+
+        try:
+            import tkinter
+            from tkinter import filedialog
+        except ImportError:
+            return None
+
+        start_dir = str(start_path.expanduser().resolve())
+        initial_dir = start_dir if Path(start_dir).is_dir() else str(Path(start_dir).parent)
+        initial_file = "" if Path(start_dir).is_dir() else Path(start_dir).name
+
+        # Hidden root window so the dialog has a parent but no extra UI shows.
+        root = tkinter.Tk()
+        root.withdraw()
+        # Bring dialog to the foreground above the terminal.
+        root.attributes("-topmost", True)
+        try:
+            picker_mode = mode
+            if picker_mode == "file_or_directory":
+                # Native Win32 has no combined picker; default to "open file"
+                # since most uses (boot assets) typically pick a file. The
+                # in-app tree remains available for picking directories.
+                picker_mode = "file"
+
+            if picker_mode == "directory":
+                result = filedialog.askdirectory(
+                    parent=root, title=title, initialdir=initial_dir, mustexist=True
+                )
+            elif picker_mode == "save":
+                result = filedialog.asksaveasfilename(
+                    parent=root,
+                    title=title,
+                    initialdir=initial_dir,
+                    initialfile=initial_file,
+                    defaultextension=".vhd",
+                    filetypes=[
+                        ("VHD images", "*.vhd"),
+                        ("Floppy images", "*.img *.ima *.vfd"),
+                        ("All files", "*.*"),
+                    ],
+                )
+            else:
+                result = filedialog.askopenfilename(
+                    parent=root,
+                    title=title,
+                    initialdir=initial_dir,
+                    initialfile=initial_file,
+                    filetypes=[
+                        ("Disk images", "*.vhd *.img *.ima *.vfd"),
+                        ("All files", "*.*"),
+                    ],
+                )
+        finally:
+            root.destroy()
+        if not result:
+            return None
+        return str(result)
 
     def _path_picker_start_path(self, target: str) -> Path:
         value = ""
