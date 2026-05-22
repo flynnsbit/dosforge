@@ -50,6 +50,25 @@ jobs:
       - name: Build PyInstaller bundle
         run: python -m PyInstaller windows/dosforge.spec --noconfirm
 
+      - name: Smoke test the bundle (textual present + EXE runs)
+        shell: pwsh
+        run: |
+          # Verify the textual package source is actually present (not just
+          # the .dist-info directory).  If this fails, the spec is broken
+          # and we should not publish.
+          $textualDir = "dist\dosforge\_internal\textual"
+          if (-not (Test-Path "$textualDir\__init__.py")) {
+            Write-Error "Bundle is broken: $textualDir\__init__.py not found. The TUI will fail with 'No module named textual'."
+          }
+          $count = (Get-ChildItem $textualDir -Recurse -File).Count
+          Write-Host "textual package: $count files bundled"
+          # Verify the EXE actually boots and prints --help
+          $help = & dist\dosforge\dosforge.exe --help 2>&1 | Out-String
+          if (-not ($help -match "create")) {
+            Write-Error "dosforge.exe --help did not run cleanly. Output: $help"
+          }
+          Write-Host "dosforge.exe --help: OK"
+
       - name: Compute version from tag
         id: vars
         shell: pwsh
@@ -132,6 +151,21 @@ jobs:
 
       - name: Build PyInstaller lite bundle
         run: python -m PyInstaller windows/dosforge-lite.spec --noconfirm
+
+      - name: Smoke test the lite bundle (textual present + EXE runs)
+        shell: pwsh
+        run: |
+          $textualDir = "dist\dosforge\_internal\textual"
+          if (-not (Test-Path "$textualDir\__init__.py")) {
+            Write-Error "Lite bundle is broken: $textualDir\__init__.py not found."
+          }
+          $count = (Get-ChildItem $textualDir -Recurse -File).Count
+          Write-Host "textual package: $count files bundled"
+          $help = & dist\dosforge\dosforge.exe --help 2>&1 | Out-String
+          if (-not ($help -match "create")) {
+            Write-Error "Lite dosforge.exe --help did not run cleanly. Output: $help"
+          }
+          Write-Host "dosforge.exe --help: OK"
 
       - name: Compute version from tag
         id: vars

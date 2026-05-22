@@ -24,10 +24,13 @@
 
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_all
+
 SPEC_DIR = Path(SPECPATH).resolve()
 REPO_ROOT = SPEC_DIR.parent
 
 datas = []
+binaries = []
 
 vendor_bin = REPO_ROOT / "vendor" / "windows" / "bin"
 if vendor_bin.is_dir():
@@ -53,50 +56,44 @@ if icons.is_dir():
         if entry.is_file():
             datas.append((str(entry), "assets/icons"))
 
-hiddenimports = [
+# Collect entire package trees (source, submodules, AND data files).
+# textual ships ``.tcss`` stylesheets; rich ships theme data; py7zr ships
+# headers; etc.  Plain ``hiddenimports`` only grabs the top-level
+# module's ``__init__.py``, which is why earlier builds shipped only the
+# ``dist-info`` directories and broke at first import.
+hiddenimports = []
+for _pkg in (
     "textual",
-    "textual.app",
-    "textual.widgets",
-    "textual.widgets._directory_tree",
-    "textual.css",
-    "textual.css.parse",
     "rich",
-    "rich.console",
-    "rich.text",
+    "markdown_it",
+    "mdit_py_plugins",
     "linkify_it",
     "uc_micro_py",
-    "mdit_py_plugins",
-    "markdown_it",
-    "pygments.lexers.python",
     "py7zr",
-    "py7zr.callbacks",
-    "py7zr.compressor",
-    "py7zr.cli",
-    "pycryptodomex",
     "Cryptodome",
-    "Cryptodome.Cipher",
-    "Cryptodome.Cipher.AES",
-    "Cryptodome.Hash",
-    "Cryptodome.Hash.SHA256",
-    "Cryptodome.Random",
-    "Cryptodome.Util",
-    "Cryptodome.Util.Padding",
-    "multivolumefile",
-    "texttable",
     "pyppmd",
     "pyzstd",
     "pybcj",
     "inflate64",
     "brotli",
+    "multivolumefile",
+    "texttable",
     "psutil",
-]
+):
+    pkg_datas, pkg_binaries, pkg_hidden = collect_all(_pkg)
+    datas.extend(pkg_datas)
+    binaries.extend(pkg_binaries)
+    hiddenimports.extend(pkg_hidden)
+
+# Pygments lexer used by Textual's syntax highlighting.
+hiddenimports.append("pygments.lexers.python")
 
 block_cipher = None
 
 a = Analysis(
     [str(REPO_ROOT / "windows" / "dosforge_entry.py")],
     pathex=[str(REPO_ROOT / "src")],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

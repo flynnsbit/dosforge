@@ -6,6 +6,29 @@ The format is loosely based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] — 2026-05-21
+
+**Bug-fix release — full bundle's TUI was broken in v0.3.0.**
+
+### Fixed
+
+- **Critical: TUI no longer crashes with `No module named 'textual'`** in
+  the published Windows bundles. The v0.3.0 PyInstaller spec listed
+  `textual` as a `hiddenimports` entry, but that only collects the
+  package's top-level `__init__.py` — the actual package tree (including
+  the `.tcss` stylesheets that Textual loads at runtime) was missing.
+  Both `windows/dosforge.spec` and `windows/dosforge-lite.spec` now use
+  `PyInstaller.utils.hooks.collect_all()` for every Python dependency,
+  pulling in source, submodules, **and** data files.
+- **Lite bundle**: same fix applied to `windows/dosforge-lite.spec`.
+
+### Added — CI safeguards
+
+- **Smoke test step in the release workflow** that fails the build if
+  `_internal\textual\__init__.py` is missing or if `dosforge.exe --help`
+  doesn't exit cleanly. This prevents broken bundles from ever shipping
+  again.
+
 ## [0.3.0] — 2026-05-19
 
 **Windows port complete — feature parity with Linux.**
