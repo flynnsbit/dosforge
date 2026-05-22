@@ -154,4 +154,4 @@ if _src.is_dir():
             "Run with --noconfirm or delete the existing dist/dosforge/ first."
         )
     _shutil.move(str(_src), str(_dst))
-    print(f"[dosforge-lite] moved dosassets/ out of _internal/ → {_dst}")
+    print(f"[dosforge-lite] moved dosassets/ out of _internal/ -> {_dst}")
