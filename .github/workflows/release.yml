@@ -198,3 +198,98 @@ jobs:
           gh release upload $tag $artifact --clobber
           Write-Host "Lite artifact uploaded."
           Write-Host "SHA256: $env:sha256"
+
+  build-windows-cli:
+    runs-on: windows-latest
+    needs: build-windows  # wait for the release to exist before uploading
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+          python -m pip install pyinstaller py7zr zstandard
+
+      - name: Fetch bundled Windows vendor binaries (QEMU, mtools)
+        run: python scripts/fetch-windows-vendor.py
+
+      - name: Build PyInstaller CLI-only bundle
+        run: python -m PyInstaller windows/dosforge-cli.spec --noconfirm
+
+      - name: Smoke test the CLI bundle
+        shell: pwsh
+        run: |
+          # CLI bundle MUST NOT contain textual (would mean the excludes
+          # in the spec are not working correctly).
+          $textualDir = "dist\dosforge\_internal\textual"
+          if (Test-Path "$textualDir\__init__.py") {
+            Write-Error "CLI bundle is fat: textual package leaked in. Excludes in dosforge-cli.spec are broken."
+          }
+          # qemu-system-i386.exe must NOT be present (whole point of CLI bundle)
+          $qemu = "dist\dosforge\_internal\vendor\windows\bin\qemu-system-i386.exe"
+          if (Test-Path $qemu) {
+            Write-Error "CLI bundle is fat: qemu-system-i386.exe leaked in. Vendor allowlist is broken."
+          }
+          # qemu-img.exe and mformat.exe MUST be present
+          $qimg = "dist\dosforge\_internal\vendor\windows\bin\qemu-img.exe"
+          $mfmt = "dist\dosforge\_internal\vendor\windows\bin\mformat.exe"
+          if (-not (Test-Path $qimg) -or -not (Test-Path $mfmt)) {
+            Write-Error "CLI bundle is broken: qemu-img or mformat missing."
+          }
+          # Bundle EXE itself must run and print --help
+          $help = & dist\dosforge\dosforge.exe --help 2>&1 | Out-String
+          if (-not ($help -match "create")) {
+            Write-Error "CLI dosforge.exe --help did not run cleanly. Output: $help"
+          }
+          # `dosforge tui` must produce the documented error message
+          $tuiErr = & dist\dosforge\dosforge.exe tui 2>&1 | Out-String
+          if (-not ($tuiErr -match "textual")) {
+            Write-Error "CLI dosforge.exe tui did not produce the expected 'textual not available' message. Output: $tuiErr"
+          }
+          $vendorSize = [math]::Round((Get-ChildItem dist\dosforge\_internal\vendor\windows\bin | Measure-Object Length -Sum).Sum / 1MB, 1)
+          $totalSize  = [math]::Round((Get-ChildItem dist\dosforge -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
+          Write-Host "CLI bundle: vendor=$vendorSize MB, total=$totalSize MB"
+          Write-Host "All CLI smoke checks passed."
+
+      - name: Compute version from tag
+        id: vars
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag || github.ref_name }}"
+          $version = $tag -replace '^v',''
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "tag=$tag"          | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Zip the CLI bundle
+        shell: pwsh
+        run: |
+          $artifact = "dosforge-${{ steps.vars.outputs.version }}-cli-windows-x64.zip"
+          Compress-Archive -Path dist\dosforge\* -DestinationPath $artifact -CompressionLevel Optimal
+          $hash = (Get-FileHash $artifact -Algorithm SHA256).Hash
+          Write-Host "Artifact: $artifact"
+          Write-Host "SHA256:   $hash"
+          "artifact=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "sha256=$hash"       | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload CLI artifact to existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.vars.outputs.tag }}"
+          $artifact = $env:artifact
+          gh release upload $tag $artifact --clobber
+          Write-Host "CLI artifact uploaded."
+          Write-Host "SHA256: $env:sha256"

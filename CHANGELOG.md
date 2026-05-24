@@ -6,6 +6,38 @@ The format is loosely based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] — 2026-05-24
+
+### Added — third Windows release variant: CLI-only
+
+- **`dosforge-<version>-cli-windows-x64.zip`** — minimum-footprint
+  Windows bundle (~27 MB zipped, ~64 MB unzipped). Drops the TUI stack
+  (textual, rich, py7zr, markdown_it, pygments) and `qemu-system-i386`
+  plus its 110 MB of GTK/SDL/codec DLL ecosystem. Keeps `qemu-img` +
+  `mtools` (~25 MB total) so 8 of 11 boot modes still work.
+- 3 boot modes are **NOT** supported in the CLI bundle because they
+  need `qemu-system-i386` to run the install diskette: `compaq331`,
+  `msdos33`, `msdos331`. The CLI dependency check produces a clear
+  "Missing required tools: qemu-system-i386" message when those modes
+  are requested — install the lite or full bundle for legacy DOS
+  support.
+- New `windows/dosforge-cli.spec` filters the vendor binary inputs
+  through an empirically-derived allowlist of 36 files (qemu-img +
+  7 mtools binaries + 28 transitively-required DLLs).
+- New `scripts/build-cli-bundle.ps1` local build helper.
+- New CI job `build-windows-cli` in `.github/workflows/release.yml`
+  publishes the CLI zip alongside the full and lite zips on every tag
+  push.
+
+### Investigation
+
+While planning the CLI bundle we discovered the v0.3.1 lite bundle
+shipped ~144 MB of dead weight — 80 DLLs reachable only from
+`qemu-system-i386` and 17 completely orphan files (Vulkan, swiftshader,
+unreferenced BIOS ROMs). The CLI bundle's vendor allowlist captures
+the empirically-verified minimum reachability closure from
+`qemu-img.exe` + the 7 mtools executables.
+
 ## [0.3.1] — 2026-05-21
 
 **Bug-fix release — full bundle's TUI was broken in v0.3.0.**
