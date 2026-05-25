@@ -323,6 +323,10 @@ jobs:
             exit 1
           }
           Write-Host "All CLI smoke checks passed."
+          # Explicit exit 0 — the last native command (& dosforge.exe tui)
+          # leaves $LASTEXITCODE=2, which GitHub's pwsh wrapper would
+          # propagate as the step's exit code.  Force a clean exit here.
+          exit 0
 
       - name: Compute version from tag
         id: vars
