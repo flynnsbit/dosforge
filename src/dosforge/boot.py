@@ -68,6 +68,29 @@ _ARCHIVE_SUFFIXES = _SEVEN_ZIP_SUFFIXES + _ZIP_SUFFIXES
 _LEGACY_DOS_SYSTEM_FILE_NAMES = frozenset(
     name for required_set in _LEGACY_DOS_SYSTEM_FILE_SETS for name in required_set
 ) | {"KERNEL.SYS", "BOOTSECT_FAT16.BIN", "BOOTSECT_FAT32.BIN"}
+
+
+def _strict_authentic_enabled() -> bool:
+    """Return True when CONFIG.SYS/AUTOEXEC.BAT must come from install media.
+
+    Phase 14B of the DOS authenticity rule: every boot mode's disk
+    must byte-equivalent a real install from that DOS's own install
+    media.  When True (default), missing or partial startup files cause
+    a hard ValidationError instead of silent synthesis, and any
+    install-media-shipped CONFIG.SYS/AUTOEXEC.BAT lands byte-verbatim
+    on the target partition (no rewrites).
+
+    Opt-out via DOSFORGE_ALLOW_SYNTHESIZED_STARTUP=1 only for legacy
+    workflows where the user genuinely lacks install diskettes and
+    can accept a generic minimal config.
+    """
+    return os.environ.get("DOSFORGE_ALLOW_SYNTHESIZED_STARTUP", "0").strip() not in (
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "on",
+    )
 _MSDOS71_ROOT_FILES_EXCLUDED_FROM_DOS_DIR = {
     "IO.SYS",
     "MSDOS.SYS",
@@ -2119,8 +2142,44 @@ class BootAssetResolver:
         defaults_root: Path,
         install_dir: str = r"A:\DOS",
         pre_dos5: bool = False,
+        boot_mode_label: str = "MS-DOS",
     ) -> None:
+        """Resolve CONFIG.SYS / AUTOEXEC.BAT from install media.
+
+        Phase 14B authenticity rule (default): if the install media did
+        not ship CONFIG.SYS / AUTOEXEC.BAT, raise ValidationError.
+        The user must provide them via the asset directory, matching
+        what Microsoft / IBM / Compaq SETUP actually wrote to a real
+        install.  Silent synthesis was producing generic config files
+        that drifted from the original install.
+
+        Opt-out for legacy workflows: set environment variable
+        DOSFORGE_ALLOW_SYNTHESIZED_STARTUP=1 to restore the previous
+        synthesizing behavior.
+        """
         defaults_root.mkdir(parents=True, exist_ok=True)
+
+        if _strict_authentic_enabled():
+            # Strict: require BOTH files to be present from the install
+            # media.  Either both are there or we fail loudly.
+            missing = [
+                name for name in _OPTIONAL_MSDOS_STARTUP_FILES
+                if name not in files or not files[name].exists()
+            ]
+            if missing:
+                raise ValidationError(
+                    f"{boot_mode_label} install media is missing required "
+                    f"startup file(s): {', '.join(missing)}.\n"
+                    "Per the DOS authenticity rule, dosforge no longer "
+                    "synthesizes CONFIG.SYS / AUTOEXEC.BAT -- provide the "
+                    "originals from your install diskettes in the "
+                    "boot-assets directory.  As a temporary workaround, "
+                    "set DOSFORGE_ALLOW_SYNTHESIZED_STARTUP=1 to restore "
+                    "the previous synthesizing behavior."
+                )
+            return
+
+        # Legacy synthesis path (only used when env opt-out is set):
         for name in _OPTIONAL_MSDOS_STARTUP_FILES:
             if name in files and files[name].exists():
                 continue
@@ -2143,7 +2202,24 @@ class BootAssetResolver:
         defaults_root: Path,
         install_dir: str = r"A:\DOS",
     ) -> None:
+        """Pass install-media startup files through to the target.
+
+        Phase 14B authenticity rule (default): the user's CONFIG.SYS /
+        AUTOEXEC.BAT land BYTE-VERBATIM on the target partition.  No
+        rewrites, no PATH normalization, no DEVICE-line stripping.
+        What Microsoft SETUP wrote to a real install is what we write.
+
+        Opt-out for legacy workflows: set DOSFORGE_ALLOW_SYNTHESIZED_STARTUP=1
+        to restore the previous normalization behavior.
+        """
         defaults_root.mkdir(parents=True, exist_ok=True)
+
+        if _strict_authentic_enabled():
+            # Strict mode: do NOT rewrite the install-media startup
+            # files.  They land verbatim on the partition.
+            return
+
+        # Legacy normalization path (only used when env opt-out is set):
         startup_normalizers = {
             "CONFIG.SYS": lambda text: normalize_msdos_config_sys(text, install_dir=install_dir),
             "AUTOEXEC.BAT": lambda text: normalize_msdos_autoexec_bat(text, install_dir=install_dir),

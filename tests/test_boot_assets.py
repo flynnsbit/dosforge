@@ -26,6 +26,19 @@ from dosforge.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _allow_legacy_synthesis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Enable the legacy CONFIG.SYS/AUTOEXEC.BAT synthesis path.
+
+    These tests pre-date the Phase 14B authenticity rule -- they test
+    the synthesizer behavior directly with minimal asset fixtures.
+    The opt-out env var keeps the synthesizer enabled so the tests
+    continue to exercise the legacy code path.  Phase 14G adds
+    separate strict-mode authenticity tests.
+    """
+    monkeypatch.setenv("DOSFORGE_ALLOW_SYNTHESIZED_STARTUP", "1")
+
+
 def _touch(path: Path, payload: bytes = b"x") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
