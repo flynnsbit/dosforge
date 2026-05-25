@@ -27,6 +27,7 @@ _WINDOWS_ALLOWED_TEST_FILES = frozenset(
         "test_boot_assets.py",
         "test_cli.py",
         "test_core_modules.py",
+        "test_authenticity_golden.py",
         "test_disk_validation.py",
         "test_disk_windows_vhd.py",
         "test_dos_profiles.py",

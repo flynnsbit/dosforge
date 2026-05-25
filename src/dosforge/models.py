@@ -73,6 +73,11 @@ class BootMode(str, Enum):
     PCDOS7 = "pcdos7"
     PCDOS71 = "pcdos71"
     COMPAQ331 = "compaq331"
+    # 4DOS shell overlay (planned, requires --host-dos).  Phase 14F
+    # implementation is pending until 4DOS install media is provided.
+    # When set, dosforge raises a clear "not yet implemented" message
+    # rather than producing a partial build.
+    FOURDOS = "4dos"
 
 
 class MediaType(str, Enum):

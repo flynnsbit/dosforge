@@ -898,6 +898,19 @@ class DiskManager:
 
     def _validate_create_request(self, request: CreateRequest) -> None:
         normalize_label(request.label)
+        # 4DOS is reserved for Phase 14F (overlay implementation).  The
+        # BootMode enum carries it for forward-compat but no install
+        # flow exists yet -- fail loudly rather than silently produce
+        # a partial build.
+        if request.boot_mode is BootMode.FOURDOS:
+            raise ValidationError(
+                "boot-mode '4dos' is reserved but not yet implemented.\n"
+                "4DOS is a shell overlay that requires --host-dos "
+                "selecting the underlying DOS (e.g. msdos622).  The "
+                "Phase 14F implementation is pending until the user "
+                "supplies the 4DOS install diskette under "
+                "dosassets/4dos/.  Pick a different --boot-mode for now."
+            )
         self._resolve_custom_payload_path(request)
         if request.media_type is MediaType.IMG:
             validate_size_for_floppy(request.size_bytes, request.floppy_type)
