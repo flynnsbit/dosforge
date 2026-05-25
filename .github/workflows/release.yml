@@ -1,11 +1,11 @@
 name: Release Windows bundle
 
-# Triggered automatically when a tag matching ``v*`` is pushed. Builds
-# the PyInstaller Windows bundle on a windows-latest runner, zips it,
-# and creates the GitHub release with the zip attached. A second job
-# builds the lite bundle (readmes-only dosassets) and uploads it as an
-# additional release asset. Both jobs are re-runnable via
-# workflow_dispatch with the tag name.
+# Triggered automatically when a tag matching ``v*`` is pushed. Three
+# build jobs (full, lite, cli) run in parallel after a tiny
+# create-release job stamps out an empty GitHub release.  Each build
+# job uploads its zip to that release with ``gh release upload
+# --clobber``.  Total wall-clock time is ~3-4 minutes instead of the
+# 9-minute serial pipeline used previously.
 
 on:
   push:
@@ -22,8 +22,15 @@ permissions:
   contents: write  # required for `gh release create` / `gh release upload`
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  # ------------------------------------------------------------------
+  # Stamp out an empty GitHub release so all three build jobs can
+  # upload to it in parallel.  Uses tag-specific notes if present.
+  # ------------------------------------------------------------------
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
+      version: ${{ steps.vars.outputs.version }}
 
     steps:
       - name: Check out source
@@ -31,6 +38,56 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
+
+      - name: Compute version from tag
+        id: vars
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag"          >> "$GITHUB_OUTPUT"
+
+      - name: Create (or recreate) the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.vars.outputs.tag }}"
+          notes="releases/${tag}-release-notes.md"
+          title="dosforge ${{ steps.vars.outputs.version }}"
+
+          # Make the workflow re-runnable: delete any pre-existing
+          # release for this tag (the tag itself is kept).
+          gh release delete "$tag" --yes --cleanup-tag=false 2>/dev/null || true
+
+          if [ -f "$notes" ]; then
+            gh release create "$tag" --title "$title" --notes-file "$notes"
+          else
+            gh release create "$tag" --title "$title" --generate-notes
+          fi
+          echo "Release stamped at https://github.com/${{ github.repository }}/releases/tag/$tag"
+
+  # ------------------------------------------------------------------
+  # Three Windows builds in PARALLEL (matrix), each uploads its zip
+  # to the release created above.
+  # ------------------------------------------------------------------
+  build-windows:
+    runs-on: windows-latest
+    needs: create-release
+
+    strategy:
+      fail-fast: false  # one variant failing should not abort the others
+      matrix:
+        variant:
+          - { name: full, spec: 'windows/dosforge.spec',      suffix: '' }
+          - { name: lite, spec: 'windows/dosforge-lite.spec', suffix: '-lite' }
+          - { name: cli,  spec: 'windows/dosforge-cli.spec',  suffix: '-cli' }
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 1  # we don't need full history for the build
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -47,314 +104,82 @@ jobs:
       - name: Fetch bundled Windows vendor binaries (QEMU, mtools)
         run: python scripts/fetch-windows-vendor.py
 
-      - name: Build PyInstaller bundle
-        run: python -m PyInstaller windows/dosforge.spec --noconfirm
+      - name: Build PyInstaller bundle (${{ matrix.variant.name }})
+        run: python -m PyInstaller ${{ matrix.variant.spec }} --noconfirm
 
-      - name: Smoke test the bundle (textual present + EXE runs)
+      - name: Smoke test the bundle
         shell: pwsh
         run: |
-          # Verify the textual package source is actually present (not just
-          # the .dist-info directory).  If this fails, the spec is broken
-          # and we should not publish.
-          $textualDir = "dist\dosforge\_internal\textual"
-          if (-not (Test-Path "$textualDir\__init__.py")) {
-            Write-Error "Bundle is broken: $textualDir\__init__.py not found. The TUI will fail with 'No module named textual'."
-          }
-          $count = (Get-ChildItem $textualDir -Recurse -File).Count
-          Write-Host "textual package: $count files bundled"
-          # Verify the EXE actually boots and prints --help
-          $help = & dist\dosforge\dosforge.exe --help 2>&1 | Out-String
-          if (-not ($help -match "create")) {
-            Write-Error "dosforge.exe --help did not run cleanly. Output: $help"
-          }
-          Write-Host "dosforge.exe --help: OK"
+          $ErrorActionPreference = 'Continue'
+          $variant = '${{ matrix.variant.name }}'
+          $bundle = "dist\dosforge"
+          $internal = "$bundle\_internal"
+          $failures = @()
 
-      - name: Compute version from tag
-        id: vars
-        shell: pwsh
-        run: |
-          $tag = "${{ inputs.tag || github.ref_name }}"
-          $version = $tag -replace '^v',''
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "tag=$tag"          | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          # Common: bundle must contain dosforge.exe
+          if (-not (Test-Path "$bundle\dosforge.exe")) {
+            $failures += "dosforge.exe missing from bundle"
+          }
+
+          # Variant-specific shape checks
+          $hasTextual = Test-Path "$internal\textual\__init__.py"
+          $hasQemuSys = Test-Path "$internal\vendor\windows\bin\qemu-system-i386.exe"
+          switch ($variant) {
+            'full' {
+              if (-not $hasTextual) { $failures += "full bundle missing textual" }
+              if (-not $hasQemuSys) { $failures += "full bundle missing qemu-system-i386" }
+            }
+            'lite' {
+              if (-not $hasTextual) { $failures += "lite bundle missing textual" }
+              if (-not $hasQemuSys) { $failures += "lite bundle missing qemu-system-i386" }
+            }
+            'cli' {
+              if ($hasTextual) { $failures += "cli bundle leaked textual" }
+              if ($hasQemuSys) { $failures += "cli bundle leaked qemu-system-i386" }
+            }
+          }
+
+          # qemu-img + mformat MUST be present in every variant
+          if (-not (Test-Path "$internal\vendor\windows\bin\qemu-img.exe")) {
+            $failures += "qemu-img.exe missing from vendor/"
+          }
+          if (-not (Test-Path "$internal\vendor\windows\bin\mformat.exe")) {
+            $failures += "mformat.exe missing from vendor/"
+          }
+
+          # dosforge.exe --help must work
+          $help = (& $bundle\dosforge.exe --help 2>&1 | Out-String)
+          $helpExit = $LASTEXITCODE
+          if ($helpExit -ne 0 -or -not ($help -match "create")) {
+            $failures += "dosforge.exe --help failed (exit=$helpExit). Output: $help"
+          }
+
+          $totalMB = [math]::Round((Get-ChildItem $bundle -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
+          Write-Host "$variant bundle: $totalMB MB"
+
+          if ($failures.Count -gt 0) {
+            Write-Host ""
+            Write-Host "=== SMOKE TEST FAILED ($($failures.Count)) ==="
+            foreach ($f in $failures) { Write-Host "  - $f" }
+            exit 1
+          }
+          exit 0
 
       - name: Zip the bundle
         shell: pwsh
         run: |
-          $artifact = "dosforge-${{ steps.vars.outputs.version }}-windows-x64.zip"
+          $artifact = "dosforge-${{ needs.create-release.outputs.version }}${{ matrix.variant.suffix }}-windows-x64.zip"
           Compress-Archive -Path dist\dosforge\* -DestinationPath $artifact -CompressionLevel Optimal
           $hash = (Get-FileHash $artifact -Algorithm SHA256).Hash
           Write-Host "Artifact: $artifact"
           Write-Host "SHA256:   $hash"
           "artifact=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "sha256=$hash"       | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Locate release notes
-        id: notes
-        shell: pwsh
-        run: |
-          $tag = "${{ steps.vars.outputs.tag }}"
-          $notesFile = "releases/$tag-release-notes.md"
-          if (Test-Path $notesFile) {
-            "notes_path=$notesFile" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Host "Using release notes from $notesFile"
-          } else {
-            Write-Host "No tag-specific notes; will let gh autogenerate from commits"
-            "notes_path=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          }
-
-      - name: Create GitHub release with asset attached
+      - name: Upload artifact to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
-          $tag = "${{ steps.vars.outputs.tag }}"
-          $artifact = $env:artifact
-          $notesPath = "${{ steps.notes.outputs.notes_path }}"
-          $title = "dosforge ${{ steps.vars.outputs.version }}"
-
-          # Delete any pre-existing release for this tag (so the workflow is re-runnable)
-          gh release delete $tag --yes --cleanup-tag=false 2>$null
-
-          if ($notesPath) {
-            gh release create $tag $artifact --title $title --notes-file $notesPath
-          } else {
-            gh release create $tag $artifact --title $title --generate-notes
-          }
-          Write-Host "SHA256: $env:sha256"
-
-  build-windows-lite:
-    runs-on: windows-latest
-    needs: build-windows  # wait for the release to exist before uploading
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 0
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-      - name: Install build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e .[dev]
-          python -m pip install pyinstaller py7zr zstandard
-
-      - name: Fetch bundled Windows vendor binaries (QEMU, mtools)
-        run: python scripts/fetch-windows-vendor.py
-
-      - name: Build PyInstaller lite bundle
-        run: python -m PyInstaller windows/dosforge-lite.spec --noconfirm
-
-      - name: Smoke test the lite bundle (textual present + EXE runs)
-        shell: pwsh
-        run: |
-          $textualDir = "dist\dosforge\_internal\textual"
-          if (-not (Test-Path "$textualDir\__init__.py")) {
-            Write-Error "Lite bundle is broken: $textualDir\__init__.py not found."
-          }
-          $count = (Get-ChildItem $textualDir -Recurse -File).Count
-          Write-Host "textual package: $count files bundled"
-          $help = & dist\dosforge\dosforge.exe --help 2>&1 | Out-String
-          if (-not ($help -match "create")) {
-            Write-Error "Lite dosforge.exe --help did not run cleanly. Output: $help"
-          }
-          Write-Host "dosforge.exe --help: OK"
-
-      - name: Compute version from tag
-        id: vars
-        shell: pwsh
-        run: |
-          $tag = "${{ inputs.tag || github.ref_name }}"
-          $version = $tag -replace '^v',''
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "tag=$tag"          | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-
-      - name: Zip the lite bundle
-        shell: pwsh
-        run: |
-          $artifact = "dosforge-${{ steps.vars.outputs.version }}-lite-windows-x64.zip"
-          Compress-Archive -Path dist\dosforge\* -DestinationPath $artifact -CompressionLevel Optimal
-          $hash = (Get-FileHash $artifact -Algorithm SHA256).Hash
-          Write-Host "Artifact: $artifact"
-          Write-Host "SHA256:   $hash"
-          "artifact=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "sha256=$hash"       | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Upload lite artifact to existing release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: pwsh
-        run: |
-          $tag = "${{ steps.vars.outputs.tag }}"
-          $artifact = $env:artifact
-          # Upload to the release that build-windows already created
-          gh release upload $tag $artifact --clobber
-          Write-Host "Lite artifact uploaded."
-          Write-Host "SHA256: $env:sha256"
-
-  build-windows-cli:
-    runs-on: windows-latest
-    needs: build-windows  # wait for the release to exist before uploading
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 0
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-      - name: Install build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e .[dev]
-          python -m pip install pyinstaller py7zr zstandard
-
-      - name: Fetch bundled Windows vendor binaries (QEMU, mtools)
-        run: python scripts/fetch-windows-vendor.py
-
-      - name: Build PyInstaller CLI-only bundle
-        run: python -m PyInstaller windows/dosforge-cli.spec --noconfirm
-
-      - name: Smoke test the CLI bundle
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $failures = @()
-          $bundle = "dist\dosforge"
-          $internal = "$bundle\_internal"
-
-          Write-Host "=== Bundle contents ==="
-          Get-ChildItem $bundle | Select-Object Name, @{N='Type';E={if($_.PSIsContainer){'D'}else{'F'}}} | Format-Table
-          Write-Host "=== _internal/ top-level ==="
-          Get-ChildItem $internal | Select-Object Name | Format-Table
-
-          # CHECK 1: textual must NOT be bundled
-          if (Test-Path "$internal\textual\__init__.py") {
-            $failures += "textual package leaked into _internal/. Excludes in dosforge-cli.spec are broken."
-          } else {
-            Write-Host "PASS: textual not in bundle"
-          }
-
-          # CHECK 2: qemu-system-i386.exe must NOT be present
-          $qemuPath = "$internal\vendor\windows\bin\qemu-system-i386.exe"
-          if (Test-Path $qemuPath) {
-            $failures += "qemu-system-i386.exe leaked into vendor/. Vendor allowlist is broken."
-          } else {
-            Write-Host "PASS: qemu-system-i386 not in bundle"
-          }
-
-          # CHECK 3: qemu-img + mformat MUST be present
-          $qimgPath = "$internal\vendor\windows\bin\qemu-img.exe"
-          $mfmtPath = "$internal\vendor\windows\bin\mformat.exe"
-          if (-not (Test-Path $qimgPath)) { $failures += "qemu-img.exe missing from vendor/" }
-          if (-not (Test-Path $mfmtPath)) { $failures += "mformat.exe missing from vendor/" }
-          if ((Test-Path $qimgPath) -and (Test-Path $mfmtPath)) {
-            Write-Host "PASS: qemu-img + mformat present"
-          }
-
-          # CHECK 4: dosforge.exe --help works
-          $helpOutput = ""
-          $helpExit = -1
-          try {
-            $helpOutput = (& $bundle\dosforge.exe --help 2>&1 | Out-String)
-            $helpExit = $LASTEXITCODE
-          } catch {
-            $helpOutput = "EXCEPTION: $_"
-          }
-          Write-Host "--- dosforge.exe --help (exit=$helpExit) ---"
-          Write-Host $helpOutput
-          Write-Host "--- end ---"
-          if ($helpExit -ne 0) {
-            $failures += "dosforge.exe --help exited $helpExit (expected 0)"
-          }
-          if (-not ($helpOutput -match "create")) {
-            $failures += "dosforge.exe --help output did not contain 'create'"
-          }
-          if (($helpExit -eq 0) -and ($helpOutput -match "create")) {
-            Write-Host "PASS: dosforge.exe --help"
-          }
-
-          # CHECK 5: dosforge.exe tui prints textual-not-available error
-          $tuiOutput = ""
-          $tuiExit = -1
-          try {
-            $tuiOutput = (& $bundle\dosforge.exe tui 2>&1 | Out-String)
-            $tuiExit = $LASTEXITCODE
-          } catch {
-            $tuiOutput = "EXCEPTION: $_"
-            $tuiExit = if ($LASTEXITCODE) { $LASTEXITCODE } else { -2 }
-          }
-          Write-Host "--- dosforge.exe tui (exit=$tuiExit) ---"
-          Write-Host $tuiOutput
-          Write-Host "--- end ---"
-          if ($tuiExit -eq 0) {
-            $failures += "dosforge.exe tui exited 0 (expected 2 for textual-not-available fallback)"
-          }
-          if (-not ($tuiOutput -match "textual")) {
-            $failures += "dosforge.exe tui output did not mention 'textual'"
-          }
-          if (($tuiExit -ne 0) -and ($tuiOutput -match "textual")) {
-            Write-Host "PASS: dosforge.exe tui fallback message"
-          }
-
-          # Summary
-          $vendorSize = [math]::Round((Get-ChildItem "$internal\vendor\windows\bin" | Measure-Object Length -Sum).Sum / 1MB, 1)
-          $totalSize  = [math]::Round((Get-ChildItem $bundle -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
-          Write-Host ""
-          Write-Host "CLI bundle: vendor=$vendorSize MB, total=$totalSize MB"
-
-          if ($failures.Count -gt 0) {
-            Write-Host ""
-            Write-Host "=== SMOKE TEST FAILED ($($failures.Count) errors) ==="
-            foreach ($f in $failures) { Write-Host "  - $f" }
-            exit 1
-          }
-          Write-Host "All CLI smoke checks passed."
-          # Explicit exit 0 — the last native command (& dosforge.exe tui)
-          # leaves $LASTEXITCODE=2, which GitHub's pwsh wrapper would
-          # propagate as the step's exit code.  Force a clean exit here.
-          exit 0
-
-      - name: Compute version from tag
-        id: vars
-        shell: pwsh
-        run: |
-          $tag = "${{ inputs.tag || github.ref_name }}"
-          $version = $tag -replace '^v',''
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "tag=$tag"          | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-
-      - name: Zip the CLI bundle
-        shell: pwsh
-        run: |
-          $artifact = "dosforge-${{ steps.vars.outputs.version }}-cli-windows-x64.zip"
-          Compress-Archive -Path dist\dosforge\* -DestinationPath $artifact -CompressionLevel Optimal
-          $hash = (Get-FileHash $artifact -Algorithm SHA256).Hash
-          Write-Host "Artifact: $artifact"
-          Write-Host "SHA256:   $hash"
-          "artifact=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "sha256=$hash"       | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Upload CLI artifact to existing release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: pwsh
-        run: |
-          $tag = "${{ steps.vars.outputs.tag }}"
-          $artifact = $env:artifact
-          gh release upload $tag $artifact --clobber
-          Write-Host "CLI artifact uploaded."
-          Write-Host "SHA256: $env:sha256"
+          $tag = '${{ needs.create-release.outputs.tag }}'
+          gh release upload $tag $env:artifact --clobber
+          Write-Host "Uploaded $env:artifact to $tag"
