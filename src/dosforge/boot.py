@@ -133,6 +133,52 @@ def materialize_versioned_cache(
         cache_path.write_bytes(source_bytes)
     return cache_path
 
+
+# Pre-Phase-14G un-versioned cache filenames that may still exist on a
+# user's machine from a previous dosforge install.  They are no longer
+# read by current code -- the SHA-stamped equivalents replace them --
+# so they are dead bytes consuming disk space.  ``cleanup_legacy_cache_files``
+# deletes them on a best-effort basis the first time a BootInstaller or
+# BootAssetResolver is instantiated against a given cache directory.
+#
+# Keep these as plain filenames, not regexes, so:
+#   * we never accidentally delete a SHA-stamped sibling
+#     (``foo-<sha8>.bin``) -- the exact-name comparison rejects those.
+#   * adding a new legacy name is a one-line edit, not a regex tweak.
+_LEGACY_MOUNT_ROOT_CACHE_FILES: tuple[str, ...] = (
+    "msdos-builtin-mbr.bin",
+    "fat16-builtin-mbr.bin",
+)
+_LEGACY_CACHE_ROOT_CACHE_FILES: tuple[str, ...] = (
+    "freedos-fat12-bootsect.bin",
+)
+
+
+def cleanup_legacy_cache_files(directory: "Path", filenames: tuple[str, ...]) -> list["Path"]:
+    """Delete the named legacy un-versioned cache files from ``directory``.
+
+    Returns the list of paths that were actually removed (useful for
+    tests).  Missing files and permission errors are ignored on a
+    best-effort basis -- this is housekeeping, not a critical step.
+
+    Files matching ``<base>-<sha8>.bin`` (the new versioned naming
+    pattern from ``materialize_versioned_cache``) are never touched
+    because the exact-name comparison rejects them.
+    """
+    if not directory.is_dir():
+        return []
+    removed: list[Path] = []
+    for name in filenames:
+        candidate = directory / name
+        if not candidate.is_file():
+            continue
+        try:
+            candidate.unlink()
+        except OSError:
+            continue
+        removed.append(candidate)
+    return removed
+
 _MSDOS71_ROOT_FILES_EXCLUDED_FROM_DOS_DIR = {
     "IO.SYS",
     "MSDOS.SYS",
@@ -541,6 +587,11 @@ class BootAssetResolver:
         self.runner = runner
         self.cache_root = cache_root or (app_cache_dir() / "boot-assets")
         self.cache_root.mkdir(parents=True, exist_ok=True)
+        # Best-effort cleanup of pre-Phase-14G un-versioned cache files.
+        # Safe to call on every init -- it's a no-op once the legacy
+        # filenames are gone, and the new SHA-stamped files are never
+        # considered legacy by the exact-name filter.
+        cleanup_legacy_cache_files(self.cache_root, _LEGACY_CACHE_ROOT_CACHE_FILES)
 
     def resolve(self, request: CreateRequest) -> BootAssets:
         if request.boot_mode is BootMode.NONE:
@@ -3164,6 +3215,11 @@ class BootInstaller:
         self.mount_root.mkdir(parents=True, exist_ok=True)
         self.mbr_boot_candidates = mbr_boot_candidates or DEFAULT_MBR_BOOT_CODE_CANDIDATES
         self.backend = backend or _get_backend()
+        # Best-effort cleanup of pre-Phase-14G un-versioned cache files.
+        # Safe to call on every init -- it's a no-op once the legacy
+        # filenames are gone, and the new SHA-stamped files are never
+        # considered legacy by the exact-name filter.
+        cleanup_legacy_cache_files(self.mount_root, _LEGACY_MOUNT_ROOT_CACHE_FILES)
 
     # ------------------------------------------------------------------
     # Low-level sector patching primitive used by every previously-``dd``

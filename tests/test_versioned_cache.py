@@ -112,3 +112,144 @@ def test_filename_format_is_basename_sha8_bin(tmp_path: Path) -> None:
     middle = name[len("some-blob-"):-len(".bin")]
     assert len(middle) == 8
     assert all(c in "0123456789abcdef" for c in middle)
+
+
+# ---------------------------------------------------------------------------
+# cleanup_legacy_cache_files: housekeeping for pre-Phase-14G un-versioned
+# cache files that may still exist on a user's machine.
+# ---------------------------------------------------------------------------
+from dosforge.boot import (  # noqa: E402  -- imported here to keep top-level imports stable
+    cleanup_legacy_cache_files,
+    _LEGACY_MOUNT_ROOT_CACHE_FILES,
+    _LEGACY_CACHE_ROOT_CACHE_FILES,
+)
+
+
+def test_cleanup_removes_named_legacy_files(tmp_path: Path) -> None:
+    target = tmp_path / "msdos-builtin-mbr.bin"
+    target.write_bytes(b"legacy")
+    other = tmp_path / "freedos-fat12-bootsect.bin"
+    other.write_bytes(b"legacy2")
+
+    removed = cleanup_legacy_cache_files(
+        tmp_path,
+        ("msdos-builtin-mbr.bin", "freedos-fat12-bootsect.bin"),
+    )
+    assert sorted(p.name for p in removed) == [
+        "freedos-fat12-bootsect.bin",
+        "msdos-builtin-mbr.bin",
+    ]
+    assert not target.exists()
+    assert not other.exists()
+
+
+def test_cleanup_leaves_sha_stamped_siblings_untouched(tmp_path: Path) -> None:
+    """The whole safety claim: removing 'msdos-builtin-mbr.bin' must NEVER
+    delete 'msdos-builtin-mbr-d9ae89cb.bin' (the new SHA-stamped version)."""
+    legacy = tmp_path / "msdos-builtin-mbr.bin"
+    legacy.write_bytes(b"old-bytes" * 50)
+    versioned = tmp_path / "msdos-builtin-mbr-d9ae89cb.bin"
+    versioned.write_bytes(b"new-bytes" * 50)
+
+    removed = cleanup_legacy_cache_files(tmp_path, ("msdos-builtin-mbr.bin",))
+    assert removed == [legacy]
+    assert not legacy.exists()
+    assert versioned.exists()
+    assert versioned.read_bytes() == b"new-bytes" * 50
+
+
+def test_cleanup_is_idempotent(tmp_path: Path) -> None:
+    legacy = tmp_path / "msdos-builtin-mbr.bin"
+    legacy.write_bytes(b"x")
+    first = cleanup_legacy_cache_files(tmp_path, ("msdos-builtin-mbr.bin",))
+    second = cleanup_legacy_cache_files(tmp_path, ("msdos-builtin-mbr.bin",))
+    assert first == [legacy]
+    assert second == []
+
+
+def test_cleanup_missing_directory_returns_empty(tmp_path: Path) -> None:
+    missing = tmp_path / "does-not-exist"
+    assert cleanup_legacy_cache_files(missing, ("msdos-builtin-mbr.bin",)) == []
+
+
+def test_cleanup_ignores_unknown_files_in_directory(tmp_path: Path) -> None:
+    """Files NOT in the legacy filenames tuple must be preserved."""
+    keep = tmp_path / "user-data.txt"
+    keep.write_bytes(b"important")
+    legacy = tmp_path / "msdos-builtin-mbr.bin"
+    legacy.write_bytes(b"old")
+
+    removed = cleanup_legacy_cache_files(tmp_path, ("msdos-builtin-mbr.bin",))
+    assert removed == [legacy]
+    assert keep.exists()
+    assert keep.read_bytes() == b"important"
+
+
+def test_legacy_filename_tuples_contain_no_sha_stamped_names() -> None:
+    """Safety: every legacy filename must be a non-stamped name, so the
+    exact-match deletion logic never collides with new SHA-stamped
+    files like 'msdos-builtin-mbr-d9ae89cb.bin'."""
+    for name in _LEGACY_MOUNT_ROOT_CACHE_FILES + _LEGACY_CACHE_ROOT_CACHE_FILES:
+        # Pattern '<base>-<8 hex chars>.bin' has at least 13 chars between
+        # the last '-' and the '.bin' suffix.  Reject anything that looks
+        # like our versioned-cache output.
+        assert name.endswith(".bin"), f"legacy name should end in .bin: {name}"
+        stem = name[:-len(".bin")]
+        if "-" in stem:
+            tail = stem.rsplit("-", 1)[1]
+            assert not (
+                len(tail) == 8
+                and all(c in "0123456789abcdef" for c in tail.lower())
+            ), (
+                f"Legacy filename {name!r} looks like a versioned-cache "
+                "output (base-<sha8>.bin) -- that would risk deleting "
+                "live caches."
+            )
+
+
+def test_legacy_filenames_do_not_collide_with_live_freedos_cache() -> None:
+    """The FreeDOS native-boot-records cache (still active code path) uses
+    the un-stamped filenames ``fat16-native-bootsect.bin`` and
+    ``fat16-native-mbr.bin``.  Adding either of those to the legacy
+    cleanup list would silently delete live reference data the next
+    time a user starts dosforge.  Lock that in."""
+    live_freedos_names = {"fat16-native-bootsect.bin", "fat16-native-mbr.bin"}
+    legacy_names = set(_LEGACY_MOUNT_ROOT_CACHE_FILES + _LEGACY_CACHE_ROOT_CACHE_FILES)
+    overlap = live_freedos_names & legacy_names
+    assert not overlap, (
+        f"Legacy-cleanup list overlaps live FreeDOS cache filenames: "
+        f"{sorted(overlap)}.  Adding those to the cleanup list would "
+        f"delete live cache data on every BootAssetResolver init."
+    )
+
+
+def test_boot_installer_cleans_up_on_init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """BootInstaller.__init__ should remove legacy mount-root cache files."""
+    from dosforge.boot import BootInstaller
+    from dosforge.commands import CommandRunner
+
+    legacy = tmp_path / "msdos-builtin-mbr.bin"
+    legacy.write_bytes(b"old-mbr")
+    versioned = tmp_path / "msdos-builtin-mbr-d9ae89cb.bin"
+    versioned.write_bytes(b"new-mbr")
+
+    BootInstaller(runner=CommandRunner(), mount_root=tmp_path)
+
+    assert not legacy.exists()
+    assert versioned.exists()
+
+
+def test_boot_asset_resolver_cleans_up_on_init(tmp_path: Path) -> None:
+    """BootAssetResolver.__init__ should remove legacy cache-root files."""
+    from dosforge.boot import BootAssetResolver
+    from dosforge.commands import CommandRunner
+
+    legacy = tmp_path / "freedos-fat12-bootsect.bin"
+    legacy.write_bytes(b"old-vbr")
+    versioned = tmp_path / "freedos-fat12-bootsect-aa11bb22.bin"
+    versioned.write_bytes(b"new-vbr")
+
+    BootAssetResolver(runner=CommandRunner(), cache_root=tmp_path)
+
+    assert not legacy.exists()
+    assert versioned.exists()
