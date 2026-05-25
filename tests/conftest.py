@@ -29,6 +29,8 @@ _WINDOWS_ALLOWED_TEST_FILES = frozenset(
         "test_core_modules.py",
         "test_disk_validation.py",
         "test_disk_windows_vhd.py",
+        "test_dos_profiles.py",
+        "test_dosbox_x_install.py",
         "test_e2e_emulator.py",
         "test_e2e_matrix.py",
         "test_fat12_boot_template.py",
