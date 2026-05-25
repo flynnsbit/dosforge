@@ -161,6 +161,24 @@ jobs:
           if (-not (Test-Path "$internal\vendor\windows\bin\dosbox-x.exe")) {
             $failures += "dosbox-x.exe missing from vendor/"
           }
+          # Bloat regression guards (Phase 13): these stale paths must
+          # never reappear in the bundle.  See windows/spec_helpers.py.
+          $bloatGuards = @(
+            "$internal\Cryptodome\SelfTest\__init__.py",
+            "$internal\Cryptodome\PublicKey\__init__.py",
+            "$internal\Cryptodome\Signature\__init__.py",
+            "$internal\setuptools\__init__.py"
+          )
+          foreach ($guard in $bloatGuards) {
+            if (Test-Path $guard) {
+              $failures += "stale path leaked back in: $guard (strip_bloat regression)"
+            }
+          }
+          $distInfos = @(Get-ChildItem $internal -Directory -Filter "*.dist-info" -ErrorAction SilentlyContinue)
+          if ($distInfos.Count -gt 0) {
+            $names = ($distInfos | ForEach-Object Name) -join ", "
+            $failures += "$($distInfos.Count) *.dist-info folders leaked back in: $names"
+          }
 
           # dosforge.exe --help must work
           $help = (& $bundle\dosforge.exe --help 2>&1 | Out-String)

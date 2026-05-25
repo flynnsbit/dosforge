@@ -33,6 +33,7 @@ REPO_ROOT = SPEC_DIR.parent
 # Import the shared vendor allowlist (same as lite/full specs).
 sys.path.insert(0, str(SPEC_DIR))
 from vendor_allowlist import VENDOR_ALLOWLIST as VENDOR_CLI_ALLOWLIST  # noqa: E402
+from spec_helpers import strip_bloat  # noqa: E402
 
 datas = []
 binaries = []
@@ -76,6 +77,12 @@ for entry in dosassets.rglob("readme.txt"):
 # existing fallback message ("TUI requires textual, not available in
 # this build").
 hiddenimports: list[str] = []
+
+# Filter out verified-stale datas (.dist-info dirs, setuptools, etc.).
+# The CLI bundle excludes all the heavy TUI packages already so this is
+# mostly a regression guard.
+datas = strip_bloat(datas)
+binaries = strip_bloat(binaries)
 
 block_cipher = None
 
@@ -145,6 +152,11 @@ coll = COLLECT(
     upx=False,
     name="dosforge",
 )
+
+# Post-build cleanup (regression guard — CLI excludes Cryptodome so
+# nothing should be removed here; this just ensures consistency).
+from spec_helpers import post_build_cleanup  # noqa: E402
+post_build_cleanup(Path(DISTPATH) / "dosforge")
 
 # Post-build: move dosassets/ out of _internal/ so users can see the
 # readmes (and drop their own DOS install media) without digging into

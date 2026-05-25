@@ -24,6 +24,7 @@ REPO_ROOT = SPEC_DIR.parent
 # qemu-system-i386's 135 MB stack with a 24 MB self-contained EXE.
 sys.path.insert(0, str(SPEC_DIR))
 from vendor_allowlist import VENDOR_ALLOWLIST  # noqa: E402
+from spec_helpers import EXCLUDE_MODULES, strip_bloat, strip_hidden_imports  # noqa: E402
 
 datas = []
 binaries = []
@@ -96,6 +97,13 @@ for _pkg in (
 # Pygments lexer used by Textual's syntax highlighting.
 hiddenimports.append("pygments.lexers.python")
 
+# Filter out verified-stale datas (Cryptodome.SelfTest, pip dist-info
+# directories, setuptools leftovers, etc.).  See windows/spec_helpers.py
+# for the full list and rationale.
+datas = strip_bloat(datas)
+binaries = strip_bloat(binaries)
+hiddenimports = strip_hidden_imports(hiddenimports)
+
 block_cipher = None
 
 a = Analysis(
@@ -107,7 +115,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "pytest", "pyinstaller", "zstandard"],
+    excludes=["tkinter", "pytest", "pyinstaller", "zstandard", *EXCLUDE_MODULES],
     cipher=block_cipher,
     noarchive=False,
 )
@@ -140,3 +148,10 @@ coll = COLLECT(
     upx=False,
     name="dosforge",
 )
+
+# Post-build cleanup: remove .dist-info dirs + Cryptodome top-level
+# subpackages that PyInstaller emits despite our excludes/strip_bloat
+# filters (these come from PyInstaller's own metadata-handling and
+# transitive import-graph walking after COLLECT).
+from spec_helpers import post_build_cleanup  # noqa: E402
+post_build_cleanup(Path(DISTPATH) / "dosforge")
