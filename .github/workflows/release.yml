@@ -55,14 +55,22 @@ jobs:
           notes="releases/${tag}-release-notes.md"
           title="dosforge ${{ steps.vars.outputs.version }}"
 
+          # Tags with a hyphen suffix (v0.4.0-dosbox-x, v0.4.0-rc1,
+          # v0.4.0-pre1, etc.) are treated as pre-releases per the
+          # semver convention.
+          prerelease_flag=""
+          case "${{ steps.vars.outputs.version }}" in
+            *-*) prerelease_flag="--prerelease" ;;
+          esac
+
           # Make the workflow re-runnable: delete any pre-existing
           # release for this tag (the tag itself is kept).
           gh release delete "$tag" --yes --cleanup-tag=false 2>/dev/null || true
 
           if [ -f "$notes" ]; then
-            gh release create "$tag" --title "$title" --notes-file "$notes"
+            gh release create "$tag" --title "$title" $prerelease_flag --notes-file "$notes"
           else
-            gh release create "$tag" --title "$title" --generate-notes
+            gh release create "$tag" --title "$title" $prerelease_flag --generate-notes
           fi
           echo "Release stamped at https://github.com/${{ github.repository }}/releases/tag/$tag"
 
