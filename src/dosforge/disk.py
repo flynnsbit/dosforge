@@ -1504,7 +1504,16 @@ class DiskManager:
             return
 
         self.runner.run(
-            ["qemu-img", "create", "-f", "vpc", "-o", "subformat=fixed", str(path), str(size_bytes)]
+            [
+                "qemu-img",
+                "create",
+                "-f",
+                "vpc",
+                "-o",
+                "subformat=fixed,force_size=on",
+                str(path),
+                str(size_bytes),
+            ]
         )
         # qemu-img writes Microsoft's legacy VHD CHS algorithm into the footer
         # (e.g. 1007x12x17 for ~100 MiB). 86Box's IDE AUTO detection treats
@@ -1513,6 +1522,16 @@ class DiskManager:
         # write reflects the *footer* geometry, so once BIOS reports a
         # different translated geometry, MS-DOS IO.SYS computes wrong CHS at
         # boot and reads the wrong sectors -> "Non-System disk" error.
+        #
+        # ``force_size=on`` makes qemu-img use ``size_bytes`` verbatim for
+        # ``current_size`` instead of rounding up to its internal CHS
+        # algorithm. ``_normalize_vhd_size_for_chs`` has already aligned
+        # ``size_bytes`` to a multiple of 16x63x512, so after the footer-CHS
+        # rewrite below ``current_size == cyl*heads*spt*512`` exactly --
+        # 86Box AUTO IDE then picks NORMAL mode because total LBA == CHS
+        # capacity. Without force_size, qemu would inflate the file by
+        # a few sectors and AUTO would see "more LBA than CHS reach" and
+        # pick LARGE instead, breaking boot for users on AUTO settings.
         #
         # Rewriting the footer to standard ATA geometry (16 heads, 63 spt)
         # makes 86Box AUTO pick NORMAL mode and report the footer values
