@@ -56,6 +56,22 @@
       ]
     },
     {
+      "name": "dosbox-x",
+      "description": "DOSBox-X — purpose-built DOS emulator used to drive the SYS install for legacy DOS modes (compaq331, msdos33, msdos331). Replaces qemu-system-i386 + its 110 MB DLL stack with a single ~24 MB self-contained EXE.",
+      "version_pin": "v2026.05.02",
+      "download_url": "https://github.com/joncampbell123/dosbox-x/releases/download/dosbox-x-v2026.05.02-osfree/dosbox-x-mingw64-dosbox-x-v2026.05.02-osfree-portable.zip",
+      "archive_format": "zip",
+      "expected_sha256": "d957ae3e433341c946e2da631dd6e7ab4e071d55a9fe43d989e8c355d286c019",
+      "license_id": "GPL-2.0-or-later",
+      "license_url": "https://github.com/joncampbell123/dosbox-x/raw/main/COPYING",
+      "extracts": [
+        {
+          "from_in_archive": "mingw-build/mingw-sdl2/dosbox-x.exe",
+          "to_in_bin": "dosbox-x.exe"
+        }
+      ]
+    },
+    {
       "name": "mtools",
       "description": "MSYS2 mingw-w64 mtools package — provides mformat.exe, mcopy.exe, mattrib.exe, mdir.exe used for FAT12/16 system-file staging.",
       "version_pin": "4.0.49-1",

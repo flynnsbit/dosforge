@@ -1,7 +1,6 @@
 # PyInstaller spec for the dosforge Windows *CLI-only* portable bundle.
 #
-# Produces the absolute minimum Windows bundle that retains 8 of the 11
-# boot modes without the TUI.  Drops:
+# Produces the smallest possible Windows bundle WITHOUT the TUI.  Drops:
 #
 #   - All TUI Python packages (textual, rich, markdown_it stack, pygments)
 #   - py7zr stack (Cryptodome, pyppmd, pyzstd, etc.) — .zip auto-extract
@@ -13,66 +12,27 @@
 #
 #   - dosforge.exe launcher + Python runtime
 #   - qemu-img.exe + mtools + their 28 transitively-required DLLs (~25 MB)
+#   - DOSBox-X (~24 MB single self-contained EXE) — replaces
+#     qemu-system-i386 for the 3 legacy DOS modes that need an emulator
+#     to run SYS C: (compaq331, msdos33, msdos331)
 #   - readme.txt stubs in dosassets/
 #
-# Lost boot modes (these need qemu-system-i386 to run an install
-# diskette and call SYS C:): compaq331, msdos33, msdos331.
+# All 11 boot modes work in this bundle (DOSBox-X covers the legacy
+# DOS modes that previously required ~135 MB of QEMU + DLL stack).
 #
 # Build:
 #
 #   .\.venv\Scripts\python -m PyInstaller windows\dosforge-cli.spec --noconfirm
 
 from pathlib import Path
+import sys
 
 SPEC_DIR = Path(SPECPATH).resolve()
 REPO_ROOT = SPEC_DIR.parent
 
-# Allowlist of vendor files that qemu-img.exe + mtools need.
-# Empirically verified via PE-import transitive closure (see
-# C:\Temp\trace_dll_closure.py and plan.md Phase 11).
-VENDOR_CLI_ALLOWLIST = frozenset(
-    name.lower()
-    for name in (
-        # EXEs
-        "qemu-img.exe",
-        "mformat.exe",
-        "mcopy.exe",
-        "mattrib.exe",
-        "mdir.exe",
-        "mtype.exe",
-        "mdel.exe",
-        "mmd.exe",
-        # Direct + transitive DLL dependencies (28 files, ~19.5 MB)
-        "libbrotlicommon.dll",
-        "libbrotlidec.dll",
-        "libbrotlienc.dll",
-        "libbz2-1.dll",
-        "libcrypto-3-x64.dll",
-        "libcurl-4.dll",
-        "libffi-8.dll",
-        "libgcc_s_seh-1.dll",
-        "libglib-2.0-0.dll",
-        "libgmp-10.dll",
-        "libgnutls-30.dll",
-        "libhogweed-6.dll",
-        "libiconv-2.dll",
-        "libidn2-0.dll",
-        "libintl-8.dll",
-        "libnettle-8.dll",
-        "libnfs-14.dll",
-        "libp11-kit-0.dll",
-        "libpcre2-8-0.dll",
-        "libpsl-5.dll",
-        "libssh.dll",
-        "libssh2-1.dll",
-        "libssp-0.dll",
-        "libtasn1-6.dll",
-        "libunistring-5.dll",
-        "libwinpthread-1.dll",
-        "libzstd.dll",
-        "zlib1.dll",
-    )
-)
+# Import the shared vendor allowlist (same as lite/full specs).
+sys.path.insert(0, str(SPEC_DIR))
+from vendor_allowlist import VENDOR_ALLOWLIST as VENDOR_CLI_ALLOWLIST  # noqa: E402
 
 datas = []
 binaries = []

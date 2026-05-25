@@ -2066,10 +2066,26 @@ class DiskManager:
 
         cache_root = app_cache_dir() / "legacy-dos-install"
         cache_root.mkdir(parents=True, exist_ok=True)
-        installer = LegacyDosQemuInstaller(
-            runner=self.runner,
-            cache_root=cache_root,
-        )
+
+        # Select the emulator backend.  DOSBox-X is preferred on Windows
+        # builds where it's bundled (it's a single ~24 MB EXE vs QEMU's
+        # ~135 MB binary + DLL stack); the install workflow is identical.
+        from ._platform import get_backend
+
+        backend = get_backend()
+        emulator = backend.legacy_dos_emulator()
+        if emulator == "dosbox-x":
+            from .legacy_dos_dosboxx_install import LegacyDosDosBoxXInstaller
+
+            installer = LegacyDosDosBoxXInstaller(
+                runner=self.runner,
+                cache_root=cache_root,
+            )
+        else:
+            installer = LegacyDosQemuInstaller(
+                runner=self.runner,
+                cache_root=cache_root,
+            )
         profile = descriptor.profile_builder(install_image, boot_assets_dir)
         # MBR partition usually starts at LBA 63 (parted's legacy DOS
         # layout). XT-class targets (MartyPC Xebec on msdos33) get a

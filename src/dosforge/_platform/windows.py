@@ -48,6 +48,7 @@ _KNOWN_BUNDLED_TOOLS: frozenset[str] = frozenset(
         "mtype",
         "mdel",
         "mmd",
+        "dosbox-x",
     }
 )
 
@@ -126,6 +127,27 @@ class WindowsBackend(PlatformBackend):
     def supports_external_file_manager(self) -> bool:
         return True
 
+    # -- Legacy DOS emulator selection --------------------------------------
+
+    def legacy_dos_emulator(self) -> str:
+        """Prefer the bundled DOSBox-X executable when present.
+
+        DOSBox-X is a single self-contained ~24 MB EXE.  When the
+        vendor fetch script has staged it under
+        ``vendor/windows/bin/dosbox-x.exe``, the legacy-DOS install
+        flow uses it instead of qemu-system-i386 + its ~110 MB of
+        GTK / SDL / codec / virgl / etc. DLL ecosystem.
+
+        Falls back to QEMU when DOSBox-X is not bundled (e.g., a build
+        that pre-dates the DOSBox-X swap or a custom build that
+        explicitly chose qemu-system).
+        """
+
+        for directory in _vendor_search_paths():
+            if (directory / "dosbox-x.exe").exists():
+                return "dosbox-x"
+        return "qemu"
+
     # -- Dependency lists ----------------------------------------------------
 
     def required_commands(
@@ -146,7 +168,15 @@ class WindowsBackend(PlatformBackend):
         if boot_mode in {BootMode.COMPAQ331, BootMode.MSDOS33, BootMode.MSDOS331} and (
             media_type is MediaType.VHD
         ):
-            commands.extend(("qemu-system-i386", "mformat", "mcopy", "mattrib", "mdir"))
+            # Either DOSBox-X (preferred, ~24 MB single EXE) or
+            # qemu-system-i386 (~135 MB with DLL stack) drives the
+            # SYS install for these legacy DOS modes.  Whichever is
+            # bundled wins.
+            emulator = self.legacy_dos_emulator()
+            if emulator == "dosbox-x":
+                commands.extend(("dosbox-x", "mformat", "mcopy", "mattrib", "mdir"))
+            else:
+                commands.extend(("qemu-system-i386", "mformat", "mcopy", "mattrib", "mdir"))
         if boot_mode is BootMode.FREEDOS and freedos_source is FreeDOSSource.AUTO:
             commands.append("mcopy")
         return self._unique_preserving_order(commands)

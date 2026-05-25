@@ -124,18 +124,21 @@ jobs:
           # Variant-specific shape checks
           $hasTextual = Test-Path "$internal\textual\__init__.py"
           $hasQemuSys = Test-Path "$internal\vendor\windows\bin\qemu-system-i386.exe"
+          # After the DOSBox-X swap, NO variant ships qemu-system-i386 —
+          # DOSBox-X is a single 24 MB EXE that replaces ~135 MB of QEMU
+          # binary + DLL stack.  Any qemu-system leak is a bug.
+          if ($hasQemuSys) {
+            $failures += "$variant bundle leaked qemu-system-i386 (the DOSBox-X swap should have removed it)"
+          }
           switch ($variant) {
             'full' {
               if (-not $hasTextual) { $failures += "full bundle missing textual" }
-              if (-not $hasQemuSys) { $failures += "full bundle missing qemu-system-i386" }
             }
             'lite' {
               if (-not $hasTextual) { $failures += "lite bundle missing textual" }
-              if (-not $hasQemuSys) { $failures += "lite bundle missing qemu-system-i386" }
             }
             'cli' {
               if ($hasTextual) { $failures += "cli bundle leaked textual" }
-              if ($hasQemuSys) { $failures += "cli bundle leaked qemu-system-i386" }
             }
           }
 
@@ -145,6 +148,10 @@ jobs:
           }
           if (-not (Test-Path "$internal\vendor\windows\bin\mformat.exe")) {
             $failures += "mformat.exe missing from vendor/"
+          }
+          # DOSBox-X MUST be present in every variant (replaces qemu-system)
+          if (-not (Test-Path "$internal\vendor\windows\bin\dosbox-x.exe")) {
+            $failures += "dosbox-x.exe missing from vendor/"
           }
 
           # dosforge.exe --help must work

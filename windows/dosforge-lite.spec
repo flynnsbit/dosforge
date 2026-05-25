@@ -23,20 +23,39 @@
 #   .\scripts\build-lite-bundle.ps1
 
 from pathlib import Path
+import sys
 
 from PyInstaller.utils.hooks import collect_all
 
 SPEC_DIR = Path(SPECPATH).resolve()
 REPO_ROOT = SPEC_DIR.parent
 
+# Import the shared vendor allowlist.  Same set of binaries goes into
+# all three Windows variants (full / lite / cli) — DOSBox-X replaced
+# qemu-system-i386's 135 MB stack with a 24 MB self-contained EXE.
+sys.path.insert(0, str(SPEC_DIR))
+from vendor_allowlist import VENDOR_ALLOWLIST  # noqa: E402
+
 datas = []
 binaries = []
 
 vendor_bin = REPO_ROOT / "vendor" / "windows" / "bin"
 if vendor_bin.is_dir():
-    for entry in vendor_bin.rglob("*"):
-        if entry.is_file():
+    matched = 0
+    for entry in vendor_bin.iterdir():
+        if entry.is_file() and entry.name.lower() in VENDOR_ALLOWLIST:
             datas.append((str(entry), "vendor/windows/bin"))
+            matched += 1
+    expected = len(VENDOR_ALLOWLIST)
+    if matched < expected:
+        missing = sorted(
+            n for n in VENDOR_ALLOWLIST
+            if not (vendor_bin / n).exists()
+        )
+        raise SystemExit(
+            f"vendor/windows/bin/ is missing {expected - matched} allowlist "
+            f"files: {missing}.  Run scripts\\fetch-windows-vendor.py first."
+        )
 else:
     raise SystemExit(
         f"vendor/windows/bin/ is empty or missing at {vendor_bin}. "

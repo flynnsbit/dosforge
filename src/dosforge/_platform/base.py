@@ -72,6 +72,20 @@ class PlatformBackend(ABC):
 
         return False
 
+    # -- Legacy DOS emulator ------------------------------------------------
+
+    def legacy_dos_emulator(self) -> str:
+        """Which emulator drives the SYS-install for the 3 legacy DOS modes.
+
+        Returns ``"qemu"`` (default — drive ``qemu-system-i386``) or
+        ``"dosbox-x"`` (drive DOSBox-X via ``dosbox-x.exe``).  The
+        DOSBox-X path is smaller (~24 MB single EXE vs ~135 MB QEMU +
+        DLL stack on Windows) and is the default on builds where the
+        DOSBox-X vendor binary is available.
+        """
+
+        return "qemu"
+
     # -- Dependency lists ----------------------------------------------------
 
     @abstractmethod
