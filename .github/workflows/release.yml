@@ -231,47 +231,97 @@ jobs:
       - name: Smoke test the CLI bundle
         shell: pwsh
         run: |
-          # CLI bundle MUST NOT contain textual (would mean the excludes
-          # in the spec are not working correctly).
-          $textualDir = "dist\dosforge\_internal\textual"
-          if (Test-Path "$textualDir\__init__.py") {
-            Write-Error "CLI bundle is fat: textual package leaked in. Excludes in dosforge-cli.spec are broken."
+          $ErrorActionPreference = 'Continue'
+          $failures = @()
+          $bundle = "dist\dosforge"
+          $internal = "$bundle\_internal"
+
+          Write-Host "=== Bundle contents ==="
+          Get-ChildItem $bundle | Select-Object Name, @{N='Type';E={if($_.PSIsContainer){'D'}else{'F'}}} | Format-Table
+          Write-Host "=== _internal/ top-level ==="
+          Get-ChildItem $internal | Select-Object Name | Format-Table
+
+          # CHECK 1: textual must NOT be bundled
+          if (Test-Path "$internal\textual\__init__.py") {
+            $failures += "textual package leaked into _internal/. Excludes in dosforge-cli.spec are broken."
+          } else {
+            Write-Host "PASS: textual not in bundle"
           }
-          # qemu-system-i386.exe must NOT be present (whole point of CLI bundle)
-          $qemu = "dist\dosforge\_internal\vendor\windows\bin\qemu-system-i386.exe"
-          if (Test-Path $qemu) {
-            Write-Error "CLI bundle is fat: qemu-system-i386.exe leaked in. Vendor allowlist is broken."
+
+          # CHECK 2: qemu-system-i386.exe must NOT be present
+          $qemuPath = "$internal\vendor\windows\bin\qemu-system-i386.exe"
+          if (Test-Path $qemuPath) {
+            $failures += "qemu-system-i386.exe leaked into vendor/. Vendor allowlist is broken."
+          } else {
+            Write-Host "PASS: qemu-system-i386 not in bundle"
           }
-          # qemu-img.exe and mformat.exe MUST be present
-          $qimg = "dist\dosforge\_internal\vendor\windows\bin\qemu-img.exe"
-          $mfmt = "dist\dosforge\_internal\vendor\windows\bin\mformat.exe"
-          if (-not (Test-Path $qimg) -or -not (Test-Path $mfmt)) {
-            Write-Error "CLI bundle is broken: qemu-img or mformat missing."
+
+          # CHECK 3: qemu-img + mformat MUST be present
+          $qimgPath = "$internal\vendor\windows\bin\qemu-img.exe"
+          $mfmtPath = "$internal\vendor\windows\bin\mformat.exe"
+          if (-not (Test-Path $qimgPath)) { $failures += "qemu-img.exe missing from vendor/" }
+          if (-not (Test-Path $mfmtPath)) { $failures += "mformat.exe missing from vendor/" }
+          if ((Test-Path $qimgPath) -and (Test-Path $mfmtPath)) {
+            Write-Host "PASS: qemu-img + mformat present"
           }
-          # Bundle EXE itself must run and print --help
-          $help = & dist\dosforge\dosforge.exe --help 2>&1 | Out-String
-          if (-not ($help -match "create")) {
-            Write-Error "CLI dosforge.exe --help did not run cleanly. Output: $help"
-          }
-          # `dosforge tui` must produce the documented error message.
-          # The CLI bundle's TUI handler intentionally exits with code 2,
-          # so we use a try/catch + $LASTEXITCODE check rather than letting
-          # pwsh fail the step on the expected non-zero exit.
-          $tuiErr = ""
+
+          # CHECK 4: dosforge.exe --help works
+          $helpOutput = ""
+          $helpExit = -1
           try {
-            $tuiErr = & dist\dosforge\dosforge.exe tui 2>&1 | Out-String
+            $helpOutput = (& $bundle\dosforge.exe --help 2>&1 | Out-String)
+            $helpExit = $LASTEXITCODE
           } catch {
-            $tuiErr = "$_"
+            $helpOutput = "EXCEPTION: $_"
           }
-          if ($LASTEXITCODE -eq 0) {
-            Write-Error "dosforge.exe tui exited 0 unexpectedly (expected 2 for textual-not-available fallback). Output: $tuiErr"
+          Write-Host "--- dosforge.exe --help (exit=$helpExit) ---"
+          Write-Host $helpOutput
+          Write-Host "--- end ---"
+          if ($helpExit -ne 0) {
+            $failures += "dosforge.exe --help exited $helpExit (expected 0)"
           }
-          if (-not ($tuiErr -match "textual")) {
-            Write-Error "CLI dosforge.exe tui did not produce the expected 'textual not available' message. Output: $tuiErr"
+          if (-not ($helpOutput -match "create")) {
+            $failures += "dosforge.exe --help output did not contain 'create'"
           }
-          $vendorSize = [math]::Round((Get-ChildItem dist\dosforge\_internal\vendor\windows\bin | Measure-Object Length -Sum).Sum / 1MB, 1)
-          $totalSize  = [math]::Round((Get-ChildItem dist\dosforge -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
+          if (($helpExit -eq 0) -and ($helpOutput -match "create")) {
+            Write-Host "PASS: dosforge.exe --help"
+          }
+
+          # CHECK 5: dosforge.exe tui prints textual-not-available error
+          $tuiOutput = ""
+          $tuiExit = -1
+          try {
+            $tuiOutput = (& $bundle\dosforge.exe tui 2>&1 | Out-String)
+            $tuiExit = $LASTEXITCODE
+          } catch {
+            $tuiOutput = "EXCEPTION: $_"
+            $tuiExit = if ($LASTEXITCODE) { $LASTEXITCODE } else { -2 }
+          }
+          Write-Host "--- dosforge.exe tui (exit=$tuiExit) ---"
+          Write-Host $tuiOutput
+          Write-Host "--- end ---"
+          if ($tuiExit -eq 0) {
+            $failures += "dosforge.exe tui exited 0 (expected 2 for textual-not-available fallback)"
+          }
+          if (-not ($tuiOutput -match "textual")) {
+            $failures += "dosforge.exe tui output did not mention 'textual'"
+          }
+          if (($tuiExit -ne 0) -and ($tuiOutput -match "textual")) {
+            Write-Host "PASS: dosforge.exe tui fallback message"
+          }
+
+          # Summary
+          $vendorSize = [math]::Round((Get-ChildItem "$internal\vendor\windows\bin" | Measure-Object Length -Sum).Sum / 1MB, 1)
+          $totalSize  = [math]::Round((Get-ChildItem $bundle -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
+          Write-Host ""
           Write-Host "CLI bundle: vendor=$vendorSize MB, total=$totalSize MB"
+
+          if ($failures.Count -gt 0) {
+            Write-Host ""
+            Write-Host "=== SMOKE TEST FAILED ($($failures.Count) errors) ==="
+            foreach ($f in $failures) { Write-Host "  - $f" }
+            exit 1
+          }
           Write-Host "All CLI smoke checks passed."
 
       - name: Compute version from tag
