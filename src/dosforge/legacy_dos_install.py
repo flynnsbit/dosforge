@@ -191,6 +191,48 @@ def pcdos71_profile(
     )
 
 
+def msdos71_profile(
+    install_image: Path,
+    boot_assets_dir: Path | None = None,
+) -> LegacyDosInstallProfile:
+    """MS-DOS 7.10 install profile via Win95 OSR2 Boot.img.
+
+    ``install_image`` must be the OSR2 Emergency Boot Disk (``Boot.img``)
+    that ships with the Win95 OSR2 (4.00.1111) floppy set. The disk is
+    bootable and carries a real Microsoft IO.SYS (~214 KiB, OSR2-vintage),
+    MSDOS.SYS, COMMAND.COM, plus the ebd.cab archive that contains
+    ``Sys.com`` and ``Format.com``.
+
+    The installer:
+
+    1. Replaces the OSR2 CONFIG.SYS — drops the CD-ROM menu and just loads
+       himem + ramdrive so we get a clean ``Z:`` ramdrive on boot.
+    2. Replaces AUTOEXEC.BAT with a script that:
+       a. Sets up the ramdrive letter via the existing SETRAMD.BAT.
+       b. Extracts ``ebd.cab`` to the ramdrive (provides SYS.COM).
+       c. Runs ``%RAMD%:\\SYS.COM A: C:`` — copies IO.SYS, MSDOS.SYS,
+          DRVSPACE.BIN, COMMAND.COM from the boot floppy to C:\\ and
+          writes the authentic MS-DOS 7.10 FAT32 VBR (OEM 'MSWIN4.1').
+       d. Writes the ``C:\\VHDMK.OK`` marker.
+
+    The OSR2 SYS.COM accepts an mformat-laid-out FAT32 partition (it
+    preserves the BPB and rewrites the boot code in place).
+
+    ``boot_assets_dir`` is accepted for the shared ``profile_builder``
+    signature but not currently used.
+    """
+    _ = boot_assets_dir
+    return LegacyDosInstallProfile(
+        label="MS-DOS 7.10 (Win95 OSR2)",
+        install_image=install_image,
+        required_system_files=("IO.SYS", "MSDOS.SYS", "COMMAND.COM"),
+        install_method="sys_w95",
+        # SYS A: C: on FAT32 is fast (no FAT/format step), but allow
+        # generous time for QEMU startup + ramdrive setup + cab extraction.
+        timeout_seconds=180.0,
+    )
+
+
 # Marker file the AUTOEXEC.BAT writes on success, polled by the host.
 _VHDMK_MARKER_PATH = "VHDMK.OK"
 
@@ -337,6 +379,54 @@ class LegacyDosQemuInstaller:
                 b"GOTO HALT\r\n"
             )
             self._mcopy_text(work, "YES.TXT", yes_input)
+        elif profile.install_method == "sys_w95":
+            # Win95 OSR2 Boot.img: replace the boot disk's CONFIG.SYS (drop
+            # the CD-ROM menu; just himem + ramdrive) and AUTOEXEC.BAT
+            # (extract ebd.cab -> SYS A: C: -> marker).
+            #
+            # OSR2 ships Sys.com and Format.com inside ebd.cab; we extract
+            # the cab to the RAM drive at boot using the existing
+            # extract.exe + setramd.bat on the floppy. SYS A: C: then
+            # writes the genuine MS-DOS 7.10 FAT32 VBR (OEM 'MSWIN4.1')
+            # and copies IO.SYS / MSDOS.SYS / DRVSPACE.BIN / COMMAND.COM
+            # from A:\\ to the freshly-mformat'd FAT32 partition on C:\\.
+            #
+            # Override CONFIG.SYS so we don't have to fight the
+            # interactive 30-second menu prompt. The default umb +
+            # ramdrive sizing matches OSR2's "no CD" branch.
+            config_sys = (
+                b"device=himem.sys /testmem:off\r\n"
+                b"files=10\r\n"
+                b"buffers=10\r\n"
+                b"dos=high,umb\r\n"
+                b"stacks=9,256\r\n"
+                b"devicehigh=ramdrive.sys /E 2048\r\n"
+                b"lastdrive=z\r\n"
+            )
+            # Mirror the existing OSR2 AUTOEXEC.BAT's ramdrive setup
+            # (setramd.bat + LglDrv table), extract ebd.cab to the
+            # ramdrive, then run SYS A: C: from there. Diagnostic step
+            # markers are dropped onto A:\\ at each phase for postmortem.
+            autoexec_bat = (
+                b"@ECHO OFF\r\n"
+                b"set EXPAND=YES\r\n"
+                b"set LglDrv=27 * 26 Z 25 Y 24 X 23 W 22 V 21 U 20 T 19 S 18 R 17 Q 16 P 15 O 14 N 13 M 12 L 11 K 10 J 9 I 8 H 7 G 6 F 5 E 4 D 3 C\r\n"
+                b"ECHO step=before-setramd > A:\\STEP.TXT\r\n"
+                b"call setramd.bat %LglDrv%\r\n"
+                b"ECHO step=after-setramd > A:\\STEP.TXT\r\n"
+                b"copy A:\\extract.exe %RAMD%:\\ > NUL\r\n"
+                b"ECHO step=before-extract > A:\\STEP.TXT\r\n"
+                b"%RAMD%:\\extract /y /e /l %RAMD%: A:\\ebd.cab > A:\\EXT_OUT.TXT\r\n"
+                b"ECHO step=after-extract > A:\\STEP.TXT\r\n"
+                b"%RAMD%:\\sys.com A: C: > A:\\SYS_OUT.TXT\r\n"
+                b"ECHO step=after-sys > A:\\STEP.TXT\r\n"
+                b"copy A:\\COMMAND.COM C:\\ > A:\\CP_OUT.TXT\r\n"
+                b"ECHO step=after-copy > A:\\STEP.TXT\r\n"
+                b"ECHO OK> C:\\VHDMK.OK\r\n"
+                b"ECHO step=done > A:\\STEP.TXT\r\n"
+                b":HALT\r\n"
+                b"GOTO HALT\r\n"
+            )
         else:
             # SYS C: workflow: the partition must already have a valid BPB
             # (mformat-created). SYS preserves the BPB structure, writes

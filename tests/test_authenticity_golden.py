@@ -164,11 +164,23 @@ def test_freedos_oem_is_frdos() -> None:
 
 def test_pcdos_family_oem_contains_ibm() -> None:
     """IBM PC-DOS family OEM strings must say 'IBM'."""
-    for mode in ("pcdos", "pcdos7", "pcdos71", "compaq331", "msdos71"):
+    for mode in ("pcdos", "pcdos7", "pcdos71", "compaq331"):
         profile = get_profile(mode)
         assert b"IBM" in profile.oem_string, (
             f"{mode} OEM string {profile.oem_string!r} should contain 'IBM'"
         )
+
+
+def test_msdos71_oem_is_mswin41() -> None:
+    """MS-DOS 7.10 (Win95 OSR2) install writes OEM 'MSWIN4.1' via its
+    own SYS.COM.  Earlier dosforge builds claimed 'IBM  7.1' OEM after
+    a planned PC-DOS-7.1-style FORMAT32-based install path; that path
+    was abandoned in favour of OSR2's authentic SYS A: C: flow."""
+    profile = get_profile("msdos71")
+    assert profile.oem_string == b"MSWIN4.1", (
+        f"msdos71 OEM string should be 'MSWIN4.1' (what OSR2's SYS.COM "
+        f"actually writes).  Got: {profile.oem_string!r}"
+    )
 
 
 def test_fourdos_overlay_has_empty_oem() -> None:
