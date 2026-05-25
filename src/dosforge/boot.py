@@ -560,7 +560,7 @@ class BootAssetResolver:
             )
             if request.boot_assets_path is not None:
                 search_roots = (*search_roots, request.boot_assets_path.expanduser().resolve().parent)
-            self._apply_fat16_reference_boot_records(
+            self._apply_freedos_reference_boot_records(
                 assets,
                 search_roots=search_roots,
                 exclude_paths=(request.path.expanduser().resolve(),),
@@ -648,7 +648,7 @@ class BootAssetResolver:
         url = image_url or FREEDOS_DEFAULT_IMAGE_URL
         image_path = self._download_freedos_image(url)
         assets = self._resolve_freedos_from_image(image_path, DiskFormat.FAT16)
-        self._apply_fat16_reference_boot_records(
+        self._apply_freedos_reference_boot_records(
             assets,
             search_roots=(target_dir.parent, Path.cwd()),
         )
@@ -711,13 +711,26 @@ class BootAssetResolver:
             alias=directory / "FDAUTO.BAT",
         )
 
-    def _apply_fat16_reference_boot_records(
+    def _apply_freedos_reference_boot_records(
         self,
         assets: BootAssets,
         *,
         search_roots: tuple[Path, ...],
         exclude_paths: tuple[Path, ...] = (),
     ) -> None:
+        """Graft a FreeDOS FAT16 reference VBR + MBR into ``assets``.
+
+        ONLY callable from FreeDOS resolution paths.  Per the DOS
+        authenticity rule (see plan.md Phase 14), FreeDOS code paths
+        must never be invoked for non-FreeDOS boot modes -- doing so
+        would write a FreeDOS-flavoured VBR (OEM 'FRDOS5.1') onto an
+        MS-DOS / PC-DOS / Compaq DOS partition.
+
+        The two existing call-sites are both inside _resolve_freedos_*
+        functions.  If a future contributor moves this call to a
+        non-FreeDOS branch, the boot mode of the produced image will
+        no longer match the user's --boot-mode selection.
+        """
         try:
             current_boot_sector = assets.boot_sector_template.read_bytes()[:512]
         except OSError:
