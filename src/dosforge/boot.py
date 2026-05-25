@@ -91,6 +91,48 @@ def _strict_authentic_enabled() -> bool:
         "yes",
         "on",
     )
+
+
+def _content_stamp(data: bytes, length: int = 8) -> str:
+    """Return the first ``length`` hex chars of SHA-256(data).
+
+    Used to fingerprint cached binary blobs so that when a
+    ``_BUILTIN_*_B64`` constant changes, the cached file's name
+    changes too -- automatically invalidating stale caches.
+    Default 8 hex chars (32 bits) is plenty of entropy for collision
+    avoidance across the handful of MBR/VBR templates dosforge caches.
+    """
+    return hashlib.sha256(data).hexdigest()[:length]
+
+
+def materialize_versioned_cache(
+    base_dir: "Path",
+    base_name: str,
+    source_bytes: bytes,
+    *,
+    min_size: int = 0,
+) -> "Path":
+    """Write ``source_bytes`` to ``base_dir`` with a content-stamped name.
+
+    Returns the cache path ``<base_dir>/<base_name>-<sha8>.bin``.  On
+    second call with identical bytes, returns the existing cached
+    file without rewriting.  Distinct ``source_bytes`` produce
+    distinct cache paths so a constant change automatically
+    invalidates the prior cache.
+
+    Phase: introduced to fix the MBR-cache-invalidation bug where
+    a hand-fixed MBR constant change was masked by the persistent
+    pre-fix cache blob.
+    """
+    from pathlib import Path as _Path  # local import to keep top-level clean
+
+    base_dir.mkdir(parents=True, exist_ok=True)
+    stamp = _content_stamp(source_bytes)
+    cache_path = base_dir / f"{base_name}-{stamp}.bin"
+    if not cache_path.is_file() or cache_path.stat().st_size < min_size:
+        cache_path.write_bytes(source_bytes)
+    return cache_path
+
 _MSDOS71_ROOT_FILES_EXCLUDED_FROM_DOS_DIR = {
     "IO.SYS",
     "MSDOS.SYS",
@@ -2857,12 +2899,19 @@ class BootAssetResolver:
         )
 
     def _materialize_builtin_fat12_boot_sector(self) -> Path:
-        """Write the built-in FreeDOS FAT12 boot sector to cache and return its path."""
+        """Write the built-in FreeDOS FAT12 boot sector to cache and return its path.
 
-        cache_path = self.cache_root / "freedos-fat12-bootsect.bin"
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        if not cache_path.exists() or cache_path.stat().st_size < 512:
-            cache_path.write_bytes(base64.b64decode(_BUILTIN_FAT12_BOOT_SECTOR_B64))
+        Filename embeds the SHA-256 of the sector content so a constant
+        change automatically invalidates the cache (see
+        ``materialize_versioned_cache``).
+        """
+        sector_bytes = base64.b64decode(_BUILTIN_FAT12_BOOT_SECTOR_B64)
+        cache_path = materialize_versioned_cache(
+            self.cache_root,
+            base_name="freedos-fat12-bootsect",
+            source_bytes=sector_bytes,
+            min_size=512,
+        )
         self._validate_boot_sector_file(cache_path)
         return cache_path
 
@@ -3628,13 +3677,20 @@ class BootInstaller:
         # DOS VBRs.  The MS-DOS MBR just loads sector 1 of the active
         # partition and jumps to 0x7C00 with no VBR validation, which
         # is what every supported boot mode expects.
-        cache_path = self.mount_root / "msdos-builtin-mbr.bin"
-        if not cache_path.is_file() or cache_path.stat().st_size < 440:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_bytes(
-                base64.b64decode(_BUILTIN_MSDOS_MBR_BOOT_CODE_B64)[:440]
-            )
-        return cache_path
+        #
+        # The cached file's name embeds the content's SHA-256 prefix
+        # (see materialize_versioned_cache) so that any future change
+        # to the MBR constant produces a different filename and
+        # automatically invalidates the prior cache.  Without this,
+        # a stale cache once masked an MBR bugfix until the user
+        # manually deleted %LOCALAPPDATA%\dosforge\mounts\boot-prep\.
+        mbr_bytes = base64.b64decode(_BUILTIN_MSDOS_MBR_BOOT_CODE_B64)[:440]
+        return materialize_versioned_cache(
+            self.mount_root,
+            base_name="msdos-builtin-mbr",
+            source_bytes=mbr_bytes,
+            min_size=440,
+        )
 
     def _write_boot_sector(
         self,
