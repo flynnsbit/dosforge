@@ -253,8 +253,19 @@ jobs:
           if (-not ($help -match "create")) {
             Write-Error "CLI dosforge.exe --help did not run cleanly. Output: $help"
           }
-          # `dosforge tui` must produce the documented error message
-          $tuiErr = & dist\dosforge\dosforge.exe tui 2>&1 | Out-String
+          # `dosforge tui` must produce the documented error message.
+          # The CLI bundle's TUI handler intentionally exits with code 2,
+          # so we use a try/catch + $LASTEXITCODE check rather than letting
+          # pwsh fail the step on the expected non-zero exit.
+          $tuiErr = ""
+          try {
+            $tuiErr = & dist\dosforge\dosforge.exe tui 2>&1 | Out-String
+          } catch {
+            $tuiErr = "$_"
+          }
+          if ($LASTEXITCODE -eq 0) {
+            Write-Error "dosforge.exe tui exited 0 unexpectedly (expected 2 for textual-not-available fallback). Output: $tuiErr"
+          }
           if (-not ($tuiErr -match "textual")) {
             Write-Error "CLI dosforge.exe tui did not produce the expected 'textual not available' message. Output: $tuiErr"
           }
