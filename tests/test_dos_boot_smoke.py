@@ -140,17 +140,19 @@ _CASES: tuple[_BootCase, ...] = (
         size_bytes=32 * 1024 * 1024,
         ibm_dos_version=IBMDOSVersion.DOS50,
     ),
-    # IBM PC-DOS 7.0 VHD: install media in dosassets/pcdos7/ is IBM's
-    # proprietary XDF format that mtools can't read, and the loose
-    # IBMBIO/IBMDOS/COMMAND files don't include a SYS.COM, so no QEMU
-    # install path exists yet.  IMG floppy path works.
+    # IBM PC-DOS 7.0 VHD: dosassets/pcdos7/144US1.DSK is in IBM's
+    # LOADDSKF compressed format; dosforge runs LOADDSKF.EXE inside
+    # DOSBox-X to extract it to a raw IMG, then FORMAT C: /S inside
+    # QEMU using that floppy.
     _BootCase(
         test_id="pcdos7-vhd-fat16-32m",
         boot_mode=BootMode.PCDOS7,
         media=MediaType.VHD,
         disk_format=DiskFormat.FAT16,
         size_bytes=32 * 1024 * 1024,
-        expected_to_boot=False,
+        # FORMAT C: /S is slow under emulation; allow extra time over
+        # the typical 30s budget.
+        time_limit_seconds=60,
     ),
 )
 

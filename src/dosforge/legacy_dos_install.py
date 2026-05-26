@@ -162,6 +162,30 @@ def msdos622_profile(install_image: Path, boot_assets_dir: Path | None = None) -
     )
 
 
+def pcdos7_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    """IBM PC-DOS 7.0 install profile.
+
+    ``install_image`` is a raw 1.44 MB IMG produced by running IBM's
+    ``LOADDSKF.EXE`` against ``dosassets/pcdos7/144US1.DSK`` inside
+    DOSBox-X (see ``_pcdos7_loaddskf.extract_pcdos7_install_floppy``).
+    The extracted floppy ships IBMBIO.COM, IBMDOS.COM, COMMAND.COM,
+    SYS.COM, and FORMAT.COM at its root.
+
+    Drives a FORMAT C: /S install in QEMU like msdos5 / msdos622 --
+    PC-DOS 7.0's FORMAT writes an authentic ``IBM  7.0`` OEM VBR
+    and lays down IBMBIO/IBMDOS/COMMAND in the correct order with
+    the right S+H+R attributes.
+    """
+    _ = boot_assets_dir
+    return LegacyDosInstallProfile(
+        label="IBM PC-DOS 7.0",
+        install_image=install_image,
+        required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+        install_method="format",
+        timeout_seconds=300.0,
+    )
+
+
 def pcdos71_profile(
     install_image: Path,
     boot_assets_dir: Path | None = None,

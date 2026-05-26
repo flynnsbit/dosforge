@@ -32,6 +32,7 @@ from .legacy_dos_install import (
     msdos5_profile,
     msdos622_profile,
     msdos71_profile,
+    pcdos7_profile,
     pcdos71_profile,
 )
 from .dependencies import BOOT_COMMANDS, REQUIRED_COMMANDS, assert_dependencies, find_missing
@@ -203,6 +204,18 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
         system_file_marker="IO.SYS",
         profile_builder=msdos622_profile,
     ),
+    BootMode.PCDOS7: _LegacyDosInstallDescriptor(
+        label="IBM PC-DOS 7.0",
+        asset_fallback_dirs=("pcdos7",),
+        # The install_image is supplied dynamically via
+        # ``extract_pcdos7_install_floppy`` (which decompresses
+        # 144US1.DSK via LOADDSKF.EXE inside DOSBox-X) -- this name
+        # list is unused for pcdos7 but kept non-empty for the
+        # descriptor contract.
+        preferred_image_names=("pcdos7-install.img",),
+        system_file_marker="IBMBIO.COM",
+        profile_builder=pcdos7_profile,
+    ),
 }
 
 
@@ -283,6 +296,7 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
         BootMode.MSDOS5,
         BootMode.MSDOS622,
         BootMode.MSDOS71,
+        BootMode.PCDOS7,
         BootMode.PCDOS71,
     ):
         return True
@@ -1912,7 +1926,7 @@ class DiskManager:
         # - compaq331 / msdos331: use mformat for a DOS-3-compatible
         #   layout (reserved_sec_count=1) that SYS C: will accept.
         # - everything else: standard mformat with -T/-H.
-        format_from_scratch_modes = (BootMode.MSDOS5, BootMode.MSDOS622)
+        format_from_scratch_modes = (BootMode.MSDOS5, BootMode.MSDOS622, BootMode.PCDOS7)
         msdos5_layout = (
             request.boot_mode in format_from_scratch_modes
             or (
@@ -1960,17 +1974,15 @@ class DiskManager:
                 fs_type=fs_type,
             )
 
-        # Static-template boot installer path: FreeDOS plus PC-DOS
-        # variants that still resolve through the _resolve_legacy_dos
-        # asset extractor (pcdos/pcdos7).  Almost everything that used
-        # to live here -- MSDOS5, MSDOS622, MSDOS71, IBM8088 -- has
-        # moved to the QEMU SYS/FORMAT install path because their
-        # static templates were extracted from FLOPPY boot sectors
-        # that don't work on an HDD partition.
+        # Static-template boot installer path: FreeDOS plus PC-DOS 2.x/3.x
+        # umbrella (``pcdos``).  Everything else legacy -- MSDOS5,
+        # MSDOS622, MSDOS71, PCDOS7, IBM8088 -- has moved to the
+        # QEMU SYS/FORMAT install path because their static templates
+        # were extracted from FLOPPY boot sectors that don't work on
+        # an HDD partition.
         if request.boot_mode in (
             BootMode.FREEDOS,
             BootMode.PCDOS,
-            BootMode.PCDOS7,
         ):
             assets = self.boot_resolver.resolve(request)
             partition_ref = PartitionRef.from_image(
@@ -2012,6 +2024,7 @@ class DiskManager:
                 BootMode.MSDOS5,
                 BootMode.MSDOS622,
                 BootMode.MSDOS71,
+                BootMode.PCDOS7,
                 BootMode.PCDOS71,
                 BootMode.IBM8088,
             ):
@@ -2029,6 +2042,7 @@ class DiskManager:
                         BootMode.MSDOS331,
                         BootMode.MSDOS5,
                         BootMode.MSDOS622,
+                        BootMode.PCDOS7,
                     )
                     and fat_bios_chs is not None
                 ):
@@ -2259,11 +2273,20 @@ class DiskManager:
             fallback_dirs=descriptor.asset_fallback_dirs,
             label=descriptor.label,
         )
-        install_image = self._find_legacy_dos_install_image(
-            directory=boot_assets_dir,
-            preferred_names=descriptor.preferred_image_names,
-            system_file_marker=descriptor.system_file_marker,
-        )
+        # PCDOS7 ships its install floppy in IBM's LOADDSKF compressed
+        # format that mtools can't read.  Extract it on-demand via
+        # LOADDSKF.EXE inside DOSBox-X (cached after first run) and use
+        # the resulting raw 1.44 MB IMG as the install_image.
+        if request.boot_mode is BootMode.PCDOS7:
+            from ._pcdos7_loaddskf import extract_pcdos7_install_floppy
+
+            install_image = extract_pcdos7_install_floppy(boot_assets_dir)
+        else:
+            install_image = self._find_legacy_dos_install_image(
+                directory=boot_assets_dir,
+                preferred_names=descriptor.preferred_image_names,
+                system_file_marker=descriptor.system_file_marker,
+            )
         if install_image is None:
             base_msg = (
                 f"{descriptor.label} boot mode requires a bootable install diskette "
