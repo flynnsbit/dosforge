@@ -280,3 +280,56 @@ def test_windows_vhd_pipeline_copies_custom_payload(tmp_path: Path):
     dests = [c.command[-1] for c in payload_calls]
     assert any("TOOLS" in d for d in dests)
     assert any("README.TXT" in d for d in dests)
+
+
+def test_windows_vhd_pipeline_excludes_vcs_metadata_from_payload(tmp_path: Path):
+    """`.git*`, `.DS_Store`, `Thumbs.db`, `__pycache__` must not be copied."""
+    target = tmp_path / "with-payload.vhd"
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    # Real content
+    (payload / "README.TXT").write_text("hello")
+    (payload / "GAMES").mkdir()
+    (payload / "GAMES" / "PLAY.BAT").write_text("@echo PLAY\r\n")
+    # Junk that must be filtered
+    (payload / ".gitignore").write_text("*.log\n")
+    (payload / ".gitattributes").write_text("* text=auto\n")
+    (payload / ".git").mkdir()
+    (payload / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (payload / ".DS_Store").write_bytes(b"\0" * 16)
+    (payload / "Thumbs.db").write_bytes(b"\0" * 16)
+    (payload / "desktop.ini").write_text("[.ShellClassInfo]\n")
+    (payload / "GAMES" / ".gitkeep").write_text("")
+    (payload / "GAMES" / "__pycache__").mkdir()
+    (payload / "GAMES" / "__pycache__" / "x.pyc").write_bytes(b"\0" * 8)
+
+    request = _basic_request(target, custom_payload_path=payload)
+    runner = FakeRunner(vhd_size_bytes=request.size_bytes)
+    manager = _manager(tmp_path, runner)
+    manager.create_and_prepare(request)
+
+    payload_calls = [
+        c for c in runner.calls
+        if Path(c.command[0]).name.startswith(("mcopy", "mmd"))
+    ]
+    dests = [c.command[-1] for c in payload_calls]
+    sources = [
+        c.command[-2] for c in payload_calls
+        if Path(c.command[0]).name.startswith("mcopy")
+    ]
+
+    # Real content was copied
+    assert any("README.TXT" in d for d in dests)
+    assert any("PLAY.BAT" in d for d in dests)
+
+    # No junk basename ever appears in the destinations OR mcopy sources
+    junk = (".gitignore", ".gitattributes", ".gitkeep", ".DS_Store",
+            "thumbs.db", "Thumbs.db", "desktop.ini", "__pycache__", ".git")
+    for d in dests:
+        low = d.lower()
+        for needle in junk:
+            assert needle.lower() not in low, f"junk {needle!r} leaked into dest {d!r}"
+    for s in sources:
+        low = s.lower()
+        for needle in junk:
+            assert needle.lower() not in low, f"junk {needle!r} leaked via source {s!r}"

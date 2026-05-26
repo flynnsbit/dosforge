@@ -370,6 +370,41 @@ def _partition_offset_bytes_for(request: CreateRequest) -> int:
     return 63 * 512
 
 
+# Filenames/directories never copied from a custom payload to the
+# target disk: source-control metadata and host-OS junk that would
+# only confuse a DOS user (e.g. ".gitignore" surfacing as
+# ``GITIGN~1`` on the FAT root).  Matched case-insensitively against
+# each path component, so e.g. ``stage/.git/HEAD`` is fully excluded.
+_PAYLOAD_EXCLUDED_BASENAMES: frozenset[str] = frozenset({
+    # Git
+    ".git",
+    ".gitignore",
+    ".gitattributes",
+    ".gitmodules",
+    ".gitkeep",
+    # Other VCS
+    ".svn",
+    ".hg",
+    ".hgignore",
+    ".hgtags",
+    ".bzr",
+    # macOS / Windows / Python droppings
+    ".ds_store",
+    "thumbs.db",
+    "desktop.ini",
+    "__macosx",
+    "__pycache__",
+})
+
+
+def _payload_path_is_excluded(relative: Path) -> bool:
+    """Return True if any component of ``relative`` is a junk basename."""
+    for part in relative.parts:
+        if part.lower() in _PAYLOAD_EXCLUDED_BASENAMES:
+            return True
+    return False
+
+
 @dataclass(slots=True)
 class PrivilegeCheck:
     name: str
@@ -2609,6 +2644,8 @@ class DiskManager:
         partition_image = f"{vhd_path}@@{partition_offset_bytes}"
         for entry in sorted(source_dir.rglob("*")):
             relative = entry.relative_to(source_dir)
+            if _payload_path_is_excluded(relative):
+                continue
             dest = "::" + str(relative).replace(os.sep, "/")
             if entry.is_dir():
                 self.runner.run(
@@ -2639,6 +2676,8 @@ class DiskManager:
         protected = self._protected_boot_filenames(boot_mode)
         for entry in sorted(source_dir.rglob("*")):
             relative = entry.relative_to(source_dir)
+            if _payload_path_is_excluded(relative):
+                continue
             dest = "::" + str(relative).replace(os.sep, "/")
             if entry.is_dir():
                 self.runner.run(
@@ -2715,6 +2754,8 @@ class DiskManager:
     ) -> None:
         protected = protected_root_files or set()
         for entry in sorted(source_dir.iterdir(), key=lambda item: item.name.upper()):
+            if entry.name.lower() in _PAYLOAD_EXCLUDED_BASENAMES:
+                continue
             destination = destination_root / entry.name
             self._copy_entry(
                 source=entry,
@@ -2736,6 +2777,8 @@ class DiskManager:
         if source.is_dir():
             destination.mkdir(parents=True, exist_ok=True)
             for child in sorted(source.iterdir(), key=lambda item: item.name.upper()):
+                if child.name.lower() in _PAYLOAD_EXCLUDED_BASENAMES:
+                    continue
                 self._copy_entry(
                     source=child,
                     destination=destination / child.name,
@@ -2769,9 +2812,16 @@ class DiskManager:
         source_root = source_dir.resolve()
         for directory, dir_names, file_names in os.walk(source_root):
             current_dir = Path(directory)
+            # Prune excluded directories from the walk (modifies in place).
+            dir_names[:] = [
+                name for name in dir_names
+                if name.lower() not in _PAYLOAD_EXCLUDED_BASENAMES
+            ]
             if current_dir != source_root:
                 directory_clusters += cluster_bytes
             for file_name in file_names:
+                if file_name.lower() in _PAYLOAD_EXCLUDED_BASENAMES:
+                    continue
                 path = current_dir / file_name
                 if path.is_symlink():
                     raise ValidationError(f"Custom payload does not support symlinks: {path}")

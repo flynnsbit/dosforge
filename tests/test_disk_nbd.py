@@ -647,6 +647,78 @@ def test_copy_entry_allows_nested_boot_named_files(tmp_path: Path) -> None:
     assert (destination_root / "DOS" / "COMMAND.COM").read_text(encoding="utf-8") == "nested"
 
 
+def test_copy_directory_contents_excludes_vcs_and_os_droppings(tmp_path: Path) -> None:
+    """VCS metadata + OS droppings must not land on the target FAT."""
+    manager = _manager(tmp_path, FakeRunner())
+    source_root = tmp_path / "payload"
+    source_root.mkdir()
+    # VCS metadata at root + inside subdir
+    (source_root / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (source_root / ".gitattributes").write_text("* text=auto\n", encoding="utf-8")
+    git_dir = source_root / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    # OS droppings
+    (source_root / ".DS_Store").write_bytes(b"\0" * 64)
+    (source_root / "Thumbs.db").write_bytes(b"\0" * 64)
+    (source_root / "desktop.ini").write_text("[.ShellClassInfo]\n", encoding="utf-8")
+    # Mixed -- VCS inside a legitimate subdirectory must also be pruned.
+    sub = source_root / "GAMES"
+    sub.mkdir()
+    (sub / "PLAY.BAT").write_text("@ECHO PLAY\r\n", encoding="utf-8")
+    (sub / ".gitkeep").write_text("", encoding="utf-8")
+    sub_git = sub / "__pycache__"
+    sub_git.mkdir()
+    (sub_git / "cached.pyc").write_bytes(b"\0" * 16)
+    # Legitimate payload
+    (source_root / "README.TXT").write_text("hello", encoding="utf-8")
+
+    destination_root = tmp_path / "target"
+    destination_root.mkdir()
+
+    manager._copy_directory_contents_to_root(
+        source_dir=source_root,
+        destination_root=destination_root,
+        protected_root_files=set(),
+    )
+
+    # Legit content present
+    assert (destination_root / "README.TXT").read_text(encoding="utf-8") == "hello"
+    assert (destination_root / "GAMES" / "PLAY.BAT").exists()
+    # Junk absent
+    assert not (destination_root / ".gitignore").exists()
+    assert not (destination_root / ".gitattributes").exists()
+    assert not (destination_root / ".git").exists()
+    assert not (destination_root / ".DS_Store").exists()
+    assert not (destination_root / "Thumbs.db").exists()
+    assert not (destination_root / "desktop.ini").exists()
+    assert not (destination_root / "GAMES" / ".gitkeep").exists()
+    assert not (destination_root / "GAMES" / "__pycache__").exists()
+
+
+def test_estimate_payload_bytes_excludes_vcs_and_os_droppings(tmp_path: Path) -> None:
+    """Autosizing must match what _copy_directory_contents_to_root ships."""
+    manager = _manager(tmp_path, FakeRunner())
+    source_root = tmp_path / "payload"
+    source_root.mkdir()
+    (source_root / "DATA.TXT").write_bytes(b"X" * 100)
+    baseline = manager._estimate_payload_bytes_on_fat(
+        source_dir=source_root,
+        cluster_bytes=4096,
+    )
+    # Adding VCS metadata + OS droppings must NOT change the estimate.
+    (source_root / ".gitignore").write_bytes(b"X" * 10_000)
+    git_dir = source_root / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_bytes(b"X" * 50_000)
+    (source_root / ".DS_Store").write_bytes(b"X" * 5_000)
+    junked = manager._estimate_payload_bytes_on_fat(
+        source_dir=source_root,
+        cluster_bytes=4096,
+    )
+    assert junked == baseline
+
+
 def test_create_img_system_format_aligns_ibm_dos33_with_install_image_size(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
