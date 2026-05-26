@@ -2515,11 +2515,81 @@ class DiskManager:
         for name, src in (assets.system_files or {}).items():
             if name.upper() in protected_system_files:
                 continue
+            # AUTOEXEC.BAT and CONFIG.SYS on install diskettes are
+            # SETUP-launcher scripts (they run ``setup`` / ``install``
+            # to invite the user to install DOS onto a hard disk) --
+            # NOT the right content for a hard-disk-installed system.
+            # Skip them here; ``_write_sane_msdos_startup_files`` below
+            # writes appropriate hard-disk versions for QEMU-install
+            # modes after the rest of the staging completes.
+            if name.upper() in {"AUTOEXEC.BAT", "CONFIG.SYS"}:
+                continue
             if not src.is_file():
                 continue
             self.runner.run(
                 ["mcopy", "-i", partition_image, "-o", str(src), f"::{name}"],
             )
+
+        # Write canonical hard-disk CONFIG.SYS + AUTOEXEC.BAT.  Without
+        # this, FORMAT-install-floppy AUTOEXEC.BAT (``setup``) would
+        # silently launch the DOS install wizard at every boot and hang
+        # waiting for keypresses.
+        self._write_sane_msdos_startup_files(
+            partition_image=partition_image,
+            install_dir=(assets.payload_target_dir or "DOS").strip("/\\").upper(),
+        )
+
+    def _write_sane_msdos_startup_files(
+        self,
+        *,
+        partition_image: str,
+        install_dir: str,
+    ) -> None:
+        """Write a clean hard-disk CONFIG.SYS + AUTOEXEC.BAT to C:\\.
+
+        Replaces whatever shipped on the install floppy (typically a
+        SETUP-launcher script that hangs in batch mode) with the
+        minimum boot scaffolding a real user would write after
+        installing DOS:
+
+          CONFIG.SYS
+            FILES=30
+            BUFFERS=20
+
+          AUTOEXEC.BAT
+            @ECHO OFF
+            PATH C:\\;C:\\<install_dir>
+            PROMPT $P$G
+
+        Files are staged through a scratch path because mtools doesn't
+        accept stdin as a source for ``mcopy``.
+        """
+        config_sys = (
+            b"FILES=30\r\n"
+            b"BUFFERS=20\r\n"
+        )
+        autoexec_bat = (
+            b"@ECHO OFF\r\n"
+            b"PATH C:\\;C:\\" + install_dir.encode("ascii") + b"\r\n"
+            b"PROMPT $P$G\r\n"
+        )
+        scratch_root = Path(os.environ.get("TEMP", os.environ.get("TMPDIR", ".")))
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        for name, payload in (
+            ("CONFIG.SYS", config_sys),
+            ("AUTOEXEC.BAT", autoexec_bat),
+        ):
+            scratch = scratch_root / f"dosforge-startup-{uuid4().hex[:8]}-{name}"
+            scratch.write_bytes(payload)
+            try:
+                self.runner.run(
+                    ["mcopy", "-o", "-i", partition_image, str(scratch), f"::{name}"],
+                )
+            finally:
+                try:
+                    scratch.unlink()
+                except FileNotFoundError:
+                    pass
 
     def _copy_custom_payload_to_vhd_via_mtools(
         self,
