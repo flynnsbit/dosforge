@@ -773,6 +773,13 @@ class CreateRequest:
     # represented by ``None`` (the default) — in that case ``size_bytes``
     # is used as today and the footer gets the 16h/63s canonical CHS.
     bios_drive_type: tuple[BIOSVendor, int] | None = None
+    # When ``boot_mode == BootMode.FOURDOS``, dosforge first runs the
+    # ``host_boot_mode`` build flow to lay down a fully-bootable DOS, then
+    # overlays the 4DOS shell on top (copies 4DOS.COM + helpers to
+    # ``C:\\4DOS\\`` and rewrites CONFIG.SYS's SHELL= line).  Must be set
+    # to a non-FOURDOS, non-NONE boot mode whenever ``boot_mode`` is
+    # FOURDOS; ignored for every other boot mode.
+    host_boot_mode: BootMode | None = None
 
     @property
     def bios_drive_spec(self) -> BIOSDriveSpec | None:

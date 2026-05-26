@@ -9,7 +9,7 @@ import shutil
 import struct
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _dataclass_replace
 from pathlib import Path
 from typing import Callable
 from uuid import uuid4
@@ -18,6 +18,11 @@ from .boot import BootAssetResolver, BootInstaller, PartitionRef
 from .commands import CommandRunner, runner_for_backend
 from ._core import mbr as core_mbr
 from ._core import vhd_footer as core_vhd_footer
+from .fourdos_overlay import (
+    FourDosOverlayContext,
+    install_fourdos_overlay,
+    resolve_fourdos_assets_dir,
+)
 from .legacy_dos_install import (
     Compaq331InstallSources,
     LegacyDosInstallProfile,
@@ -396,6 +401,10 @@ class DiskManager:
         self.preflight(request)
         self._apply_custom_payload_autosizing(request)
         self._validate_create_request(request)
+
+        if request.boot_mode is BootMode.FOURDOS:
+            self._create_and_prepare_fourdos(request)
+            return
 
         if request.media_type is MediaType.IMG:
             self._create_and_prepare_floppy_img(request)
@@ -925,18 +934,40 @@ class DiskManager:
 
     def _validate_create_request(self, request: CreateRequest) -> None:
         normalize_label(request.label)
-        # 4DOS is reserved for Phase 14F (overlay implementation).  The
-        # BootMode enum carries it for forward-compat but no install
-        # flow exists yet -- fail loudly rather than silently produce
-        # a partial build.
+        # 4DOS is a shell overlay -- it must be paired with a host DOS
+        # boot mode that owns the actual VBR/IO.SYS/etc.  Validate the
+        # pairing here so the rest of the pipeline can assume
+        # ``host_boot_mode`` is set and sane.
         if request.boot_mode is BootMode.FOURDOS:
+            if request.host_boot_mode is None:
+                raise ValidationError(
+                    "--boot-mode 4dos is a shell overlay; it requires "
+                    "--host-boot-mode naming the underlying DOS (e.g. "
+                    "msdos71).  4DOS layers on top of an already-bootable "
+                    "DOS install; it cannot boot a disk by itself."
+                )
+            if request.host_boot_mode in (BootMode.NONE, BootMode.FOURDOS):
+                raise ValidationError(
+                    f"--host-boot-mode={request.host_boot_mode.value} is not "
+                    "valid for the 4DOS overlay.  Choose a real DOS boot "
+                    "mode (msdos71, msdos622, pcdos7, etc.)."
+                )
+            # Initial Phase 14F-full scope: only MSDOS71 is validated as a
+            # working host.  Other host modes are likely to work but
+            # haven't been smoke-tested yet; reject them explicitly so
+            # users get a clear error instead of a half-broken VHD.
+            _SUPPORTED_4DOS_HOSTS = {BootMode.MSDOS71}
+            if request.host_boot_mode not in _SUPPORTED_4DOS_HOSTS:
+                supported = ", ".join(sorted(m.value for m in _SUPPORTED_4DOS_HOSTS))
+                raise ValidationError(
+                    f"4DOS overlay on top of host '{request.host_boot_mode.value}' "
+                    f"isn't supported yet.  Currently supported hosts: {supported}.  "
+                    "More host modes can be added in subsequent iterations."
+                )
+        elif request.host_boot_mode is not None:
             raise ValidationError(
-                "boot-mode '4dos' is reserved but not yet implemented.\n"
-                "4DOS is a shell overlay that requires --host-dos "
-                "selecting the underlying DOS (e.g. msdos622).  The "
-                "Phase 14F implementation is pending until the user "
-                "supplies the 4DOS install diskette under "
-                "dosassets/4dos/.  Pick a different --boot-mode for now."
+                f"--host-boot-mode={request.host_boot_mode.value} is only "
+                "valid with --boot-mode=4dos; omit it for other modes."
             )
         self._resolve_custom_payload_path(request)
         if request.media_type is MediaType.IMG:
@@ -1910,13 +1941,25 @@ class DiskManager:
         # MS-DOS / PC-DOS variants that resolve through the
         # _resolve_legacy_dos asset extractor (msdos5/msdos622/pcdos/pcdos7).
         # MS-DOS 7.10 used to be in this list but now installs via QEMU
-        # SYS from Win95 OSR2 Boot.img — see ``_uses_legacy_dos_qemu_install``.
-        if request.boot_mode in (
-            BootMode.FREEDOS,
-            BootMode.MSDOS5,
-            BootMode.MSDOS622,
-            BootMode.PCDOS,
-            BootMode.PCDOS7,
+        # SYS from Win95 OSR2 Boot.img -- see ``_uses_legacy_dos_qemu_install``.
+        #
+        # ``IBM8088`` is split by ``ibm_dos_version``: the DOS 3.3 variant
+        # runs through the QEMU SYS install path below (which writes its
+        # own VBR + system files), but DOS 5.0 reuses the msdos5-style
+        # static template here.
+        ibm8088_static_template = (
+            request.boot_mode is BootMode.IBM8088
+            and request.ibm_dos_version is not IBMDOSVersion.DOS33
+        )
+        if (
+            request.boot_mode in (
+                BootMode.FREEDOS,
+                BootMode.MSDOS5,
+                BootMode.MSDOS622,
+                BootMode.PCDOS,
+                BootMode.PCDOS7,
+            )
+            or ibm8088_static_template
         ):
             assets = self.boot_resolver.resolve(request)
             partition_ref = PartitionRef.from_image(
@@ -1942,14 +1985,24 @@ class DiskManager:
             # partition VBR but not the MBR's boot code, so bytes 0-439
             # of the disk are zeroes and the BIOS hangs immediately on
             # the invalid instruction stream when it jumps to the MBR.
-            # msdos33 / ibm8088+dos33 use FORMAT C: /S which writes
-            # both MBR and VBR, so writing the IPL here would just be
-            # overwritten.
+            #
+            # msdos33 / ibm8088+dos33 also need an MBR IPL: DOS 3.30
+            # FORMAT C: /S writes the *partition VBR* but it does NOT
+            # write sector 0 of the disk (that was always FDISK's job
+            # in real DOS).  Without an MBR IPL the BIOS jumps to a
+            # zero-filled sector 0 on boot and the machine either
+            # silently exits (modern emulators) or hangs at a blinking
+            # cursor (real hardware).  An earlier comment here claimed
+            # FORMAT wrote both MBR and VBR -- that was incorrect.
             if request.boot_mode in (
                 BootMode.COMPAQ331,
                 BootMode.MSDOS331,
+                BootMode.MSDOS33,
                 BootMode.MSDOS71,
                 BootMode.PCDOS71,
+            ) or (
+                request.boot_mode is BootMode.IBM8088
+                and request.ibm_dos_version is IBMDOSVersion.DOS33
             ):
                 self.boot_installer.write_mbr_only(
                     disk_device=str(target_path),
@@ -2020,6 +2073,89 @@ class DiskManager:
                 partition_offset_bytes=partition_offset_bytes,
                 source_dir=custom_payload,
             )
+
+    def _create_and_prepare_fourdos(self, request: CreateRequest) -> None:
+        """Build a host DOS VHD/IMG and overlay the 4DOS shell on top.
+
+        Phase 14F-full: 4DOS is a shell overlay; the host DOS owns the
+        VBR / IO.SYS / MSDOS.SYS / COMMAND.COM.  After the host build
+        completes we copy 4DOS.COM (and helpers) to C:\\4DOS\\ and write
+        a CONFIG.SYS that points SHELL= at the 4DOS interpreter.
+
+        ``request.host_boot_mode`` selects the underlying DOS.  We
+        validate the host choice in :meth:`_validate_create_request`;
+        by the time we get here it is guaranteed non-None and
+        non-FOURDOS.
+        """
+        if request.host_boot_mode is None or request.host_boot_mode is BootMode.FOURDOS:
+            raise ValidationError(
+                "4DOS overlay reached the install step without a valid host "
+                "boot mode -- this indicates a validation gap."
+            )
+
+        # 1. Run the host build with the user's custom payload deferred
+        #    until after the overlay (so 4DOS-overlay-written CONFIG.SYS
+        #    isn't clobbered by a user-supplied one with the same name).
+        host_request = _dataclass_replace(
+            request,
+            boot_mode=request.host_boot_mode,
+            host_boot_mode=None,
+            custom_payload_path=None,
+        )
+        self.create_and_prepare(host_request)
+
+        # 2. Resolve 4DOS install media.  Errors here are loud --
+        #    we just built a bootable host disk that the user will
+        #    notice is missing 4DOS.
+        assets_dir = resolve_fourdos_assets_dir(request.boot_assets_path)
+
+        # 3. Locate the host partition so mtools can write to it.
+        target_path = request.path.expanduser().resolve()
+        if request.media_type is MediaType.IMG:
+            partition_target = str(target_path)
+        else:
+            entry = core_mbr.read_partition_entry(target_path, slot=0)
+            if entry is None:
+                raise ValidationError(
+                    f"4DOS overlay: no MBR partition found in {target_path}.  "
+                    "Host DOS build did not produce a partitioned VHD."
+                )
+            partition_offset_bytes = entry.first_lba * 512
+            partition_target = f"{target_path}@@{partition_offset_bytes}"
+
+        # 4. Overlay 4DOS + write CONFIG.SYS / AUTOEXEC.BAT.
+        install_fourdos_overlay(
+            runner=self.runner,
+            context=FourDosOverlayContext(
+                assets_dir=assets_dir,
+                partition_target=partition_target,
+            ),
+        )
+
+        # 5. Now apply the user's custom payload (deferred from step 1).
+        custom_payload = self._resolve_custom_payload_path(request)
+        if custom_payload is not None:
+            if request.media_type is MediaType.IMG:
+                if self.backend.supports_kernel_mount:
+                    self._copy_custom_payload_to_filesystem(
+                        partition_device=str(target_path),
+                        source_dir=custom_payload,
+                        boot_mode=request.boot_mode,
+                    )
+                else:
+                    self._copy_custom_payload_to_img_via_mtools(
+                        image_path=target_path,
+                        source_dir=custom_payload,
+                        boot_mode=request.boot_mode,
+                    )
+            else:
+                entry = core_mbr.read_partition_entry(target_path, slot=0)
+                if entry is not None:
+                    self._copy_custom_payload_to_vhd_via_mtools(
+                        vhd_path=target_path,
+                        partition_offset_bytes=entry.first_lba * 512,
+                        source_dir=custom_payload,
+                    )
 
     def _create_and_prepare_floppy_img(self, request: CreateRequest) -> None:
         target_path = request.path.expanduser().resolve()

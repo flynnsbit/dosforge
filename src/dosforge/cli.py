@@ -89,6 +89,16 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--overwrite", action="store_true", help="Overwrite existing image at --path.")
     create.add_argument("--boot-mode", choices=[mode.value for mode in BootMode], default=BootMode.NONE.value)
     create.add_argument(
+        "--host-boot-mode",
+        choices=[mode.value for mode in BootMode if mode not in (BootMode.NONE, BootMode.FOURDOS)],
+        default=None,
+        help=(
+            "Underlying DOS for --boot-mode=4dos.  4DOS is a shell overlay; it "
+            "needs an actual DOS to provide the VBR/IO.SYS/COMMAND.COM.  "
+            "Currently only msdos71 is supported as a host."
+        ),
+    )
+    create.add_argument(
         "--freedos-source",
         choices=[source.value for source in FreeDOSSource],
         default=FreeDOSSource.LOCAL.value,
@@ -402,6 +412,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 martypc_xebec_drive_type=MartyPCXebecDriveType(args.martypc_xebec_drive_type),
                 martypc_at_drive_type_slug=martypc_at_slug,
                 bios_drive_type=bios_drive_type,
+                host_boot_mode=BootMode(args.host_boot_mode) if args.host_boot_mode else None,
             )
             manager.create_and_prepare(request)
             print(f"Created and prepared {request.path.expanduser().resolve()}")

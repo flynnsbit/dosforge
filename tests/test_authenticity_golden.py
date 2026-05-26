@@ -193,15 +193,14 @@ def test_fourdos_overlay_has_empty_oem() -> None:
     )
 
 
-def test_attempting_4dos_boot_mode_today_raises_clean_error() -> None:
-    """Phase 14F is not yet implemented; --boot-mode 4dos must produce
-    a clear error message, not a partial build."""
+def test_4dos_boot_mode_without_host_raises_clean_error() -> None:
+    """4DOS is a shell overlay; --boot-mode 4dos by itself must produce a
+    clear 'needs --host-boot-mode' error rather than a partial build."""
     from dosforge.disk import DiskManager
 
     runner = CommandRunner()
     manager = DiskManager(runner=runner)
 
-    # Build a minimal CreateRequest with boot_mode=4dos
     from dosforge.models import CreateRequest, DiskFormat, MediaType
 
     request = CreateRequest(
@@ -216,8 +215,7 @@ def test_attempting_4dos_boot_mode_today_raises_clean_error() -> None:
         manager._validate_create_request(request)
     msg = str(exc_info.value)
     assert "4dos" in msg.lower()
-    assert "host-dos" in msg or "--host-dos" in msg
-    assert "not yet implemented" in msg.lower() or "pending" in msg.lower()
+    assert "host-boot-mode" in msg or "--host-boot-mode" in msg
 
 
 def test_strict_authentic_rule_signature_in_strict_helper() -> None:

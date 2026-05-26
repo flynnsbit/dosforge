@@ -41,6 +41,7 @@ _KNOWN_BUNDLED_TOOLS: frozenset[str] = frozenset(
     {
         "qemu-img",
         "qemu-system-i386",
+        "dosbox-x",
         "mformat",
         "mcopy",
         "mattrib",

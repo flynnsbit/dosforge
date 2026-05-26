@@ -669,10 +669,12 @@ def test_uses_legacy_dos_qemu_install_ibm8088_dos50_skipped() -> None:
 def test_uses_legacy_dos_qemu_install_other_modes_false() -> None:
     from dosforge.disk import _uses_legacy_dos_qemu_install
 
+    # MSDOS71 was moved into the QEMU install path in commit b08434a
+    # (Win95 OSR2 SYS A: C: flow), so it is no longer in this "other
+    # modes" list -- it's a QEMU-install mode now.
     for mode in (
         BootMode.NONE,
         BootMode.FREEDOS,
-        BootMode.MSDOS71,
         BootMode.MSDOS5,
         BootMode.MSDOS622,
         BootMode.PCDOS7,
