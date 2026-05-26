@@ -29,6 +29,8 @@ from .legacy_dos_install import (
     LegacyDosQemuInstaller,
     compaq331_profile,
     msdos33_profile,
+    msdos5_profile,
+    msdos622_profile,
     msdos71_profile,
     pcdos71_profile,
 )
@@ -183,6 +185,24 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
         system_file_marker="IO.SYS",
         profile_builder=msdos71_profile,
     ),
+    BootMode.MSDOS5: _LegacyDosInstallDescriptor(
+        label="MS-DOS 5.0",
+        asset_fallback_dirs=("msdos5", "dos5", "dos50"),
+        preferred_image_names=(
+            "DISK01.IMG", "DISK01.IMA", "DISK1.IMG", "DISK1.IMA",
+        ),
+        system_file_marker="IO.SYS",
+        profile_builder=msdos5_profile,
+    ),
+    BootMode.MSDOS622: _LegacyDosInstallDescriptor(
+        label="MS-DOS 6.22",
+        asset_fallback_dirs=("msdos622",),
+        preferred_image_names=(
+            "DISK1.IMG", "DISK1.IMA", "DISK01.IMG", "DISK01.IMA",
+        ),
+        system_file_marker="IO.SYS",
+        profile_builder=msdos622_profile,
+    ),
 }
 
 
@@ -241,42 +261,32 @@ def _chs_to_partition_table_bytes(*, cyl: int, head: int, sector: int) -> bytes:
 def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
     """Return True for boot modes whose install step is driven by QEMU.
 
-    Currently six flows go through ``_install_legacy_dos_via_qemu``:
+    Currently eight flows go through ``_install_legacy_dos_via_qemu``:
 
-    - ``BootMode.COMPAQ331`` — Compaq DOS 3.31 (FAT16B + SYS C:).
-    - ``BootMode.MSDOS331`` — MS-DOS 3.31 reuses the Compaq pipeline
-      (same Compaq OEM install media; the static-template path can't
-      produce a working DOS-3.31 boot sector on an mkfs.fat BPB).
-    - ``BootMode.MSDOS33`` — MS-DOS 3.30 (FORMAT C: /S from scratch).
-    - ``BootMode.MSDOS71`` — MS-DOS 7.10 (FAT12/16/32 via Win95 OSR2
-      Boot.img + SYS A: C: inside QEMU). Earlier builds tried to extract
-      IO.SYS from the Chinese DOS71 PAK release; that file is MZ-wrapped
-      and not bootable. OSR2 is the only known-working MS-DOS 7.10
-      install source.
-    - ``BootMode.IBM8088`` with ``ibm_dos_version == DOS33`` — same
-      MS-DOS 3.30 install media + the same FORMAT-from-scratch flow.
-      The static-template install path produced an unbootable VHD
-      (DOS 3.30 boot sectors are floppy-flavoured and reject a generic
-      hard-disk BPB), so we redirect through the proven QEMU path.
-    - ``BootMode.PCDOS71`` — PC-DOS 7.1 (FAT32 via FORMAT32 inside QEMU,
-      using a custom install floppy built from tk_raid.vfd + FORMAT32.COM).
-
-    Other ``IBM8088`` versions (DOS 5.0) still use the regular
-    ``make_partition_bootable`` flow because their static template is
-    known to boot.
+    - ``BootMode.COMPAQ331`` -- Compaq DOS 3.31 (FAT16B + SYS C:).
+    - ``BootMode.MSDOS331`` -- MS-DOS 3.31 reuses the Compaq pipeline.
+    - ``BootMode.MSDOS33`` -- MS-DOS 3.30 (FORMAT C: /S from scratch).
+    - ``BootMode.MSDOS5`` -- MS-DOS 5.0 (FORMAT C: /S).
+    - ``BootMode.MSDOS622`` -- MS-DOS 6.22 (FORMAT C: /S).
+    - ``BootMode.MSDOS71`` -- MS-DOS 7.10 via Win95 OSR2 SYS A: C:.
+    - ``BootMode.IBM8088`` (both DOS 3.3 and DOS 5.0) -- reuses the
+      msdos33 or msdos5 install pipeline depending on
+      ``ibm_dos_version``.  The DOS 5.0 case used to use the static
+      template path but that grafted a FLOPPY boot sector onto an HDD
+      partition and didn't boot; switched to msdos5_profile here.
+    - ``BootMode.PCDOS71`` -- PC-DOS 7.1 via FORMAT32 inside QEMU.
     """
     if request.boot_mode in (
         BootMode.COMPAQ331,
         BootMode.MSDOS331,
         BootMode.MSDOS33,
+        BootMode.MSDOS5,
+        BootMode.MSDOS622,
         BootMode.MSDOS71,
         BootMode.PCDOS71,
     ):
         return True
-    if (
-        request.boot_mode is BootMode.IBM8088
-        and request.ibm_dos_version is IBMDOSVersion.DOS33
-    ):
+    if request.boot_mode is BootMode.IBM8088:
         return True
     return False
 
@@ -284,14 +294,13 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
 def _legacy_dos_install_descriptor(request: CreateRequest) -> _LegacyDosInstallDescriptor | None:
     """Pick the QEMU install descriptor for ``request``.
 
-    IBM8088 + DOS33 reuses the MSDOS33 descriptor (same install media,
-    same FORMAT C: /S flow).
+    IBM8088 reuses per-version DOS descriptors: DOS 3.3 -> MSDOS33,
+    DOS 5.0 -> MSDOS5.  Same install media, same FORMAT C: /S flow.
     """
-    if (
-        request.boot_mode is BootMode.IBM8088
-        and request.ibm_dos_version is IBMDOSVersion.DOS33
-    ):
-        return _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.MSDOS33]
+    if request.boot_mode is BootMode.IBM8088:
+        if request.ibm_dos_version is IBMDOSVersion.DOS33:
+            return _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.MSDOS33]
+        return _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.MSDOS5]
     return _LEGACY_DOS_INSTALL_DESCRIPTORS.get(request.boot_mode)
 
 
@@ -1886,7 +1895,13 @@ class DiskManager:
         # - msdos33_layout: skip mformat. DOS 3.30 FORMAT C: /S writes
         #   the FAT/BPB from scratch inside QEMU. Zero the first 2 MiB
         #   so FORMAT doesn't see a stale BPB and try to preserve it.
-        # - pcdos71_layout: same idea — FORMAT32 inside QEMU writes the
+        # - msdos5 / msdos622: same FORMAT-from-scratch approach.  Plain
+        #   ``SYS C:`` on DOS 5/6 didn't transfer system files on
+        #   mformat-prepared >=16 MiB partitions (DOS's SYS is
+        #   conservative about re-laying-out an existing BPB).  FORMAT
+        #   /S writes everything from scratch and produces an
+        #   authentic VBR + system-file layout.
+        # - pcdos71_layout: same idea -- FORMAT32 inside QEMU writes the
         #   FAT32 BPB and boot sector. Zero a wider region (the FAT32
         #   reserved-sectors area is larger; FSInfo + backup BPB live at
         #   sector 6 by default).
@@ -1897,7 +1912,15 @@ class DiskManager:
         # - compaq331 / msdos331: use mformat for a DOS-3-compatible
         #   layout (reserved_sec_count=1) that SYS C: will accept.
         # - everything else: standard mformat with -T/-H.
-        if msdos33_layout:
+        format_from_scratch_modes = (BootMode.MSDOS5, BootMode.MSDOS622)
+        msdos5_layout = (
+            request.boot_mode in format_from_scratch_modes
+            or (
+                request.boot_mode is BootMode.IBM8088
+                and request.ibm_dos_version is IBMDOSVersion.DOS50
+            )
+        )
+        if msdos33_layout or msdos5_layout:
             self._zero_image_region(target_path, partition_offset_bytes, 2 * 1024 * 1024)
         elif pcdos71_layout:
             self._zero_image_region(target_path, partition_offset_bytes, 4 * 1024 * 1024)
@@ -1937,29 +1960,17 @@ class DiskManager:
                 fs_type=fs_type,
             )
 
-        # Static-template boot installer path: FreeDOS plus the legacy
-        # MS-DOS / PC-DOS variants that resolve through the
-        # _resolve_legacy_dos asset extractor (msdos5/msdos622/pcdos/pcdos7).
-        # MS-DOS 7.10 used to be in this list but now installs via QEMU
-        # SYS from Win95 OSR2 Boot.img -- see ``_uses_legacy_dos_qemu_install``.
-        #
-        # ``IBM8088`` is split by ``ibm_dos_version``: the DOS 3.3 variant
-        # runs through the QEMU SYS install path below (which writes its
-        # own VBR + system files), but DOS 5.0 reuses the msdos5-style
-        # static template here.
-        ibm8088_static_template = (
-            request.boot_mode is BootMode.IBM8088
-            and request.ibm_dos_version is not IBMDOSVersion.DOS33
-        )
-        if (
-            request.boot_mode in (
-                BootMode.FREEDOS,
-                BootMode.MSDOS5,
-                BootMode.MSDOS622,
-                BootMode.PCDOS,
-                BootMode.PCDOS7,
-            )
-            or ibm8088_static_template
+        # Static-template boot installer path: FreeDOS plus PC-DOS
+        # variants that still resolve through the _resolve_legacy_dos
+        # asset extractor (pcdos/pcdos7).  Almost everything that used
+        # to live here -- MSDOS5, MSDOS622, MSDOS71, IBM8088 -- has
+        # moved to the QEMU SYS/FORMAT install path because their
+        # static templates were extracted from FLOPPY boot sectors
+        # that don't work on an HDD partition.
+        if request.boot_mode in (
+            BootMode.FREEDOS,
+            BootMode.PCDOS,
+            BootMode.PCDOS7,
         ):
             assets = self.boot_resolver.resolve(request)
             partition_ref = PartitionRef.from_image(
@@ -1998,23 +2009,27 @@ class DiskManager:
                 BootMode.COMPAQ331,
                 BootMode.MSDOS331,
                 BootMode.MSDOS33,
+                BootMode.MSDOS5,
+                BootMode.MSDOS622,
                 BootMode.MSDOS71,
                 BootMode.PCDOS71,
-            ) or (
-                request.boot_mode is BootMode.IBM8088
-                and request.ibm_dos_version is IBMDOSVersion.DOS33
+                BootMode.IBM8088,
             ):
                 self.boot_installer.write_mbr_only(
                     disk_device=str(target_path),
                     image_path=target_path,
                 )
-                # FAT16 BPB heads/spt patch only applies to the two
-                # FAT16 legacy modes — PC-DOS 7.1 and MS-DOS 7.10 boot
-                # FAT32 with a different BPB extension layout, and
-                # SYS C: / FORMAT32 already wrote correct geometry
-                # matching the VHD footer.
+                # FAT16 BPB heads/spt patch only applies to FAT16 legacy
+                # modes -- PC-DOS 7.1 and MS-DOS 7.10 boot FAT32 with a
+                # different BPB extension layout, and SYS C: / FORMAT32
+                # already wrote correct geometry matching the VHD footer.
                 if (
-                    request.boot_mode in (BootMode.COMPAQ331, BootMode.MSDOS331)
+                    request.boot_mode in (
+                        BootMode.COMPAQ331,
+                        BootMode.MSDOS331,
+                        BootMode.MSDOS5,
+                        BootMode.MSDOS622,
+                    )
                     and fat_bios_chs is not None
                 ):
                     self.boot_installer.patch_fat16_bpb_geometry(

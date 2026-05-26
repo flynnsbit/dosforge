@@ -652,7 +652,11 @@ def test_uses_legacy_dos_qemu_install_ibm8088_dos33() -> None:
     assert _uses_legacy_dos_qemu_install(request) is True
 
 
-def test_uses_legacy_dos_qemu_install_ibm8088_dos50_skipped() -> None:
+def test_uses_legacy_dos_qemu_install_ibm8088_dos50_routes_through_qemu() -> None:
+    """IBM 8088 + DOS 5.0 now uses the QEMU FORMAT C: /S install path
+    (was the static template until commit upgrading msdos5/622/ibm8088:dos50
+    to FORMAT-from-scratch -- the previous static template grafted a
+    FLOPPY boot sector onto an HDD partition and didn't boot)."""
     from dosforge.disk import _uses_legacy_dos_qemu_install
 
     request = CreateRequest(
@@ -662,21 +666,19 @@ def test_uses_legacy_dos_qemu_install_ibm8088_dos50_skipped() -> None:
         boot_mode=BootMode.IBM8088,
         ibm_dos_version=IBMDOSVersion.DOS50,
     )
-    # DOS 5.0 static-template boot works fine — don't reroute through QEMU.
-    assert _uses_legacy_dos_qemu_install(request) is False
+    assert _uses_legacy_dos_qemu_install(request) is True
 
 
 def test_uses_legacy_dos_qemu_install_other_modes_false() -> None:
     from dosforge.disk import _uses_legacy_dos_qemu_install
 
-    # MSDOS71 was moved into the QEMU install path in commit b08434a
-    # (Win95 OSR2 SYS A: C: flow), so it is no longer in this "other
-    # modes" list -- it's a QEMU-install mode now.
+    # MSDOS71 / MSDOS5 / MSDOS622 / IBM8088 all moved into the QEMU
+    # install path; remaining "other" modes are NONE + FREEDOS + PCDOS7
+    # which still use the static-template install (FreeDOS) or aren't
+    # supported (PCDOS7 VHD lacks readable install media).
     for mode in (
         BootMode.NONE,
         BootMode.FREEDOS,
-        BootMode.MSDOS5,
-        BootMode.MSDOS622,
         BootMode.PCDOS7,
     ):
         request = CreateRequest(

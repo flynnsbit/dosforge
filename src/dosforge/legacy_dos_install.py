@@ -121,6 +121,47 @@ def msdos33_profile(install_image: Path, boot_assets_dir: Path | None = None) ->
     )
 
 
+def msdos5_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    """MS-DOS 5.0 install profile.
+
+    ``install_image`` is Disk01.img from the MS-DOS 5.0 install set.
+    The floppy ships SYS.COM and FORMAT.COM at its root.  We drive
+    ``FORMAT C: /S`` (not ``SYS C:``) because plain ``SYS`` failed
+    to transfer system files on mformat-prepared partitions >=16 MiB
+    in testing -- DOS 5's SYS appears to be conservative about
+    re-laying-out an existing BPB.  ``FORMAT /S`` writes the FAT,
+    BPB, VBR, and system files from scratch in one shot, matching
+    what a real DOS 5 install onto a freshly partitioned drive
+    produces.
+    """
+    _ = boot_assets_dir
+    return LegacyDosInstallProfile(
+        label="MS-DOS 5.0",
+        install_image=install_image,
+        required_system_files=("IO.SYS", "MSDOS.SYS", "COMMAND.COM"),
+        install_method="format",
+        # FORMAT does a sector-by-sector verify pass.  32 MiB in
+        # software emulation takes a couple minutes; allow 5min.
+        timeout_seconds=300.0,
+    )
+
+
+def msdos622_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    """MS-DOS 6.22 install profile.
+
+    Same FORMAT C: /S approach as ``msdos5_profile``.  Disk1.img from
+    the MS-DOS 6.22 install set ships both FORMAT.COM and SYS.COM.
+    """
+    _ = boot_assets_dir
+    return LegacyDosInstallProfile(
+        label="MS-DOS 6.22",
+        install_image=install_image,
+        required_system_files=("IO.SYS", "MSDOS.SYS", "COMMAND.COM"),
+        install_method="format",
+        timeout_seconds=300.0,
+    )
+
+
 def pcdos71_profile(
     install_image: Path,
     boot_assets_dir: Path | None = None,

@@ -115,18 +115,15 @@ _CASES: tuple[_BootCase, ...] = (
         size_bytes=32 * 1024 * 1024,
         ibm_dos_version=IBMDOSVersion.DOS33,
     ),
-    # Known-failing per the matrix run on this branch -- static-template
-    # boot install produces a VBR that doesn't load IO.SYS correctly.
-    # These cases are tracked here so the suite reflects ground truth;
-    # set ``expected_to_boot=False`` so the assertion is XFAIL-style
-    # documentation rather than a noisy failure.
+    # MS-DOS 5.0 / 6.22 / IBM 8088 + DOS 5.0 -- previously known-failing,
+    # now fixed by migrating to QEMU FORMAT C: /S install (was using a
+    # floppy boot sector grafted onto an HDD partition).
     _BootCase(
         test_id="msdos5-vhd-fat16-32m",
         boot_mode=BootMode.MSDOS5,
         media=MediaType.VHD,
         disk_format=DiskFormat.FAT16,
         size_bytes=32 * 1024 * 1024,
-        expected_to_boot=False,
     ),
     _BootCase(
         test_id="msdos622-vhd-fat16-32m",
@@ -134,8 +131,19 @@ _CASES: tuple[_BootCase, ...] = (
         media=MediaType.VHD,
         disk_format=DiskFormat.FAT16,
         size_bytes=32 * 1024 * 1024,
-        expected_to_boot=False,
     ),
+    _BootCase(
+        test_id="ibm8088-dos50-vhd-fat16-32m",
+        boot_mode=BootMode.IBM8088,
+        media=MediaType.VHD,
+        disk_format=DiskFormat.FAT16,
+        size_bytes=32 * 1024 * 1024,
+        ibm_dos_version=IBMDOSVersion.DOS50,
+    ),
+    # IBM PC-DOS 7.0 VHD: install media in dosassets/pcdos7/ is IBM's
+    # proprietary XDF format that mtools can't read, and the loose
+    # IBMBIO/IBMDOS/COMMAND files don't include a SYS.COM, so no QEMU
+    # install path exists yet.  IMG floppy path works.
     _BootCase(
         test_id="pcdos7-vhd-fat16-32m",
         boot_mode=BootMode.PCDOS7,
