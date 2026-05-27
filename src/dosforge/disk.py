@@ -2512,27 +2512,21 @@ class DiskManager:
         partition_image = f"{vhd_path}@@{partition_offset_bytes}"
 
         # 1. Stage the DOS tools payload under C:\<payload_target_dir>\.
+        # Delegate to BootInstaller._copy_payload_via_mtools so that
+        # MS-DOS SETUP-style compressed payload files (e.g. ATTRIB.EX_,
+        # DISKCOPY.CO_, HIMEM.SY_ -- SZDD or KWAJ format) are expanded
+        # to their canonical names (ATTRIB.EXE, DISKCOPY.COM, HIMEM.SYS)
+        # exactly like a real SETUP.EXE run would.  Skipping the
+        # expansion leaves C:\DOS\ littered with unbootable underscore-
+        # suffixed archives -- DIR shows them but the user can't run
+        # them.
         if assets.fdos_payload_dir is not None and assets.fdos_payload_dir.is_dir():
             target_dir = (assets.payload_target_dir or "DOS").strip("/\\").upper()
-            # Create the top-level dir on C:\ first. mmd errors out if
-            # it already exists, so let it through (check=False).
-            self.runner.run(
-                ["mmd", "-i", partition_image, f"::{target_dir}"],
-                check=False,
+            self.boot_installer._copy_payload_via_mtools(
+                partition_device=partition_image,
+                payload_dir=assets.fdos_payload_dir,
+                payload_target_dir=target_dir,
             )
-            for entry in sorted(assets.fdos_payload_dir.rglob("*")):
-                relative = entry.relative_to(assets.fdos_payload_dir)
-                dos_rel = str(relative).replace(os.sep, "/")
-                dest = f"::{target_dir}/{dos_rel}"
-                if entry.is_dir():
-                    self.runner.run(
-                        ["mmd", "-i", partition_image, dest],
-                        check=False,
-                    )
-                elif entry.is_file():
-                    self.runner.run(
-                        ["mcopy", "-i", partition_image, "-o", str(entry), dest],
-                    )
 
         # 2. Stage CONFIG.SYS / AUTOEXEC.BAT to C:\. Skip the DOS system
         # files (IO.SYS, MSDOS.SYS, IBMBIO.COM, IBMDOS.COM, COMMAND.COM)

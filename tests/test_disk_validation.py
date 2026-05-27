@@ -1187,21 +1187,20 @@ def test_stage_legacy_dos_full_profile_payload_full_copies_tools_and_startup(
 
     # The DOS dir was created at C:\DOS.
     assert any(
-        call[:2] == ["mmd", "-i"] and call[-1] == "::DOS"
+        call[0] == "mmd" and call[-1] == "::DOS"
         for call in calls
     ), calls
     # FDISK.COM was copied into C:\DOS\FDISK.COM
     assert any(
-        call[:2] == ["mcopy", "-i"]
-        and call[-2] == str(payload_dir / "FDISK.COM")
+        call[0] == "mcopy"
+        and str(payload_dir / "FDISK.COM") in call
         and call[-1] == "::DOS/FDISK.COM"
         for call in calls
     ), calls
     # Subdir SUB was created and MORE.EXE staged inside it.
     assert any(call[-1] == "::DOS/SUB" for call in calls), calls
     assert any(
-        call[:2] == ["mcopy", "-i"]
-        and call[-1] == "::DOS/SUB/MORE.EXE"
+        call[0] == "mcopy" and call[-1] == "::DOS/SUB/MORE.EXE"
         for call in calls
     ), calls
     # CONFIG.SYS + AUTOEXEC.BAT were copied to C:\.
@@ -1211,6 +1210,83 @@ def test_stage_legacy_dos_full_profile_payload_full_copies_tools_and_startup(
     # them with system+hidden attributes.
     assert not any(call[-1] == "::IO.SYS" for call in calls), calls
     assert not any(call[-1] == "::COMMAND.COM" for call in calls), calls
+
+
+def test_stage_legacy_dos_full_profile_payload_expands_szdd_compressed_files(
+    tmp_path: Path,
+) -> None:
+    """MS-DOS SETUP-style compressed payload files (.SY_/.CO_/.EX_ in
+    SZDD or KWAJ format) must be expanded to their canonical names on
+    the target disk, exactly like a real SETUP.EXE run would do.
+    Otherwise C:\\DOS\\ ends up with unbootable ATTRIB.EX_ etc."""
+    from dosforge.commands import CommandRunner
+    from dosforge import disk as _disk
+    from dosforge.boot import BootAssets
+    from dosforge.models import MSDOSInstallProfile
+
+    # Build a minimal valid SZDD-compressed payload that expands to
+    # "hello!" (literal-mode LZSS so we don't depend on the matcher).
+    def _szdd_literal(data: bytes) -> bytes:
+        header = b"SZDD\x88\xF0'3"
+        header += b"\x41"  # compression mode 'A'
+        header += b"\x00"  # filename character (none)
+        header += len(data).to_bytes(4, "little")  # uncompressed length
+        out = bytearray(header)
+        i = 0
+        while i < len(data):
+            chunk = data[i : i + 8]
+            out.append(0xFF)  # control byte: all 8 entries are literals
+            out.extend(chunk)
+            i += 8
+        return bytes(out)
+
+    payload_dir = tmp_path / "payload"
+    payload_dir.mkdir()
+    (payload_dir / "HIMEM.SY_").write_bytes(_szdd_literal(b"himem-expanded"))
+    (payload_dir / "ATTRIB.EX_").write_bytes(_szdd_literal(b"attrib-expanded"))
+    # Plain (non-compressed) file should pass through unchanged.
+    (payload_dir / "FDISK.EXE").write_bytes(b"fdisk-plain")
+
+    fake_assets = BootAssets(
+        system_files={},
+        boot_sector_template=None,
+        fdos_payload_dir=payload_dir,
+        payload_target_dir="DOS",
+    )
+
+    calls: list[list[str]] = []
+
+    class FakeRunner(CommandRunner):
+        def run(self, args, *, sudo=False, check=True, env=None):
+            calls.append(list(args))
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    class FakeResolver:
+        def resolve(self, request):
+            return fake_assets
+
+    mgr = _disk.DiskManager(runner=FakeRunner(), boot_resolver=FakeResolver())
+    request = CreateRequest(
+        path=tmp_path / "fake.vhd",
+        size_bytes=32 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.MSDOS33,
+        msdos_install_profile=MSDOSInstallProfile.FULL,
+    )
+    mgr._stage_legacy_dos_full_profile_payload(
+        request=request,
+        vhd_path=tmp_path / "fake.vhd",
+        partition_offset_bytes=17 * 512,
+    )
+
+    # Compressed payloads must land at their expanded names.
+    assert any(call[-1] == "::DOS/HIMEM.SYS" for call in calls), calls
+    assert any(call[-1] == "::DOS/ATTRIB.EXE" for call in calls), calls
+    # And NOT at the underscore-suffixed names.
+    assert not any(call[-1] == "::DOS/HIMEM.SY_" for call in calls), calls
+    assert not any(call[-1] == "::DOS/ATTRIB.EX_" for call in calls), calls
+    # Non-compressed files pass through verbatim.
+    assert any(call[-1] == "::DOS/FDISK.EXE" for call in calls), calls
 
 
 # --- Custom payload fit check on fixed-size MartyPC drives ---
