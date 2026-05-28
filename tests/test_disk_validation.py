@@ -1384,6 +1384,62 @@ def test_apply_custom_payload_generic_still_autogrows(tmp_path: Path) -> None:
     assert request.size_bytes > 100 * 1024 * 1024
 
 
+def test_build_osr2_msdos_sys_content_shape() -> None:
+    """Canonical OSR2 MSDOS.SYS must start with ``[Paths]``, include the
+    DOS-only ``BootGUI=0`` flag, and weigh in >1024 bytes for tool-compat."""
+    from dosforge.disk import DiskManager
+
+    payload = DiskManager._build_osr2_msdos_sys_content()
+
+    assert payload.startswith(b"[Paths]\r\n")
+    assert b"BootGUI=0" in payload
+    assert b"BootMulti=0" in payload
+    assert b"[Options]" in payload
+    assert len(payload) > 1024
+
+
+def test_write_osr2_msdos_sys_invokes_mtools_in_order(tmp_path: Path) -> None:
+    """``_write_osr2_msdos_sys`` must strip attrs, copy via mcopy -o, then
+    re-apply +r +h +s with the mtools ``-i <image>`` flag preceding any
+    attribute toggles (mattrib rejects the reverse order)."""
+    from dosforge.commands import CommandRunner
+    from dosforge import disk as _disk
+
+    calls: list[list[str]] = []
+
+    class FakeRunner(CommandRunner):
+        def run(self, args, *, sudo=False, check=True, env=None):
+            calls.append(list(args))
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    class FakeResolver:
+        def resolve(self, request):
+            raise AssertionError("resolver must not be called by _write_osr2_msdos_sys")
+
+    mgr = _disk.DiskManager(runner=FakeRunner(), boot_resolver=FakeResolver())
+    vhd = tmp_path / "osr2.vhd"
+    vhd.write_bytes(b"\x00" * 4096)
+
+    mgr._write_osr2_msdos_sys(vhd_path=vhd, partition_offset_bytes=1048576)
+
+    assert len(calls) == 3, calls
+
+    expected_image = f"{vhd}@@1048576"
+    mattrib_strip, mcopy, mattrib_set = calls
+
+    assert mattrib_strip[0] == "mattrib"
+    assert mattrib_strip[1:3] == ["-i", expected_image]
+    assert mattrib_strip[3:] == ["-r", "-h", "-s", "::MSDOS.SYS"]
+
+    assert mcopy[0] == "mcopy"
+    assert mcopy[1:4] == ["-o", "-i", expected_image]
+    assert mcopy[-1] == "::MSDOS.SYS"
+
+    assert mattrib_set[0] == "mattrib"
+    assert mattrib_set[1:3] == ["-i", expected_image]
+    assert mattrib_set[3:] == ["+r", "+h", "+s", "::MSDOS.SYS"]
+
+
 # --- dosassets/ folder resolution ---
 
 

@@ -2359,6 +2359,115 @@ class DiskManager:
             profile=profile,
             partition_offset_bytes=partition_offset_bytes,
         )
+        # The Win95 OSR2 Emergency Boot Disk (Boot.img) ships a 6-byte
+        # stub MSDOS.SYS containing only ``;SYS\r\n``.  ``SYS A: C:``
+        # copies it verbatim to C:.  OSR2 IO.SYS then reads MSDOS.SYS on
+        # boot, fails to find the required ``[Paths]`` / ``[Options]``
+        # sections, and bombs with an "I/O error" before reaching the
+        # DOS prompt.  Replace the stub with a canonical hard-disk
+        # MSDOS.SYS configured for DOS-only boot (no WIN.COM autostart).
+        if profile.install_method == "sys_w95":
+            self._write_osr2_msdos_sys(
+                vhd_path=vhd_path,
+                partition_offset_bytes=partition_offset_bytes,
+            )
+
+    def _write_osr2_msdos_sys(
+        self,
+        *,
+        vhd_path: Path,
+        partition_offset_bytes: int,
+    ) -> None:
+        """Write a canonical Win95-OSR2 hard-disk ``MSDOS.SYS`` to C:\\.
+
+        Required because the OSR2 Emergency Boot Disk's own MSDOS.SYS
+        is a 6-byte stub (``;SYS\\r\\n``) that ``SYS A: C:`` propagates
+        to the freshly-installed VHD.  IO.SYS reads MSDOS.SYS during
+        boot to locate WIN.COM and read boot-time flags; an
+        empty/stub file causes an I/O error before any DOS code runs.
+
+        The file written here mirrors what an authentic Windows 95
+        OSR2 SETUP run would leave on a DOS-only install: BootGUI=0
+        keeps boot at the ``C:\\>`` prompt, ``BootMulti=0`` skips the
+        dual-boot menu, and the padding block keeps the file >1024
+        bytes (MS Tools have historically rejected MSDOS.SYS files
+        smaller than that).
+        """
+        partition_image = f"{vhd_path}@@{partition_offset_bytes}"
+        payload = self._build_osr2_msdos_sys_content()
+        scratch_root = Path(
+            os.environ.get("TEMP", os.environ.get("TMPDIR", "."))
+        )
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        scratch = scratch_root / f"dosforge-msdos-sys-{uuid4().hex[:8]}"
+        scratch.write_bytes(payload)
+        try:
+            self.runner.run(
+                [
+                    "mattrib",
+                    "-i",
+                    partition_image,
+                    "-r",
+                    "-h",
+                    "-s",
+                    "::MSDOS.SYS",
+                ],
+                check=False,
+            )
+            self.runner.run(
+                [
+                    "mcopy",
+                    "-o",
+                    "-i",
+                    partition_image,
+                    str(scratch),
+                    "::MSDOS.SYS",
+                ],
+            )
+            self.runner.run(
+                [
+                    "mattrib",
+                    "-i",
+                    partition_image,
+                    "+r",
+                    "+h",
+                    "+s",
+                    "::MSDOS.SYS",
+                ],
+            )
+        finally:
+            try:
+                scratch.unlink()
+            except FileNotFoundError:
+                pass
+
+    @staticmethod
+    def _build_osr2_msdos_sys_content() -> bytes:
+        """Canonical Win95 OSR2 ``MSDOS.SYS`` for a DOS-only hard-disk boot."""
+        lines = [
+            b"[Paths]",
+            b"WinDir=C:\\",
+            b"WinBootDir=C:\\",
+            b"HostWinBootDrv=C",
+            b"",
+            b"[Options]",
+            b"BootMulti=0",
+            b"BootGUI=0",
+            b"BootDelay=0",
+            b"Logo=0",
+            b"DoubleBuffer=1",
+            b"AutoScan=1",
+            b"",
+            b";",
+            b";The following lines are required for compatibility with other programs.",
+            b";Do not remove them (MSDOS.SYS needs to be >1024 bytes).",
+            b";",
+        ]
+        body = b"\r\n".join(lines) + b"\r\n"
+        pad_line = b";" + b"x" * 76 + b"\r\n"
+        while len(body) < 1100:
+            body += pad_line
+        return body
 
     def _resolve_legacy_dos_assets_dir(
         self,
