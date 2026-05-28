@@ -8,6 +8,7 @@ import re
 import shutil
 import struct
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, replace as _dataclass_replace
 from pathlib import Path
@@ -36,7 +37,7 @@ from .legacy_dos_install import (
     pcdos71_profile,
 )
 from .dependencies import BOOT_COMMANDS, REQUIRED_COMMANDS, assert_dependencies, find_missing
-from .errors import DosForgeError, ValidationError
+from .errors import DependencyError, DosForgeError, ValidationError
 from .models import (
     BootMode,
     CreateRequest,
@@ -2469,6 +2470,132 @@ class DiskManager:
             body += pad_line
         return body
 
+    # Loose 1996-08-24-dated MS-DOS-mode utilities at the root of the
+    # OSR2 Emergency Boot Disk.  These get copied verbatim into C:\DOS\.
+    _OSR2_BOOT_IMG_LOOSE_DOS_TOOLS: tuple[str, ...] = (
+        "FDISK.EXE",
+        "EXTRACT.EXE",
+        "HIMEM.SYS",
+    )
+
+    def _stage_msdos71_osr2_dos_payload(
+        self,
+        *,
+        request: CreateRequest,
+        partition_image: str,
+    ) -> bool:
+        """Stage authentic OSR2 DOS utilities into C:\\DOS\\.
+
+        Sourced exclusively from the user's OSR2 install media
+        (typically ``dosassets/w95/Boot.img``).  Two streams are
+        merged into a scratch directory and then bulk-copied to the
+        VHD with :meth:`BootInstaller._copy_payload_via_mtools`:
+
+        1. Loose 1996-08-24-dated binaries from the floppy root —
+           ``FDISK.EXE``, ``EXTRACT.EXE``, ``HIMEM.SYS``.
+        2. The contents of the embedded ``ebd.cab`` Microsoft uses
+           to ship MS-DOS-mode utilities (``ATTRIB.EXE``,
+           ``FORMAT.COM``, ``EDIT.COM``, ``SYS.COM``,
+           ``SCANDISK.EXE``, …) — the bulk of the cab is OSR2-vintage
+           too.
+
+        Returns ``True`` on success, ``False`` if no install image
+        can be located (in which case the caller should leave
+        C:\\DOS\\ untouched rather than write a half-curated set).
+        """
+        descriptor = _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.MSDOS71]
+        boot_assets_dir = self._resolve_legacy_dos_assets_dir(
+            request=request,
+            fallback_dirs=descriptor.asset_fallback_dirs,
+            label=descriptor.label,
+        )
+        install_image = self._find_legacy_dos_install_image(
+            directory=boot_assets_dir,
+            preferred_names=descriptor.preferred_image_names,
+            system_file_marker=descriptor.system_file_marker,
+        )
+        if install_image is None:
+            return False
+
+        staging_dir = Path(tempfile.mkdtemp(prefix="dosforge-msdos71-tools-"))
+        try:
+            for name in self._OSR2_BOOT_IMG_LOOSE_DOS_TOOLS:
+                self.runner.run(
+                    [
+                        "mcopy",
+                        "-i",
+                        str(install_image),
+                        "-n",
+                        f"::/{name}",
+                        name,
+                    ],
+                    cwd=staging_dir,
+                    check=False,
+                )
+
+            cab_scratch = staging_dir / "ebd.cab"
+            cab_result = self.runner.run(
+                [
+                    "mcopy",
+                    "-i",
+                    str(install_image),
+                    "-n",
+                    "::/ebd.cab",
+                    "ebd.cab",
+                ],
+                cwd=staging_dir,
+                check=False,
+            )
+            if (
+                cab_result.returncode == 0
+                and cab_scratch.is_file()
+                and cab_scratch.stat().st_size > 0
+            ):
+                self._expand_msdos_cab(cab_scratch, staging_dir)
+            try:
+                cab_scratch.unlink()
+            except FileNotFoundError:
+                pass
+
+            for child in list(staging_dir.iterdir()):
+                if child.is_file() and child.stat().st_size == 0:
+                    child.unlink()
+
+            if not any(staging_dir.iterdir()):
+                return False
+
+            self.boot_installer._copy_payload_via_mtools(
+                partition_device=partition_image,
+                payload_dir=staging_dir,
+                payload_target_dir="DOS",
+            )
+            return True
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+    def _expand_msdos_cab(self, cab_path: Path, destination: Path) -> None:
+        """Expand a Microsoft CAB archive into ``destination``.
+
+        Uses Windows' built-in ``expand.exe`` (always on PATH via
+        ``%SystemRoot%\\System32``) on Windows, and ``cabextract`` on
+        other platforms (a common package on Linux/macOS).
+        """
+        destination.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32":
+            argv = ["expand.exe", str(cab_path), "-F:*", str(destination)]
+        else:
+            argv = ["cabextract", "-d", str(destination), str(cab_path)]
+        try:
+            self.runner.run(argv)
+        except DependencyError as exc:
+            tool = argv[0]
+            raise DependencyError(
+                f"Missing external command '{tool}' required to expand "
+                f"MS-CAB archives.  Install it (Windows ships expand.exe "
+                f"with the OS at %SystemRoot%\\System32; on Linux/macOS "
+                f"install the 'cabextract' package)."
+            ) from exc
+
     def _resolve_legacy_dos_assets_dir(
         self,
         *,
@@ -2603,19 +2730,27 @@ class DiskManager:
         """
         if request.msdos_install_profile is not MSDOSInstallProfile.FULL:
             return
-        # MS-DOS 7.10 via the Win95 OSR2 install path doesn't currently
-        # have an authentic DOS-utilities-tree source: the OSR2 Boot.img
-        # only ships SYS / FORMAT / FDISK (via ebd.cab) and the Win95
-        # install floppies contain CABs of Windows binaries, not loose
-        # DOS tools.  Producing a curated C:\\DOS payload from those
-        # sources would require unpacking the Win95 PRECOPY1.CAB and
-        # selectively extracting MS-DOS commands — out of scope for
-        # this fix.  For now FULL collapses to MINIMAL for MSDOS71;
-        # users who want extra utilities should use
-        # ``--custom-payload-path``.  Hard authenticity rule is
-        # preserved: nothing from a non-MS-DOS-7.10 source ends up on
-        # the disk.
+        # MS-DOS 7.10 via the Win95 OSR2 install path has no Chinese-
+        # release crossover allowed (DOS71_1S.PAK is from a different
+        # 7.1 lineage and would violate the per-DOS authenticity rule).
+        # Instead, source DOS-mode utilities directly from the OSR2
+        # install media the user supplied (dosassets/w95/Boot.img):
+        # loose 1996-08-24-dated binaries at the floppy root plus the
+        # ``ebd.cab`` archive Microsoft uses to ship FORMAT.COM,
+        # SCANDISK.EXE, EDIT.COM, etc.  Everything that lands in
+        # C:\\DOS\\ originates from the same Boot.img the SYS install
+        # ran from.
         if request.boot_mode is BootMode.MSDOS71:
+            partition_image = f"{vhd_path}@@{partition_offset_bytes}"
+            staged = self._stage_msdos71_osr2_dos_payload(
+                request=request,
+                partition_image=partition_image,
+            )
+            if staged:
+                self._write_sane_msdos_startup_files(
+                    partition_image=partition_image,
+                    install_dir="DOS",
+                )
             return
         assets = self.boot_resolver.resolve(request)
         partition_image = f"{vhd_path}@@{partition_offset_bytes}"
