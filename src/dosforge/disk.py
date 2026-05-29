@@ -2456,7 +2456,8 @@ class DiskManager:
             b"BootGUI=0",
             b"BootDelay=0",
             b"Logo=0",
-            b"DoubleBuffer=1",
+            b"DoubleBuffer=0",
+            b"Network=0",
             b"AutoScan=1",
             b"",
             b";",
@@ -2569,6 +2570,31 @@ class DiskManager:
                 payload_dir=staging_dir,
                 payload_target_dir="DOS",
             )
+
+            # OSR2 IO.SYS implicitly loads HIMEM.SYS from C:\ (per the
+            # ``WinDir=C:\`` line we write to MSDOS.SYS).  If it's not
+            # present at the root the boot prints "The following file is
+            # missing or corrupted: C:\HIMEM.SYS" before reaching the
+            # DOS prompt.  Stage the authentic Boot.img copy at C:\ in
+            # addition to C:\DOS\ to suppress that warning.  (IFSHLP.SYS
+            # and DBLBUFF.SYS are not shipped on any OSR2 install
+            # diskette -- they only exist after a full Win95 Setup --
+            # so we instead disable their load via MSDOS.SYS Network=0
+            # and DoubleBuffer=0.)
+            himem_staged = staging_dir / "HIMEM.SYS"
+            if himem_staged.is_file():
+                self.runner.run(
+                    [
+                        "mcopy",
+                        "-i",
+                        partition_image,
+                        "-n",
+                        himem_staged.name,
+                        "::/HIMEM.SYS",
+                    ],
+                    cwd=staging_dir,
+                    check=False,
+                )
             return True
         finally:
             shutil.rmtree(staging_dir, ignore_errors=True)
