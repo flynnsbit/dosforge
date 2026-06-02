@@ -159,18 +159,32 @@ and a populated `vendor/windows/bin/`:
 ## 4. Open phases / known follow-ups
 
 ### 4.1 Awaiting user verification
-- **OSR2 boot-warning suppression** (commit `79950a1`). User
-  previously hit the "missing C:\HIMEM.SYS / C:\DBLBUFF.SYS /
-  C:\IFSHLP.SYS" prompts before reaching `C:\>` — fix is in
-  but a clean 86Box boot pass hasn't been confirmed yet.
+- **OSR2 IFSHLP / DBLBUFF extraction** (verified on Pentium-class
+  86Box BIOSes; pre-EBIOS 486 BIOSes still need user-side BIOS swap
+  per the 2026-05-27 note): real `IFSHLP.SYS` (3,708 B, SHA256
+  `3272ceb4…`) and `DBLBUFF.SYS` (2,100 B, SHA256 `a929264b…`) are
+  extracted **host-side** from `WIN95_17.CAB` / `WIN95_13.CAB` using
+  7-Zip (Quantum-capable) before the QEMU SYS install runs, then
+  staged onto `C:\` via `vhd_pre_install_copies`. The in-DOS
+  AUTOEXEC.BAT just sets `+R +S +H` attributes on the pre-staged
+  files. Confirmed `A SHR` attributes + matching SHA256s on the
+  resulting VHD.
 
 ### 4.2 Authenticity gaps
-- **IFSHLP.SYS / DBLBUFF.SYS for OSR2** — currently disabled via
-  MSDOS.SYS `Network=0` / `DoubleBuffer=0` because the binaries
-  don't exist on any OSR2 install diskette (only inside a fully
-  Setup-installed Win95 in `C:\WINDOWS\`). If the user later
-  supplies an authentic OSR2 hard-disk image we could extract them
-  and ship them at `C:\` for a "real Win95-flavored" boot.
+- **All OSR2 boot-time files now authentic.** IFSHLP.SYS and
+  DBLBUFF.SYS used to be considered "not on install diskette" — that
+  was wrong. They live inside two Quantum-compressed cabinets
+  (`WIN95_13.CAB` on Disk13.img → DBLBUFF.SYS; `WIN95_17.CAB` on
+  Disk17.img → IFSHLP.SYS). Diamond EXTRACT.EXE 1.00.0530 (04/3/95)
+  on the OSR2 Boot.img **predates Quantum support** — it OOMs with
+  "Out of memory while processing cabinet file" regardless of XMS
+  budget. We pivoted to host-side 7-Zip extraction (Microsoft
+  `expand.exe` also refuses Quantum with 0x80070032). 7-Zip is
+  probed via PATH + `Program Files\7-Zip\7z.exe`; if absent on the
+  host, the staging list is cleared and the VHD still builds (user
+  sees the cosmetic "missing or corrupted: C:\IFSHLP.SYS" boot
+  warning — no functional impact). Extracted files are cached
+  content-addressed under `<cache>/osr2-win95-files/<sha12>/`.
 - **No Windows 95 GUI boot path** — `BootGUI=0` is hard-coded.
   Booting into the Windows 95 GUI from dosforge VHDs would require
   shipping the full Setup-extracted Windows tree, which is a much

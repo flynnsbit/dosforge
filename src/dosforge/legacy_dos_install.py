@@ -83,6 +83,17 @@ class LegacyDosInstallProfile:
     FORMAT32.COM (and any other tools the auto-install script needs)
     so the install media boots a self-contained installer."""
 
+    vhd_pre_install_copies: tuple[tuple[Path, str], ...] = ()
+    """``(host_source, partition_destination)`` pairs to mcopy onto the
+    target VHD partition BEFORE booting QEMU.  Used by ``sys_w95`` to
+    stage Win95 OSR2 ``WIN95_*.CAB`` source cabinets that the booted
+    DOS environment then decompresses via ``EXTRACT.EXE`` to recover
+    ``IFSHLP.SYS`` + ``DBLBUFF.SYS``.  These CABs are larger than the
+    1.44 MB boot floppy and use Quantum compression that no host-side
+    extractor in the dosforge vendor bundle handles -- but Microsoft's
+    own EXTRACT.EXE running on the booted OSR2 ramdrive handles them
+    natively, so we pre-stage on C: and clean up after the install."""
+
     install_label: str = "DOS"
     """Volume label written by FORMAT32 in the ``format32`` flow.
     Ignored by other install methods."""
@@ -256,6 +267,146 @@ def pcdos71_profile(
     )
 
 
+def _extract_osr2_cab_from_floppy(
+    floppy_path: Path,
+    cab_name: str,
+    cache_root: Path,
+) -> Path:
+    """Pull ``cab_name`` out of an OSR2 floppy image into a host cache file.
+
+    The OSR2 DiskNN.img files are DMF (Distribution Media Format,
+    1.68 MB) floppies whose root directory contains a single
+    ``WIN95_NN.CAB`` payload. mtools handles DMF natively for read
+    operations.  We mcopy the cab into a content-addressed cache so
+    repeat invocations are fast.
+    """
+    import hashlib
+    import subprocess
+
+    from ._platform import get_backend
+
+    backend = get_backend()
+    mcopy_exe = backend.tool_path("mcopy")
+
+    # Content-address the cached copy by the source floppy SHA so
+    # swapping the media (or a corrupted re-rip) invalidates the cache.
+    h = hashlib.sha256()
+    with floppy_path.open("rb") as f:
+        for chunk in iter(lambda: f.read(64 * 1024), b""):
+            h.update(chunk)
+    stamp = h.hexdigest()[:12]
+
+    cache_dir = cache_root / "osr2-win95-cabs" / stamp
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cached = cache_dir / cab_name
+    if cached.is_file() and cached.stat().st_size > 0:
+        return cached
+
+    # mcopy on Windows refuses an absolute target path that starts with
+    # a drive letter (it treats "C:" as an mtools drive identifier), so
+    # we run with cwd=cache_dir and pass a bare basename.
+    result = subprocess.run(
+        [
+            mcopy_exe,
+            "-i", str(floppy_path.resolve()),
+            "-n",
+            f"::/{cab_name}",
+            cab_name,
+        ],
+        cwd=cache_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not cached.is_file() or cached.stat().st_size == 0:
+        raise ValidationError(
+            f"Failed to extract {cab_name} from {floppy_path}: "
+            f"mcopy rc={result.returncode} "
+            f"stderr={(result.stderr or '')[-500:]!r}"
+        )
+    return cached
+
+
+def _find_seven_zip_exe() -> Path | None:
+    """Locate a ``7z`` / ``7z.exe`` that supports Quantum-compressed CABs.
+
+    The 1995-vintage EXTRACT.EXE bundled on the Win95 OSR2 Boot.img
+    predates Quantum support; 7-Zip handles Quantum from very early
+    versions.  We probe PATH first, then a couple of well-known
+    install locations on Windows.
+    """
+    exe = shutil.which("7z") or shutil.which("7z.exe")
+    if exe:
+        return Path(exe)
+    candidates = [
+        Path(os.environ.get("ProgramFiles", "C:\\Program Files")) / "7-Zip" / "7z.exe",
+        Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")) / "7-Zip" / "7z.exe",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _extract_osr2_member_with_seven_zip(
+    cab_path: Path,
+    member_name: str,
+    cache_root: Path,
+) -> Path | None:
+    """Extract a single named member from a Quantum-compressed OSR2 CAB.
+
+    Returns ``None`` if 7-Zip is not installed; callers should fall back
+    gracefully (the OSR2 VHD still boots, it just shows the cosmetic
+    ``IFSHLP.SYS missing`` warning).  The extracted file is cached in a
+    sibling directory keyed by the cab's SHA-12 prefix.
+
+    7-Zip's CAB reader is case-insensitive even though Quantum CAB
+    entries are lowercase; we always extract to the canonical uppercase
+    ``IFSHLP.SYS`` / ``DBLBUFF.SYS`` name used by Win95 IO.SYS.
+    """
+    import hashlib
+    import subprocess
+
+    seven_zip = _find_seven_zip_exe()
+    if seven_zip is None:
+        return None
+
+    h = hashlib.sha256()
+    with cab_path.open("rb") as f:
+        for chunk in iter(lambda: f.read(64 * 1024), b""):
+            h.update(chunk)
+    stamp = h.hexdigest()[:12]
+
+    cache_dir = cache_root / "osr2-win95-files" / stamp
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cached = cache_dir / member_name.upper()
+    if cached.is_file() and cached.stat().st_size > 0:
+        return cached
+
+    # 7-Zip extracts member names in their original case; OSR2 CABs
+    # store them lowercase.  Extract by lowercase pattern, then rename.
+    result = subprocess.run(
+        [
+            str(seven_zip),
+            "e",
+            str(cab_path),
+            f"-o{cache_dir}",
+            member_name.lower(),
+            "-y",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    # 7z exits 2 for "open errors" (spanned-cab warning) even when the
+    # requested member extracts cleanly, so we trust the on-disk result.
+    extracted = cache_dir / member_name.lower()
+    if extracted.is_file() and extracted.stat().st_size > 0:
+        if extracted != cached:
+            extracted.replace(cached)
+        return cached
+    return None
+
+
+
 def msdos71_profile(
     install_image: Path,
     boot_assets_dir: Path | None = None,
@@ -283,19 +434,84 @@ def msdos71_profile(
     The OSR2 SYS.COM accepts an mformat-laid-out FAT32 partition (it
     preserves the BPB and rewrites the boot code in place).
 
-    ``boot_assets_dir`` is accepted for the shared ``profile_builder``
-    signature but not currently used.
+    ``boot_assets_dir`` is used to locate ``Disk13.img`` + ``Disk17.img``
+    in the OSR2 floppy set so we can extract ``DBLBUFF.SYS`` and
+    ``IFSHLP.SYS`` -- which OSR2's IO.SYS requires at C:\\ during boot
+    (driven by ``WinDir=C:\\`` in MSDOS.SYS, independent of
+    ``Network=`` / ``DoubleBuffer=``).  Both files only exist inside
+    Quantum-compressed WIN95_*.CAB entries on the install media.  The
+    1995-vintage EXTRACT.EXE on the OSR2 Boot.img predates Quantum
+    support (it fails "Out of memory" on Quantum cabs even with 64+ MB
+    of XMS), so we extract host-side with 7-Zip (which handles Quantum
+    cleanly) and stage the real files via
+    ``vhd_pre_install_copies``.  If 7-Zip is not installed, IFSHLP /
+    DBLBUFF staging is skipped silently and the booted VHD shows the
+    cosmetic "missing IFSHLP.SYS" warning on first boot -- the rest of
+    the install completes normally.
     """
-    _ = boot_assets_dir
+    vhd_pre_install: list[tuple[Path, str]] = []
+    if boot_assets_dir is not None:
+        # Cache extracted CABs under the system app cache so multiple
+        # dosforge runs share the work.  Lazy-imported to avoid a
+        # module-load circular with paths.py via base helpers.
+        from .paths import app_cache_dir
+
+        cache_root = app_cache_dir()
+        # WIN95_13.CAB on Disk13.img carries DBLBUFF.SYS (2,100 B).
+        # WIN95_17.CAB on Disk17.img carries IFSHLP.SYS (3,708 B).
+        for floppy_name, cab_name, member_name in (
+            ("Disk13.img", "WIN95_13.CAB", "DBLBUFF.SYS"),
+            ("Disk17.img", "WIN95_17.CAB", "IFSHLP.SYS"),
+        ):
+            floppy_path = _find_case_insensitive_file(
+                boot_assets_dir,
+                (floppy_name, floppy_name.upper(), floppy_name.lower()),
+            )
+            if floppy_path is None:
+                # If the user only supplied Boot.img + a partial floppy
+                # set we still want SYS install to succeed; the boot
+                # will still warn about missing IFSHLP/DBLBUFF but the
+                # rest of the DOS environment is fine.  Skip silently.
+                vhd_pre_install.clear()
+                break
+            cab_local = _extract_osr2_cab_from_floppy(
+                floppy_path, cab_name, cache_root
+            )
+            member_local = _extract_osr2_member_with_seven_zip(
+                cab_local, member_name, cache_root
+            )
+            if member_local is None:
+                # 7-Zip not installed -- can't decompress Quantum.  Drop
+                # the partial pre-install set so we don't ship just one
+                # of the two files (would leave a confusing half-fix).
+                vhd_pre_install.clear()
+                break
+            vhd_pre_install.append((member_local, member_name))
+
     return LegacyDosInstallProfile(
         label="MS-DOS 7.10 (Win95 OSR2)",
         install_image=install_image,
         required_system_files=("IO.SYS", "MSDOS.SYS", "COMMAND.COM"),
         install_method="sys_w95",
         # SYS A: C: on FAT32 is fast (no FAT/format step), but allow
-        # generous time for QEMU startup + ramdrive setup + cab extraction.
-        timeout_seconds=180.0,
+        # generous time for QEMU startup + ramdrive setup + cab extraction
+        # + IFSHLP/DBLBUFF extraction from the staged WIN95_*.CAB files.
+        timeout_seconds=240.0,
+        vhd_pre_install_copies=tuple(vhd_pre_install),
     )
+
+
+def _find_case_insensitive_file(directory: Path, candidates: tuple[str, ...]) -> Path | None:
+    try:
+        listing = list(directory.iterdir())
+    except OSError:
+        return None
+    lookup = {entry.name.upper(): entry for entry in listing if entry.is_file()}
+    for name in candidates:
+        located = lookup.get(name.upper())
+        if located is not None:
+            return located
+    return None
 
 
 # Marker file the AUTOEXEC.BAT writes on success, polled by the host.
@@ -336,6 +552,18 @@ class LegacyDosQemuInstaller:
             )
 
         work_floppy = self._prepare_install_floppy(profile)
+        # Stage profile-provided files onto the destination VHD partition
+        # BEFORE QEMU launches. Used by sys_w95 to drop WIN95_*.CAB
+        # files in C:\ so the booted DOS can run EXTRACT against them.
+        if profile.vhd_pre_install_copies:
+            partition_image = f"{vhd_path}@@{partition_offset_bytes}"
+            for src, dest_name in profile.vhd_pre_install_copies:
+                self.runner.run(
+                    [
+                        "mcopy", "-o", "-i", partition_image,
+                        str(src), f"::{dest_name}",
+                    ],
+                )
         qemu_failed = False
         try:
             try:
@@ -487,6 +715,21 @@ class LegacyDosQemuInstaller:
                 b"ECHO step=after-sys > A:\\STEP.TXT\r\n"
                 b"copy A:\\COMMAND.COM C:\\ > A:\\CP_OUT.TXT\r\n"
                 b"ECHO step=after-copy > A:\\STEP.TXT\r\n"
+                # Real Win95 SETUP sets +R +S +H on these (matches the
+                # attributes IO.SYS expects when it loads them).  EXTRACT
+                # leaves them as plain archive; ATTRIB fixes it.
+                # ATTRIB.EXE lives in ebd.cab so it's on the %RAMD% drive
+                # after the earlier extract step.  The files themselves
+                # are pre-staged onto C:\ by the host via
+                # ``vhd_pre_install_copies`` (host-side 7-Zip extraction
+                # of the Quantum-compressed WIN95_*.CAB entries on the
+                # OSR2 install diskettes).
+                b"IF NOT EXIST C:\\IFSHLP.SYS GOTO SKIP_ATTR\r\n"
+                b"ECHO step=before-attrib > A:\\STEP.TXT\r\n"
+                b"%RAMD%:\\ATTRIB.EXE +R +S +H C:\\IFSHLP.SYS > NUL\r\n"
+                b"%RAMD%:\\ATTRIB.EXE +R +S +H C:\\DBLBUFF.SYS > NUL\r\n"
+                b":SKIP_ATTR\r\n"
+                b"ECHO step=after-sysfiles > A:\\STEP.TXT\r\n"
                 b"ECHO OK> C:\\VHDMK.OK\r\n"
                 b"ECHO step=done > A:\\STEP.TXT\r\n"
                 b":HALT\r\n"

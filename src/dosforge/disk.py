@@ -2444,7 +2444,15 @@ class DiskManager:
 
     @staticmethod
     def _build_osr2_msdos_sys_content() -> bytes:
-        """Canonical Win95 OSR2 ``MSDOS.SYS`` for a DOS-only hard-disk boot."""
+        """Canonical Win95 OSR2 ``MSDOS.SYS`` for a DOS-only hard-disk boot.
+
+        Matches the layout produced by a real OSR2 SETUP into a DOS-only
+        partition: ``BootGUI=0`` keeps boot in real-mode DOS, the rest
+        are the canonical defaults that OSR2 expects.  ``Network`` and
+        ``DoubleBuffer`` keys are intentionally omitted so IO.SYS loads
+        the genuine ``IFSHLP.SYS`` + ``DBLBUFF.SYS`` we stage on C:\\
+        (see ``_stage_msdos71_osr2_dos_payload``).
+        """
         lines = [
             b"[Paths]",
             b"WinDir=C:\\",
@@ -2456,8 +2464,6 @@ class DiskManager:
             b"BootGUI=0",
             b"BootDelay=0",
             b"Logo=0",
-            b"DoubleBuffer=0",
-            b"Network=0",
             b"AutoScan=1",
             b"",
             b";",
@@ -2576,11 +2582,14 @@ class DiskManager:
             # present at the root the boot prints "The following file is
             # missing or corrupted: C:\HIMEM.SYS" before reaching the
             # DOS prompt.  Stage the authentic Boot.img copy at C:\ in
-            # addition to C:\DOS\ to suppress that warning.  (IFSHLP.SYS
-            # and DBLBUFF.SYS are not shipped on any OSR2 install
-            # diskette -- they only exist after a full Win95 Setup --
-            # so we instead disable their load via MSDOS.SYS Network=0
-            # and DoubleBuffer=0.)
+            # addition to C:\DOS\ to suppress that warning.
+            # (IFSHLP.SYS + DBLBUFF.SYS are likewise required at C:\
+            # for the same reason; they're staged by the QEMU SYS
+            # install flow itself -- see ``msdos71_profile`` and the
+            # ``sys_w95`` AUTOEXEC.BAT branch in ``legacy_dos_install`` --
+            # because they only exist inside Quantum-compressed
+            # WIN95_*.CAB cabinets that the host vendor bundle cannot
+            # decompress but OSR2's own EXTRACT.EXE handles natively.)
             himem_staged = staging_dir / "HIMEM.SYS"
             if himem_staged.is_file():
                 self.runner.run(
