@@ -3,7 +3,8 @@
 Run once whenever the set of supported DOS modes changes. Each readme
 describes what install media to drop into that folder so dosforge can
 build the corresponding bootable image. Committed under the repo so
-the lite/full bundles ship the empty folder skeleton with instructions.
+the full bundle ships the folder skeleton with instructions even when
+the user hasn't added any install media yet.
 """
 
 from __future__ import annotations

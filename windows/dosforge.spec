@@ -1,22 +1,27 @@
 # PyInstaller spec for the dosforge Windows portable bundle (full).
 #
-# Builds a onedir bundle under ``dist/dosforge/`` containing TWO launchers
-# that share one ``_internal/`` Python runtime:
+# Builds a onedir bundle under ``dist/dosforge/`` containing TWO
+# launchers that share one ``_internal/`` Python runtime:
 #
-#   - ``dosforge.exe``      — CLI-only launcher (no TUI, no GUI imports).
-#                             Run with no arguments to see help + examples.
+#   - ``dosforge.exe``      — console launcher. Run with no arguments
+#                             to see the help + examples. Subcommands
+#                             include ``tui`` (launch the Textual TUI),
+#                             ``gui`` (launch the desktop GUI),
+#                             ``create``, ``mount``, ``ls``, etc.
 #   - ``dosforge-gui.exe``  — windowed (``console=False``) GUI launcher
 #                             (tkinter + sv_ttk; no TUI fallback).
 #
-# Both EXEs run the same entry script (windows/dosforge_entry.py) which
-# dispatches based on the EXE's filename. ONE Analysis covers both
-# entry points, so dependencies aren't duplicated (the dual-Analysis
-# approach attempted in v0.5.0-gui-pre3 bloated the bundle to 480 MB
-# because PE-import scanning runs per-Analysis).
+# Both EXEs run the same entry script (windows/dosforge_entry.py),
+# which dispatches based on the EXE filename and on whether the
+# textual TUI is bundled. ONE Analysis covers both entry points so
+# dependencies aren't duplicated.
 #
-# Bundles vendor binaries (QEMU, mtools), the full DOS install media in
-# dosassets/, and icons. Excludes the textual/rich/pygments TUI stack —
-# neither launcher needs it.
+# Bundles vendor binaries (QEMU, mtools, DOSBox-X), the dosassets
+# folder skeleton (per-mode readmes + committed FreeDOS userspace),
+# icons, AND the full textual/rich TUI stack so ``dosforge tui`` works.
+# A separate ``windows/dosforge-cli.spec`` produces a slim CLI-only
+# bundle that excludes both the TUI and GUI runtimes for users who
+# only need the command-line verbs.
 #
 # Build from the repo root inside the project venv:
 #
@@ -57,20 +62,42 @@ if icons.is_dir():
             datas.append((str(entry), "assets/icons"))
 
 # Collect entire package trees (source, submodules, AND data files) for
-# the runtime deps that need them:
-#   - py7zr (and its compression backends): used to extract DOS install
-#     media archives shipped in dosassets/.
-#   - sv_ttk: Sun Valley ttk theme used by the GUI launcher.
+# runtime deps that ship their own non-Python assets.
+#
+# * py7zr + compression backends: extract DOS install media archives.
+# * sv_ttk: Sun Valley ttk theme (image sprites + Tcl scripts).
+# * textual + rich + markdown_it + pygments: power the TUI launched
+#   via ``dosforge tui``. Without these the TUI subcommand can't import.
 hiddenimports = []
-for _pkg in ("py7zr", "Cryptodome", "pyppmd", "pyzstd", "pybcj", "inflate64",
-             "brotli", "multivolumefile", "texttable", "sv_ttk"):
+for _pkg in (
+    "py7zr",
+    "Cryptodome",
+    "pyppmd",
+    "pyzstd",
+    "pybcj",
+    "inflate64",
+    "brotli",
+    "multivolumefile",
+    "texttable",
+    "sv_ttk",
+    "textual",
+    "rich",
+    "markdown_it",
+    "mdit_py_plugins",
+    "linkify_it",
+    "uc_micro_py",
+    "psutil",
+):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(_pkg)
     datas.extend(pkg_datas)
     binaries.extend(pkg_binaries)
     hiddenimports.extend(pkg_hidden)
 
-# tkinter is imported lazily by the GUI launcher (and by the legacy
-# native file picker); make PyInstaller bundle it explicitly.
+# Pygments lexer used by Textual's syntax highlighting.
+hiddenimports.append("pygments.lexers.python")
+
+# tkinter is imported lazily by the GUI launcher and by the legacy
+# native file picker; make PyInstaller bundle it explicitly.
 hiddenimports.extend([
     "tkinter",
     "tkinter.filedialog",
@@ -90,29 +117,14 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # No launcher needs the TUI: ``dosforge.exe`` is CLI-only and
-    # ``dosforge-gui.exe`` has no TUI fallback. Drop the whole textual
-    # stack so we don't ship ~15-20 MB of unused Python source.
-    excludes=[
-        "pytest",
-        "pyinstaller",
-        "zstandard",
-        "textual",
-        "rich",
-        "markdown_it",
-        "mdit_py_plugins",
-        "linkify_it",
-        "uc_micro_py",
-        "pygments",
-        "psutil",
-    ],
+    excludes=["pytest", "pyinstaller", "zstandard"],
     cipher=block_cipher,
     noarchive=False,
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# Console CLI launcher.
+# Console launcher (CLI + TUI + GUI all accessible).
 exe_cli = EXE(
     pyz,
     a.scripts,
@@ -128,7 +140,7 @@ exe_cli = EXE(
     icon=None,
 )
 
-# Windowed GUI launcher (no console flash).
+# Windowed GUI launcher (no console flash, no TUI fallback).
 exe_gui = EXE(
     pyz,
     a.scripts,
@@ -158,7 +170,7 @@ coll = COLLECT(
 # Post-build: move dosassets/ out of _internal/ so the per-mode folders
 # (and their readme.txt instructions) sit alongside the EXEs. Users can
 # then drop their install media into dosassets/<mode>/ without having
-# to dig into the Python runtime folder. Mirrors the lite-bundle layout.
+# to dig into the Python runtime folder.
 import shutil as _shutil
 
 _bundle_root = Path(DISTPATH) / "dosforge"

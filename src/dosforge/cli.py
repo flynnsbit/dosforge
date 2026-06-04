@@ -485,6 +485,37 @@ def gui_only_main(argv: Sequence[str] | None = None) -> int:
     return _launch_gui(allow_tui_fallback=False)
 
 
+def full_console_main(argv: Sequence[str] | None = None) -> int:
+    """Console entry for the bundled full ``dosforge.exe``.
+
+    Supports every subcommand including ``tui`` and ``gui``, so the user
+    can launch the TUI from the console or open the GUI without leaving
+    the shell. Without arguments, prints the full help (including
+    examples) instead of auto-launching anything — same gentle default
+    as :func:`cli_only_main`.
+    """
+    parser = build_parser(include_tui_gui=True)
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv:
+        parser.print_help()
+        return 0
+    args = parser.parse_args(argv)
+
+    try:
+        if args.command is None:
+            parser.print_help()
+            return 0
+        if args.command == "tui":
+            return _launch_tui()
+        if args.command == "gui":
+            return _launch_gui(allow_tui_fallback=False)
+        return _dispatch_cli_subcommand(args, parser)
+    except (DependencyError, ValidationError, DosForgeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
 def _dispatch_cli_subcommand(args, parser) -> int:
     """Run the chosen CLI subcommand. Extracted so the CLI-only and full
     ``main()`` entry points can share the dispatch table without duplicating

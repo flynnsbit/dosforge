@@ -1,8 +1,8 @@
 """CI guard: every dosassets/<mode>/ folder must ship a readme.txt.
 
 Run as part of the release workflow before PyInstaller. Exits non-zero
-listing any folders that lack a readme so the lite bundle never ships
-an empty directory.
+listing any folders that lack a readme so the bundle never ships an
+empty directory.
 """
 
 from __future__ import annotations

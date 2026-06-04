@@ -1,7 +1,7 @@
 name: Release Windows bundle
 
 # Triggered automatically when a tag matching ``v*`` is pushed. Three
-# build jobs (full, lite, cli) run in parallel after a tiny
+# build jobs (full, cli) run in parallel after a tiny
 # create-release job stamps out an empty GitHub release.  Each build
 # job uploads its zip to that release with ``gh release upload
 # --clobber``.  Total wall-clock time is ~3-4 minutes instead of the
@@ -78,9 +78,8 @@ jobs:
       fail-fast: false  # one variant failing should not abort the others
       matrix:
         variant:
-          - { name: full, spec: 'windows/dosforge.spec',      suffix: '' }
-          - { name: lite, spec: 'windows/dosforge-lite.spec', suffix: '-lite' }
-          - { name: cli,  spec: 'windows/dosforge-cli.spec',  suffix: '-cli' }
+          - { name: full, spec: 'windows/dosforge.spec',     suffix: '' }
+          - { name: cli,  spec: 'windows/dosforge-cli.spec', suffix: '-cli' }
 
     steps:
       - name: Check out source
@@ -130,14 +129,9 @@ jobs:
           $hasGuiExe = Test-Path "$bundle\dosforge-gui.exe"
           switch ($variant) {
             'full' {
-              if ($hasTextual) { $failures += "full bundle should no longer ship textual (TUI stack removed in v0.5.0-gui-pre3)" }
+              if (-not $hasTextual) { $failures += "full bundle missing textual (needed for 'dosforge tui')" }
               if (-not $hasGuiExe) { $failures += "full bundle missing dosforge-gui.exe" }
               if (-not $hasQemuSys) { $failures += "full bundle missing qemu-system-i386" }
-            }
-            'lite' {
-              if ($hasTextual) { $failures += "lite bundle should no longer ship textual" }
-              if (-not $hasGuiExe) { $failures += "lite bundle missing dosforge-gui.exe" }
-              if (-not $hasQemuSys) { $failures += "lite bundle missing qemu-system-i386" }
             }
             'cli' {
               if ($hasTextual) { $failures += "cli bundle leaked textual" }
