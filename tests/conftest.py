@@ -25,6 +25,7 @@ _WINDOWS_ALLOWED_TEST_FILES = frozenset(
         # assumptions in their bodies):
         "test_app_form.py",
         "test_boot_assets.py",
+        "test_capabilities.py",
         "test_cli.py",
         "test_core_modules.py",
         "test_authenticity_golden.py",
@@ -37,6 +38,7 @@ _WINDOWS_ALLOWED_TEST_FILES = frozenset(
         "test_e2e_emulator.py",
         "test_e2e_matrix.py",
         "test_fat12_boot_template.py",
+        "test_formlogic.py",
         "test_fourdos_overlay.py",
         "test_mscompress.py",
         "test_platform_windows.py",

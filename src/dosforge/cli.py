@@ -37,7 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dosforge")
     subcommands = parser.add_subparsers(dest="command")
 
-    subcommands.add_parser("tui", help="Launch the interactive TUI (default).")
+    subcommands.add_parser("tui", help="Launch the interactive TUI.")
+    subcommands.add_parser(
+        "gui", help="Launch the desktop GUI (default on Windows)."
+    )
 
     check_deps = subcommands.add_parser("check-deps", help="Check external command dependencies.")
     check_deps.add_argument(
@@ -335,28 +338,69 @@ def _maximize_console_window() -> None:
         return
 
 
+def _launch_tui() -> int:
+    """Launch the Textual TUI. Returns a process exit code."""
+    ensure_startup_sudo_auth()
+    try:
+        from .app import DosForgeApp
+    except ImportError as exc:
+        print(
+            "The dosforge TUI requires the 'textual' package, which is not "
+            "available in this build. Run a CLI subcommand instead, e.g.:\n"
+            "  dosforge create --help\n"
+            "  dosforge check-deps\n"
+            f"Underlying import error: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    _maximize_console_window()
+    DosForgeApp().run()
+    return 0
+
+
+def _launch_gui(*, allow_tui_fallback: bool) -> int:
+    """Launch the desktop GUI. Optionally fall back to the TUI on failure."""
+    ensure_startup_sudo_auth()
+    try:
+        from ._gui import GuiUnavailable, run_gui
+    except ImportError as exc:
+        if allow_tui_fallback:
+            return _launch_tui()
+        print(
+            "The dosforge GUI is not available in this build "
+            f"(import error: {exc}). Try 'dosforge tui' instead.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        return run_gui()
+    except GuiUnavailable as exc:
+        if allow_tui_fallback:
+            return _launch_tui()
+        print(
+            f"The dosforge GUI could not start: {exc}\n"
+            "Try 'dosforge tui' instead.",
+            file=sys.stderr,
+        )
+        return 2
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     try:
-        if args.command in (None, "tui"):
-            ensure_startup_sudo_auth()
-            try:
-                from .app import DosForgeApp
-            except ImportError as exc:
-                print(
-                    "The dosforge TUI requires the 'textual' package, which is not "
-                    "available in this build. Run a CLI subcommand instead, e.g.:\n"
-                    "  dosforge create --help\n"
-                    "  dosforge check-deps\n"
-                    f"Underlying import error: {exc}",
-                    file=sys.stderr,
-                )
-                return 2
-            _maximize_console_window()
-            DosForgeApp().run()
-            return 0
+        if args.command is None:
+            # Default: GUI on Windows (fall back to TUI), TUI elsewhere.
+            if sys.platform == "win32":
+                return _launch_gui(allow_tui_fallback=True)
+            return _launch_tui()
+
+        if args.command == "tui":
+            return _launch_tui()
+
+        if args.command == "gui":
+            return _launch_gui(allow_tui_fallback=False)
 
         if args.command == "check-deps":
             assert_dependencies(

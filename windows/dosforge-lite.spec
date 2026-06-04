@@ -79,6 +79,7 @@ for _pkg in (
     "multivolumefile",
     "texttable",
     "psutil",
+    "sv_ttk",
 ):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(_pkg)
     datas.extend(pkg_datas)
@@ -132,8 +133,26 @@ exe = EXE(
     icon=str(icon_path) if icon_path else None,
 )
 
+# Windowed GUI launcher: same code/Analysis, but no console window so the
+# default Windows experience (the GUI) doesn't flash a console behind it.
+exe_gui = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="dosforge-gui",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+    icon=str(icon_path) if icon_path else None,
+)
+
 coll = COLLECT(
     exe,
+    exe_gui,
     a.binaries,
     a.zipfiles,
     a.datas,
