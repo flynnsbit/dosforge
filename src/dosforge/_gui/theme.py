@@ -282,18 +282,54 @@ class ThemeManager:
     def _apply_titlebar_theme(self) -> None:
         """Match the Win11 title bar to the app theme (DWM immersive dark).
 
-        Setting the DWM attribute alone leaves the title bar stuck in light
-        mode until the window loses+regains focus. After setting it we kick
-        the non-client area with ``SetWindowPos(..., SWP_FRAMECHANGED)`` and
-        a brief withdraw/deiconify so the first paint is correct.
+        Reliable sequence:
+
+        1. Set ``DWMWA_USE_IMMERSIVE_DARK_MODE`` immediately so the
+           attribute is in place BEFORE the window is first mapped (the
+           shell hides the window during init and shows it in ``run()``).
+        2. Re-apply the attribute and force a non-client repaint on every
+           subsequent ``<Map>`` so theme toggles and re-shows take effect.
         """
         if sys.platform != "win32":
             return
+        # When the window is already visible (e.g. theme toggle), we must
+        # force a non-client repaint so the new attribute actually shows.
+        # During pre-map init the window is withdrawn — no point trying
+        # to repaint a non-existent frame.
+        is_visible = False
+        try:
+            is_visible = bool(self.root.winfo_viewable())
+        except Exception:
+            pass
+        self._set_dwm_dark_attribute(force_repaint=is_visible)
+        # Reapply once the window is actually mapped, in case the DWM
+        # ignored our pre-map call. Guard against rebinding on subsequent
+        # apply() calls (e.g. theme toggle).
+        if not getattr(self, "_titlebar_map_bound", False):
+            self.root.bind("<Map>", self._on_root_mapped, add="+")
+            self._titlebar_map_bound = True
+
+    def _on_root_mapped(self, event) -> None:
+        # Only react to the top-level root mapping; ignore child widgets.
+        if event.widget is not self.root:
+            return
+        self._set_dwm_dark_attribute(force_repaint=True)
+
+    def _set_dwm_dark_attribute(self, *, force_repaint: bool) -> None:
+        """Apply the DWM dark-titlebar attribute.
+
+        ``force_repaint`` should be False during the pre-map init pass
+        (the window isn't visible yet, no repaint is possible) and True
+        from the ``<Map>`` handler so the visible frame redraws.
+        """
         try:
             import ctypes
 
             self.root.update_idletasks()
-            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetParent(self.root.winfo_id())
+            if not hwnd:
+                return
             value = ctypes.c_int(1 if self.mode == "dark" else 0)
             # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (1903+); 19 on older builds.
             set_ok = False
@@ -306,13 +342,12 @@ class ThemeManager:
                 except Exception:
                     continue
 
-            if not set_ok:
+            if not set_ok or not force_repaint:
                 return
 
-            # Force the non-client area (title bar) to repaint with the
-            # new attribute. Without this the title bar stays in light
-            # mode until the window loses and regains focus.
-            user32 = ctypes.windll.user32
+            # Force the non-client area to repaint. SetWindowPos with
+            # SWP_FRAMECHANGED is the documented way to make DWM
+            # re-evaluate window attributes for the visible frame.
             SWP_NOMOVE = 0x0002
             SWP_NOSIZE = 0x0001
             SWP_NOZORDER = 0x0004
@@ -327,5 +362,29 @@ class ThemeManager:
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             )
+            # Also explicitly invalidate the frame so any pending paint
+            # picks up the new attribute. RDW_FRAME | RDW_INVALIDATE.
+            RDW_INVALIDATE = 0x0001
+            RDW_UPDATENOW = 0x0100
+            RDW_FRAME = 0x0400
+            user32.RedrawWindow(
+                hwnd, None, None, RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW
+            )
+            # Win11 quirk: toggling the dark attribute OFF (dark -> light)
+            # doesn't reliably trigger a frame redraw even with the calls
+            # above. Resizing the window by 1px and back gets the DWM to
+            # recompose from scratch — imperceptible to the user.
+            try:
+                geo = self.root.geometry()  # "WxH+X+Y"
+                size_part, _, pos_part = geo.partition("+")
+                w_str, _, h_str = size_part.partition("x")
+                w = int(w_str)
+                h = int(h_str)
+                rest = "+" + pos_part if pos_part else ""
+                self.root.geometry(f"{w + 1}x{h}{rest}")
+                self.root.update_idletasks()
+                self.root.geometry(f"{w}x{h}{rest}")
+            except Exception:
+                pass
         except Exception:
             pass

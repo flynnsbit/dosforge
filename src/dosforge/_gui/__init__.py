@@ -72,6 +72,11 @@ class DosForgeGUI:
             self.root = tk.Tk()
         except tk.TclError as exc:
             raise GuiUnavailable(f"No display available: {exc}") from exc
+        # Hide the window while we build it + apply the dark titlebar
+        # attribute. The DWM only composes the frame when the window is
+        # first mapped, so we must set DWMWA_USE_IMMERSIVE_DARK_MODE
+        # before that happens or the title bar shows in light mode.
+        self.root.withdraw()
         self.root.title("DosForge")
         self.root.minsize(960, 640)
         self._center(1180, 780)
@@ -246,4 +251,8 @@ class DosForgeGUI:
         self.root.destroy()
 
     def run(self) -> None:
+        # Now that the whole UI is built and the DWM dark attribute is
+        # applied, show the window. The very first frame the DWM composes
+        # already uses dark mode for the title bar.
+        self.root.deiconify()
         self.root.mainloop()
