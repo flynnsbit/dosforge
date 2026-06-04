@@ -29,8 +29,8 @@ def _bundle_dosassets_dir() -> Path | None:
     The PyInstaller entry-point (``windows/dosforge_entry.py``) sets
     ``DOSFORGE_DOSASSETS_DIR`` when running as a frozen bundle so that
     asset resolution works regardless of the user's working directory.
-    This is intentionally a bundle-only mechanism — the env var is never
-    set in editable-install / dev runs.
+    Linux pip-installed users can also export this env var to point at
+    a fixed asset library outside of any of the well-known locations.
     """
     env_value = os.environ.get("DOSFORGE_DOSASSETS_DIR")
     if env_value:
@@ -38,6 +38,38 @@ def _bundle_dosassets_dir() -> Path | None:
         if path.is_dir():
             return path
     return None
+
+
+def _xdg_data_home() -> Path:
+    """Return ``$XDG_DATA_HOME`` (or its default ``~/.local/share``).
+
+    Per the XDG Base Directory Specification this is the user-scope
+    data directory; we put dosforge's user-installed assets at
+    ``$XDG_DATA_HOME/dosforge/`` so pip-installed Linux users can
+    run ``dosforge`` from any working directory and still find their
+    install media.
+    """
+    env_value = os.environ.get("XDG_DATA_HOME")
+    if env_value:
+        return Path(env_value).expanduser()
+    return Path.home() / ".local" / "share"
+
+
+def _wellknown_asset_roots() -> list[Path]:
+    """Standard locations where ``dosassets/`` might live on this host.
+
+    Ordered from most-specific (user data) to least-specific (system),
+    with the legacy ``~/.dosforge/`` location kept for backward
+    compatibility. The frozen-bundle path takes precedence over
+    everything here when set.
+    """
+    roots: list[Path] = [
+        _xdg_data_home() / "dosforge" / DOS_ASSETS_SUBDIR,
+        Path.home() / ".dosforge" / DOS_ASSETS_SUBDIR,
+        Path("/usr/local/share/dosforge") / DOS_ASSETS_SUBDIR,
+        Path("/usr/share/dosforge") / DOS_ASSETS_SUBDIR,
+    ]
+    return roots
 
 
 def xdg_state_home() -> Path:
@@ -73,14 +105,30 @@ def app_state_file() -> Path:
 def dos_assets_root(base: Path | None = None) -> Path:
     """Return the ``dosassets/`` directory under ``base`` (default cwd).
 
-    When running as a frozen PyInstaller bundle the launcher sets
-    ``DOSFORGE_DOSASSETS_DIR`` to the bundled (or adjacent) asset
-    directory; that takes precedence over the cwd-relative fallback.
+    Resolution order:
+
+    1. ``DOSFORGE_DOSASSETS_DIR`` env var (frozen-bundle launcher, or
+       user-exported override for pip installs).
+    2. ``<base>/dosassets/`` under the working directory (intended for
+       users who extract the release bundle and run from there).
+    3. The first existing well-known location: ``$XDG_DATA_HOME/dosforge``,
+       ``~/.dosforge``, ``/usr/local/share/dosforge``, ``/usr/share/dosforge``.
+
+    Falls back to ``<base>/dosassets/`` (the cwd location, may not
+    exist yet) when nothing matches — error messages elsewhere then
+    direct the user to populate one of the well-known paths.
     """
     bundled = _bundle_dosassets_dir()
     if bundled is not None:
         return bundled
-    return (base if base is not None else Path.cwd()) / DOS_ASSETS_SUBDIR
+    base_dir = base if base is not None else Path.cwd()
+    cwd_root = (base_dir / DOS_ASSETS_SUBDIR).resolve()
+    if cwd_root.is_dir():
+        return cwd_root
+    for root in _wellknown_asset_roots():
+        if root.is_dir():
+            return root
+    return cwd_root
 
 
 def resolve_dos_asset_dir(
@@ -94,11 +142,16 @@ def resolve_dos_asset_dir(
 
     1. If ``name_or_path`` is an absolute path or contains a path separator,
        use it verbatim (after ``expanduser`` + ``resolve``).
-    2. When ``DOSFORGE_DOSASSETS_DIR`` is set (frozen bundle), try
-       ``<bundled_dir>/<name>`` first.
-    3. Otherwise try ``<base>/dosassets/<name>``.
-    4. Fall back to ``<base>/<name>`` so users who organise their assets
-       at the project root (rather than under ``dosassets/``) still work.
+    2. When ``DOSFORGE_DOSASSETS_DIR`` is set (frozen bundle or user
+       override), try ``<bundled_dir>/<name>`` first.
+    3. ``<base>/dosassets/<name>`` (cwd-relative — bundle extract case).
+    4. The first existing well-known XDG / system path that contains
+       ``<root>/<name>``: ``$XDG_DATA_HOME/dosforge/dosassets/<name>``,
+       ``~/.dosforge/dosassets/<name>``,
+       ``/usr/local/share/dosforge/dosassets/<name>``,
+       ``/usr/share/dosforge/dosassets/<name>``.
+    5. ``<base>/<name>`` (legacy: users who organise assets at the
+       project root rather than under ``dosassets/``).
 
     Returns ``None`` if none of the candidates resolve to a directory.
     """
@@ -113,11 +166,14 @@ def resolve_dos_asset_dir(
     bundled = _bundle_dosassets_dir()
     if bundled is not None:
         candidates.append((bundled / raw).resolve())
-    candidates.extend([
-        (base_dir / DOS_ASSETS_SUBDIR / raw).resolve(),
-        (base_dir / raw).resolve(),
-    ])
+    candidates.append((base_dir / DOS_ASSETS_SUBDIR / raw).resolve())
+    candidates.extend((root / raw).resolve() for root in _wellknown_asset_roots())
+    candidates.append((base_dir / raw).resolve())
+    seen: set[Path] = set()
     for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
         if candidate.is_dir():
             return candidate
     return None
@@ -130,8 +186,16 @@ def describe_dos_asset_locations(name: str, *, base: Path | None = None) -> str:
     bundled = _bundle_dosassets_dir()
     if bundled is not None:
         locations.append(str((bundled / name).resolve()))
-    locations.extend([
-        str((base_dir / DOS_ASSETS_SUBDIR / name).resolve()),
-        str((base_dir / name).resolve()),
-    ])
-    return ", ".join(locations)
+    locations.append(str((base_dir / DOS_ASSETS_SUBDIR / name).resolve()))
+    locations.extend(str((root / name).resolve()) for root in _wellknown_asset_roots())
+    locations.append(str((base_dir / name).resolve()))
+    # Dedupe while preserving order so error messages don't repeat the
+    # same path when cwd happens to be a well-known root.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for loc in locations:
+        if loc in seen:
+            continue
+        seen.add(loc)
+        deduped.append(loc)
+    return ", ".join(deduped)

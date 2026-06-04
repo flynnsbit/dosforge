@@ -233,6 +233,14 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
         "list-bios-drive-types",
         help="Print the Phoenix and AMI classic AT BIOS HDD type tables and exit.",
     )
+    subcommands.add_parser(
+        "where-assets",
+        help=(
+            "Print the dosassets/ search path for this host (env var, cwd, "
+            "XDG data home, and system locations, in resolution order). "
+            "Useful when 'install media not found' errors are unexpected."
+        ),
+    )
 
     # ----------------------------------------------------------------
     # Image-content verbs (mtools-based, no mount required). These
@@ -348,6 +356,63 @@ def ensure_startup_sudo_auth(runner: CommandRunner | None = None) -> None:
         "NOPASSWD rules, then retry.\n"
         f"Details: {detail}"
     )
+
+
+def _where_assets_command() -> int:
+    """Print the dosassets/ search order for the current host.
+
+    Walks the same candidate list ``resolve_dos_asset_dir()`` uses for
+    each known boot mode and shows which paths exist. Helps Linux users
+    figure out where to drop install media for a pip install vs. a
+    bundle extract.
+    """
+    import os
+    from pathlib import Path
+
+    from .paths import (
+        DOS_ASSETS_SUBDIR,
+        _bundle_dosassets_dir,
+        _wellknown_asset_roots,
+    )
+
+    print("dosforge dosassets/ resolution order (highest priority first):")
+    print()
+
+    rows: list[tuple[str, Path | None, str]] = []
+
+    env_value = os.environ.get("DOSFORGE_DOSASSETS_DIR")
+    if env_value:
+        env_path = Path(env_value)
+        rows.append(("DOSFORGE_DOSASSETS_DIR (env)", env_path, "set"))
+    else:
+        rows.append(("DOSFORGE_DOSASSETS_DIR (env)", None, "unset"))
+
+    bundled = _bundle_dosassets_dir()
+    if bundled is not None:
+        rows.append(("bundled (frozen launcher)", bundled, "resolved"))
+
+    cwd_root = Path.cwd() / DOS_ASSETS_SUBDIR
+    rows.append(("cwd/dosassets", cwd_root, "cwd"))
+
+    for root in _wellknown_asset_roots():
+        rows.append(("well-known", root, "system / xdg"))
+
+    for label, path, kind in rows:
+        exists = path is not None and path.is_dir()
+        marker = "[FOUND]" if exists else "[ missing ]"
+        path_str = str(path) if path is not None else "(not set)"
+        print(f"  {marker}  {label:32s}  {path_str}")
+
+    print()
+    print("To set a fixed asset library for pip-installed dosforge:")
+    print("  export DOSFORGE_DOSASSETS_DIR=/path/to/your/dosassets")
+    print()
+    print("Or populate one of the well-known paths (the recommended")
+    print("user-scope location is the XDG one):")
+    xdg = next(iter(_wellknown_asset_roots()))
+    print(f"  mkdir -p {xdg}")
+    print()
+    return 0
 
 
 def _maximize_console_window() -> None:
@@ -710,6 +775,9 @@ def _run_manager_subcommand(args, parser) -> int:
                 "       --bios-drive-type auto:2     (alias for phoenix:2)"
             )
             return 0
+
+        if args.command == "where-assets":
+            return _where_assets_command()
 
         # --------------------------------------------------------------
         # Image-content verbs (cross-platform, no mount).

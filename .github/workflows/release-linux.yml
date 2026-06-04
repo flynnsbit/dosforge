@@ -110,30 +110,59 @@ jobs:
               dosforge tui            # interactive TUI
               dosforge gui            # desktop GUI (needs X11 / Wayland + Tk)
 
-          ## 4. DOS install media
+          ## 4. Where to put DOS install media
 
-          Drop your install diskettes into the matching
-          dosassets/<mode>/ folder. Each folder ships a readme.txt
-          explaining the expected filenames.
+          dosforge looks for install diskettes in (resolution order,
+          highest priority first):
 
-          For IBM PC-DOS 7.1 specifically (FAT32 + LBA), the official
-          IBM ServerGuide Scripting Toolkit is no longer hosted on
-          ibm.com but a verified mirror is preserved on the Internet
-          Archive:
+            1. \\\$DOSFORGE_DOSASSETS_DIR if you've exported one
+            2. \\\$PWD/dosassets/ — handy when you extract this bundle
+               and run dosforge from inside it
+            3. \\\$XDG_DATA_HOME/dosforge/dosassets/
+               (defaults to ~/.local/share/dosforge/dosassets/)
+            4. ~/.dosforge/dosassets/
+            5. /usr/local/share/dosforge/dosassets/
+            6. /usr/share/dosforge/dosassets/
+
+          Run \`dosforge where-assets\` any time to see which of these
+          paths currently exist.
+
+          **Recommended for pip-only installs** (you want to run
+          dosforge from any directory):
+
+              # Bootstrap the directory skeleton from this bundle
+              mkdir -p ~/.local/share/dosforge
+              cp -r dosassets ~/.local/share/dosforge/
+
+          Then drop your install media into the matching
+          \`~/.local/share/dosforge/dosassets/<mode>/\` folder. Each
+          folder ships a readme.txt explaining the expected filenames.
+
+          **Or if you want a fixed location elsewhere**:
+
+              # In ~/.bashrc or ~/.zshrc
+              export DOSFORGE_DOSASSETS_DIR=/path/to/your/dosassets
+
+          ## 5. IBM PC-DOS 7.1 specifically
+
+          PC-DOS 7.1 (FAT32 + LBA) was only ever distributed inside
+          the IBM ServerGuide Scripting Toolkit. ibm.com no longer
+          hosts it but the Internet Archive preserves a verified
+          mirror. Populate your dosassets/pcdos71/ from it with:
 
               python3 scripts/fetch-pcdos71-assets.py
 
-          downloads the IBM-distributed installer (SHA-1 verified)
-          and unpacks the required files into dosassets/pcdos71/
-          with per-file SHA-256 verification.
+          The script verifies the downloaded installer by SHA-1 and
+          each extracted file by SHA-256 against community-published
+          reference hashes.
 
           ## What's bootable on Linux
 
           Every DOS boot mode that works on Windows works on Linux
-          too, via qemu-nbd for the disk-prep phase and qemu-system
-          for the in-guest install phase. Per-DOS authentic MBR
-          (FDISK /MBR) and FAT16/FAT32 BPB geometry handling apply
-          on both platforms identically because they run inside the
+          too — qemu-nbd handles the disk-prep phase, qemu-system
+          handles the in-guest install. Per-DOS authentic MBR
+          (FDISK /MBR) and FAT16/FAT32 BPB geometry are applied
+          identically on both platforms because they run inside the
           DOS guest.
           EOF
           tar czf "${stage}.tar.gz" "$stage"

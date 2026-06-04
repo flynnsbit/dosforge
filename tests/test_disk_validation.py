@@ -1481,7 +1481,98 @@ def test_resolve_dos_asset_dir_returns_none_for_missing(tmp_path: Path, monkeypa
     from dosforge.paths import resolve_dos_asset_dir
 
     monkeypatch.chdir(tmp_path)
+    # Pin HOME + XDG_DATA_HOME away from tmp_path so the new well-known
+    # roots can't accidentally satisfy the lookup.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.delenv("DOSFORGE_DOSASSETS_DIR", raising=False)
     assert resolve_dos_asset_dir("missing-bootmode") is None
+
+
+def test_resolve_dos_asset_dir_falls_back_to_xdg_data_home(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """XDG_DATA_HOME/dosforge/dosassets/<mode> is found when cwd has nothing."""
+    from dosforge.paths import resolve_dos_asset_dir
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DOSFORGE_DOSASSETS_DIR", raising=False)
+
+    xdg = tmp_path / "xdg-data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    xdg_assets = xdg / "dosforge" / "dosassets" / "msdos622"
+    xdg_assets.mkdir(parents=True)
+
+    resolved = resolve_dos_asset_dir("msdos622")
+    assert resolved == xdg_assets.resolve()
+
+
+def test_resolve_dos_asset_dir_falls_back_to_xdg_default_home(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """~/.local/share/dosforge/dosassets/<mode> is found when XDG_DATA_HOME unset."""
+    from dosforge.paths import resolve_dos_asset_dir
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DOSFORGE_DOSASSETS_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+
+    fake_home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(fake_home))
+    # Path.home() on Windows uses USERPROFILE; pin that too so the test
+    # is platform-agnostic.
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+
+    assets = fake_home / ".local" / "share" / "dosforge" / "dosassets" / "pcdos71"
+    assets.mkdir(parents=True)
+
+    resolved = resolve_dos_asset_dir("pcdos71")
+    assert resolved == assets.resolve()
+
+
+def test_resolve_dos_asset_dir_cwd_dosassets_beats_xdg(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """cwd/dosassets/<mode> wins over XDG fallback when both exist."""
+    from dosforge.paths import resolve_dos_asset_dir
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DOSFORGE_DOSASSETS_DIR", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    cwd_assets = tmp_path / "dosassets" / "msdos622"
+    cwd_assets.mkdir(parents=True)
+    xdg_assets = tmp_path / "xdg" / "dosforge" / "dosassets" / "msdos622"
+    xdg_assets.mkdir(parents=True)
+
+    resolved = resolve_dos_asset_dir("msdos622")
+    assert resolved == cwd_assets.resolve()
+
+
+def test_resolve_dos_asset_dir_env_var_beats_xdg(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """DOSFORGE_DOSASSETS_DIR takes precedence over every other location."""
+    from dosforge.paths import resolve_dos_asset_dir
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    env_root = tmp_path / "user-elsewhere"
+    env_assets = env_root / "msdos622"
+    env_assets.mkdir(parents=True)
+    monkeypatch.setenv("DOSFORGE_DOSASSETS_DIR", str(env_root))
+
+    # cwd dosassets also exists, but the env var should win.
+    cwd_assets = tmp_path / "dosassets" / "msdos622"
+    cwd_assets.mkdir(parents=True)
+
+    resolved = resolve_dos_asset_dir("msdos622")
+    assert resolved == env_assets.resolve()
 
 
 def test_legacy_dos_assets_dir_resolves_bare_name_under_dosassets(
