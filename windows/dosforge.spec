@@ -1,11 +1,22 @@
-# PyInstaller spec for the dosforge Windows portable bundle.
+# PyInstaller spec for the dosforge Windows portable bundle (full).
 #
-# Builds a onedir bundle under ``dist/dosforge/`` that ships:
-#   - ``dosforge.exe`` — the launcher (entry: ``dosforge.cli:main``)
-#   - ``_internal/`` — Python runtime + dependencies (textual, etc.)
-#   - ``vendor/windows/bin/`` — bundled QEMU + mtools binaries
-#   - ``dosassets/`` — FreeDOS userspace + per-mode readme stubs
-#   - ``assets/icons/`` — application icons
+# Builds a onedir bundle under ``dist/dosforge/`` containing TWO launchers
+# that share one ``_internal/`` Python runtime:
+#
+#   - ``dosforge.exe``      — CLI-only launcher (no TUI, no GUI imports).
+#                             Run with no arguments to see help + examples.
+#   - ``dosforge-gui.exe``  — windowed (``console=False``) GUI launcher
+#                             (tkinter + sv_ttk; no TUI fallback).
+#
+# Both EXEs run the same entry script (windows/dosforge_entry.py) which
+# dispatches based on the EXE's filename. ONE Analysis covers both
+# entry points, so dependencies aren't duplicated (the dual-Analysis
+# approach attempted in v0.5.0-gui-pre3 bloated the bundle to 480 MB
+# because PE-import scanning runs per-Analysis).
+#
+# Bundles vendor binaries (QEMU, mtools), the full DOS install media in
+# dosassets/, and icons. Excludes the textual/rich/pygments TUI stack —
+# neither launcher needs it.
 #
 # Build from the repo root inside the project venv:
 #
@@ -45,46 +56,27 @@ if icons.is_dir():
         if entry.is_file():
             datas.append((str(entry), "assets/icons"))
 
-# Collect entire package trees (source, submodules, AND data files).
-# textual ships ``.tcss`` stylesheets; rich ships theme data; py7zr ships
-# headers; etc.  Plain ``hiddenimports`` only grabs the top-level
-# module's ``__init__.py``, which is why earlier builds shipped only the
-# ``dist-info`` directories and broke at first import.
+# Collect entire package trees (source, submodules, AND data files) for
+# the runtime deps that need them:
+#   - py7zr (and its compression backends): used to extract DOS install
+#     media archives shipped in dosassets/.
+#   - sv_ttk: Sun Valley ttk theme used by the GUI launcher.
 hiddenimports = []
-for _pkg in (
-    "textual",
-    "rich",
-    "markdown_it",
-    "mdit_py_plugins",
-    "linkify_it",
-    "uc_micro_py",
-    "py7zr",
-    "Cryptodome",
-    "pyppmd",
-    "pyzstd",
-    "pybcj",
-    "inflate64",
-    "brotli",
-    "multivolumefile",
-    "texttable",
-    "psutil",
-    "sv_ttk",
-):
+for _pkg in ("py7zr", "Cryptodome", "pyppmd", "pyzstd", "pybcj", "inflate64",
+             "brotli", "multivolumefile", "texttable", "sv_ttk"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(_pkg)
     datas.extend(pkg_datas)
     binaries.extend(pkg_binaries)
     hiddenimports.extend(pkg_hidden)
 
-# Pygments lexer used by Textual's syntax highlighting.
-hiddenimports.append("pygments.lexers.python")
-
-# tkinter for the native Win32 file picker (`...` browse buttons in
-# the TUI). Imported lazily inside _run_tkinter_picker so PyInstaller
-# static analysis misses it without an explicit hidden-import.
+# tkinter is imported lazily by the GUI launcher (and by the legacy
+# native file picker); make PyInstaller bundle it explicitly.
 hiddenimports.extend([
     "tkinter",
     "tkinter.filedialog",
     "tkinter.ttk",
+    "tkinter.messagebox",
+    "tkinter.font",
 ])
 
 block_cipher = None
@@ -98,16 +90,30 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pytest", "pyinstaller", "zstandard"],
+    # No launcher needs the TUI: ``dosforge.exe`` is CLI-only and
+    # ``dosforge-gui.exe`` has no TUI fallback. Drop the whole textual
+    # stack so we don't ship ~15-20 MB of unused Python source.
+    excludes=[
+        "pytest",
+        "pyinstaller",
+        "zstandard",
+        "textual",
+        "rich",
+        "markdown_it",
+        "mdit_py_plugins",
+        "linkify_it",
+        "uc_micro_py",
+        "pygments",
+        "psutil",
+    ],
     cipher=block_cipher,
     noarchive=False,
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-icon_path = icons / "dosforge.ico" if (icons / "dosforge.ico").is_file() else None
-
-exe = EXE(
+# Console CLI launcher.
+exe_cli = EXE(
     pyz,
     a.scripts,
     [],
@@ -119,11 +125,10 @@ exe = EXE(
     upx=False,
     console=True,
     disable_windowed_traceback=False,
-    icon=str(icon_path) if icon_path else None,
+    icon=None,
 )
 
-# Windowed GUI launcher: same code/Analysis, but no console window so the
-# default Windows experience (the GUI) doesn't flash a console behind it.
+# Windowed GUI launcher (no console flash).
 exe_gui = EXE(
     pyz,
     a.scripts,
@@ -136,11 +141,11 @@ exe_gui = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
-    icon=str(icon_path) if icon_path else None,
+    icon=None,
 )
 
 coll = COLLECT(
-    exe,
+    exe_cli,
     exe_gui,
     a.binaries,
     a.zipfiles,

@@ -33,14 +33,50 @@ from .models import (
 from .size import parse_size
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="dosforge")
+_CLI_HELP_EPILOG = """\
+examples:
+  Build a bootable 512 MB MS-DOS 6.22 VHD (FAT16, 86Box/QEMU/generic target):
+    dosforge create --media-type vhd --path C:\\images\\dos622.vhd ^
+        --size 512M --format fat16 --boot-mode msdos622 --label DOS622
+
+  Build a bootable 32 MB IBM PC 8088 (DOS 3.3) VHD with custom payload:
+    dosforge create --media-type vhd --path C:\\images\\ibm88.vhd ^
+        --size 32M --format fat16 --boot-mode ibm8088 ^
+        --ibm-dos-version dos33 --custom-payload-path C:\\extras\\dos
+
+  Build a bootable 1.44 MB MS-DOS 3.3 floppy:
+    dosforge create --media-type img --path C:\\images\\boot33.img ^
+        --floppy-type 1440k --img-system-format --boot-mode msdos33 ^
+        --label BOOT33
+
+  Build a 720K data floppy (no boot, no DOS files):
+    dosforge create --media-type img --path C:\\images\\data.img ^
+        --floppy-type 720k --label DATA
+
+  Build a 1 GB FAT32 MS-DOS 7.1 (Win95 OSR2) VHD:
+    dosforge create --media-type vhd --path C:\\images\\dos71.vhd ^
+        --size 1G --format fat32 --boot-mode msdos71
+
+  Check dependencies before creating an image:
+    dosforge check-deps --media-type vhd --boot-mode msdos622
+
+Run any subcommand with --help for its full option list.
+"""
+
+
+def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="dosforge",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_CLI_HELP_EPILOG,
+    )
     subcommands = parser.add_subparsers(dest="command")
 
-    subcommands.add_parser("tui", help="Launch the interactive TUI.")
-    subcommands.add_parser(
-        "gui", help="Launch the desktop GUI (default on Windows)."
-    )
+    if include_tui_gui:
+        subcommands.add_parser("tui", help="Launch the interactive TUI.")
+        subcommands.add_parser(
+            "gui", help="Launch the desktop GUI (default on Windows)."
+        )
 
     check_deps = subcommands.add_parser("check-deps", help="Check external command dependencies.")
     check_deps.add_argument(
@@ -386,6 +422,13 @@ def _launch_gui(*, allow_tui_fallback: bool) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Full CLI entry point used by ``pip install dosforge``.
+
+    Includes ``tui`` and ``gui`` subcommands and the default-to-GUI-on-Windows
+    behaviour. Bundled Windows ``dosforge.exe`` / ``dosforge-gui.exe`` use the
+    slimmer :func:`cli_only_main` / :func:`gui_only_main` instead so they can
+    drop the TUI dependencies entirely.
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -402,14 +445,65 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "gui":
             return _launch_gui(allow_tui_fallback=False)
 
-        if args.command == "check-deps":
-            assert_dependencies(
-                media_type=MediaType(args.media_type),
-                boot_mode=BootMode(args.boot_mode),
-                freedos_source=FreeDOSSource(args.freedos_source),
-            )
-            print("All required dependencies are available.")
+        return _dispatch_cli_subcommand(args, parser)
+    except (DependencyError, ValidationError, DosForgeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+def cli_only_main(argv: Sequence[str] | None = None) -> int:
+    """CLI-only entry point used by the bundled ``dosforge.exe``.
+
+    No ``tui`` / ``gui`` subcommands, no GUI/TUI imports — running this
+    function does not pull in tkinter, sv_ttk, or textual. When invoked
+    without arguments, prints the full help including example commands.
+    """
+    parser = build_parser(include_tui_gui=False)
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv:
+        parser.print_help()
+        return 0
+    args = parser.parse_args(argv)
+
+    try:
+        if args.command is None:
+            parser.print_help()
             return 0
+        return _dispatch_cli_subcommand(args, parser)
+    except (DependencyError, ValidationError, DosForgeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+def gui_only_main(argv: Sequence[str] | None = None) -> int:
+    """GUI-only entry point used by the bundled ``dosforge-gui.exe``.
+
+    Launches the GUI directly with no TUI fallback and no subcommand
+    parsing. Any extra argv is ignored.
+    """
+    return _launch_gui(allow_tui_fallback=False)
+
+
+def _dispatch_cli_subcommand(args, parser) -> int:
+    """Run the chosen CLI subcommand. Extracted so the CLI-only and full
+    ``main()`` entry points can share the dispatch table without duplicating
+    the giant ``create`` argument-marshalling block.
+    """
+    if args.command == "check-deps":
+        assert_dependencies(
+            media_type=MediaType(args.media_type),
+            boot_mode=BootMode(args.boot_mode),
+            freedos_source=FreeDOSSource(args.freedos_source),
+        )
+        print("All required dependencies are available.")
+        return 0
+
+    return _run_manager_subcommand(args, parser)
+
+
+def _run_manager_subcommand(args, parser) -> int:
+    try:
 
         manager = DiskManager()
 

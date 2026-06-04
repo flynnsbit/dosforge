@@ -1,26 +1,18 @@
-# PyInstaller spec for the dosforge Windows *lite* portable bundle.
+# PyInstaller spec for the dosforge Windows portable bundle (lite).
 #
-# Produces a structured onedir bundle under ``dist/dosforge/`` that ships:
-#   - ``dosforge.exe``        — the launcher
-#   - ``_internal/``          — Python runtime + vendor binaries (QEMU, mtools)
-#   - ``dosassets/``          — per-mode readme stubs ONLY (no DOS binaries)
+# Same two-launcher layout as ``dosforge.spec``: ``dosforge.exe`` is the
+# console CLI launcher (no TUI, no GUI imports), ``dosforge-gui.exe`` is
+# the windowed GUI launcher. Both share one ``_internal/`` because they
+# dispatch from the same entry script based on EXE filename.
 #
-# The ``dosassets/`` directory is moved out of ``_internal/`` during the
-# build so users can see and manage their own DOS install media alongside
-# the launcher without digging into the internal Python runtime folder.
+# Lite ships only the per-mode ``readme.txt`` stubs in ``dosassets/``;
+# users drop their own DOS install media in there. ``dosassets/`` is
+# moved out of ``_internal/`` at the end of the build so the user can
+# manage it alongside the EXEs.
 #
-# DOS binary payloads (pcdos7, msdos622, compaq331, etc.) are NOT bundled.
-# Users drop their own install media into ``dosassets/<mode>/`` and
-# dosforge will find it via ``DOSFORGE_DOSASSETS_DIR`` (set at startup by
-# the launcher).  FreeDOS auto-download still works out-of-the-box.
-#
-# Build from the repo root inside the project venv:
+# Build:
 #
 #   .\.venv\Scripts\python -m PyInstaller windows\dosforge-lite.spec --noconfirm
-#
-# Or use the helper script:
-#
-#   .\scripts\build-lite-bundle.ps1
 
 from pathlib import Path
 
@@ -56,46 +48,20 @@ if icons.is_dir():
         if entry.is_file():
             datas.append((str(entry), "assets/icons"))
 
-# Collect entire package trees (source, submodules, AND data files).
-# textual ships ``.tcss`` stylesheets; rich ships theme data; py7zr ships
-# headers; etc.  Plain ``hiddenimports`` only grabs the top-level
-# module's ``__init__.py``, which is why earlier builds shipped only the
-# ``dist-info`` directories and broke at first import.
 hiddenimports = []
-for _pkg in (
-    "textual",
-    "rich",
-    "markdown_it",
-    "mdit_py_plugins",
-    "linkify_it",
-    "uc_micro_py",
-    "py7zr",
-    "Cryptodome",
-    "pyppmd",
-    "pyzstd",
-    "pybcj",
-    "inflate64",
-    "brotli",
-    "multivolumefile",
-    "texttable",
-    "psutil",
-    "sv_ttk",
-):
+for _pkg in ("py7zr", "Cryptodome", "pyppmd", "pyzstd", "pybcj", "inflate64",
+             "brotli", "multivolumefile", "texttable", "sv_ttk"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(_pkg)
     datas.extend(pkg_datas)
     binaries.extend(pkg_binaries)
     hiddenimports.extend(pkg_hidden)
 
-# Pygments lexer used by Textual's syntax highlighting.
-hiddenimports.append("pygments.lexers.python")
-
-# tkinter for the native Win32 file picker (`...` browse buttons in
-# the TUI). Imported lazily inside _run_tkinter_picker so PyInstaller
-# static analysis misses it without an explicit hidden-import.
 hiddenimports.extend([
     "tkinter",
     "tkinter.filedialog",
     "tkinter.ttk",
+    "tkinter.messagebox",
+    "tkinter.font",
 ])
 
 block_cipher = None
@@ -109,16 +75,26 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pytest", "pyinstaller", "zstandard"],
+    excludes=[
+        "pytest",
+        "pyinstaller",
+        "zstandard",
+        "textual",
+        "rich",
+        "markdown_it",
+        "mdit_py_plugins",
+        "linkify_it",
+        "uc_micro_py",
+        "pygments",
+        "psutil",
+    ],
     cipher=block_cipher,
     noarchive=False,
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-icon_path = icons / "dosforge.ico" if (icons / "dosforge.ico").is_file() else None
-
-exe = EXE(
+exe_cli = EXE(
     pyz,
     a.scripts,
     [],
@@ -130,11 +106,9 @@ exe = EXE(
     upx=False,
     console=True,
     disable_windowed_traceback=False,
-    icon=str(icon_path) if icon_path else None,
+    icon=None,
 )
 
-# Windowed GUI launcher: same code/Analysis, but no console window so the
-# default Windows experience (the GUI) doesn't flash a console behind it.
 exe_gui = EXE(
     pyz,
     a.scripts,
@@ -147,11 +121,11 @@ exe_gui = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
-    icon=str(icon_path) if icon_path else None,
+    icon=None,
 )
 
 coll = COLLECT(
-    exe,
+    exe_cli,
     exe_gui,
     a.binaries,
     a.zipfiles,
@@ -161,14 +135,8 @@ coll = COLLECT(
     name="dosforge",
 )
 
-# Post-build: move dosassets/ out of _internal/ so it sits alongside
-# dosforge.exe.  Users can then manage their DOS install media by
-# browsing to the dosassets/ folder without digging into the Python
-# runtime internals.
-#
-# This runs AFTER COLLECT has fully assembled the onedir bundle, so it
-# is safe to move directories at this point — PyInstaller will not
-# re-process the moved files.
+# Post-build: move dosassets/ out of _internal/ so users can manage
+# their DOS install media alongside the EXEs.
 import shutil as _shutil
 
 _bundle_root = Path(DISTPATH) / "dosforge"

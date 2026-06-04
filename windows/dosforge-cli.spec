@@ -133,6 +133,7 @@ a = Analysis(
     # import accidentally references them.
     excludes=[
         "tkinter",
+        "sv_ttk",
         "pytest",
         "pyinstaller",
         "zstandard",
