@@ -2485,6 +2485,74 @@ class DiskManager:
         "HIMEM.SYS",
     )
 
+    def _stage_msdos71_osr2_boot_essentials(
+        self,
+        *,
+        request: CreateRequest,
+        partition_image: str,
+    ) -> bool:
+        """Stage OSR2 boot-time essentials at C:\\ root regardless of profile.
+
+        OSR2's IO.SYS implicitly loads ``HIMEM.SYS`` from C:\\ during
+        the ``Starting Windows 95...`` boot phase (per the ``WinDir=C:\\``
+        line we write to MSDOS.SYS).  If it's not present at the root,
+        the boot prints "The following file is missing or corrupted:
+        C:\\HIMEM.SYS" before reaching the DOS prompt.
+
+        This is a **boot requirement**, not a "tool" — it must happen
+        for every install profile (MINIMAL too), independent of whether
+        the user opted into the C:\\DOS\\ utilities payload.
+
+        Returns ``True`` if HIMEM.SYS was successfully copied to C:\\,
+        ``False`` if the OSR2 install media cannot be located (in which
+        case the boot warning will appear but the disk still boots).
+        """
+        descriptor = _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.MSDOS71]
+        boot_assets_dir = self._resolve_legacy_dos_assets_dir(
+            request=request,
+            fallback_dirs=descriptor.asset_fallback_dirs,
+            label=descriptor.label,
+        )
+        install_image = self._find_legacy_dos_install_image(
+            directory=boot_assets_dir,
+            preferred_names=descriptor.preferred_image_names,
+            system_file_marker=descriptor.system_file_marker,
+        )
+        if install_image is None:
+            return False
+        staging_dir = Path(tempfile.mkdtemp(prefix="dosforge-msdos71-boot-"))
+        try:
+            himem_scratch = staging_dir / "HIMEM.SYS"
+            self.runner.run(
+                [
+                    "mcopy",
+                    "-i",
+                    str(install_image),
+                    "-n",
+                    "::/HIMEM.SYS",
+                    "HIMEM.SYS",
+                ],
+                cwd=staging_dir,
+                check=False,
+            )
+            if not himem_scratch.is_file() or himem_scratch.stat().st_size == 0:
+                return False
+            self.runner.run(
+                [
+                    "mcopy",
+                    "-i",
+                    partition_image,
+                    "-n",
+                    str(himem_scratch),
+                    "::/HIMEM.SYS",
+                ],
+                cwd=staging_dir,
+                check=False,
+            )
+            return True
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
     def _stage_msdos71_osr2_dos_payload(
         self,
         *,
@@ -2576,34 +2644,6 @@ class DiskManager:
                 payload_dir=staging_dir,
                 payload_target_dir="DOS",
             )
-
-            # OSR2 IO.SYS implicitly loads HIMEM.SYS from C:\ (per the
-            # ``WinDir=C:\`` line we write to MSDOS.SYS).  If it's not
-            # present at the root the boot prints "The following file is
-            # missing or corrupted: C:\HIMEM.SYS" before reaching the
-            # DOS prompt.  Stage the authentic Boot.img copy at C:\ in
-            # addition to C:\DOS\ to suppress that warning.
-            # (IFSHLP.SYS + DBLBUFF.SYS are likewise required at C:\
-            # for the same reason; they're staged by the QEMU SYS
-            # install flow itself -- see ``msdos71_profile`` and the
-            # ``sys_w95`` AUTOEXEC.BAT branch in ``legacy_dos_install`` --
-            # because they only exist inside Quantum-compressed
-            # WIN95_*.CAB cabinets that the host vendor bundle cannot
-            # decompress but OSR2's own EXTRACT.EXE handles natively.)
-            himem_staged = staging_dir / "HIMEM.SYS"
-            if himem_staged.is_file():
-                self.runner.run(
-                    [
-                        "mcopy",
-                        "-i",
-                        partition_image,
-                        "-n",
-                        himem_staged.name,
-                        "::/HIMEM.SYS",
-                    ],
-                    cwd=staging_dir,
-                    check=False,
-                )
             return True
         finally:
             shutil.rmtree(staging_dir, ignore_errors=True)
@@ -2762,9 +2802,12 @@ class DiskManager:
 
         Skip everything when the resolved profile is MINIMAL; FORMAT C:
         /S has already produced a bootable disk in that case.
+
+        Exception: MS-DOS 7.10 (Win95 OSR2) always stages C:\\HIMEM.SYS
+        and a minimal CONFIG.SYS + AUTOEXEC.BAT, even for MINIMAL,
+        because OSR2's IO.SYS implicitly loads C:\\HIMEM.SYS during
+        ``Starting Windows 95...`` and missing it prints a boot warning.
         """
-        if request.msdos_install_profile is not MSDOSInstallProfile.FULL:
-            return
         # MS-DOS 7.10 via the Win95 OSR2 install path has no Chinese-
         # release crossover allowed (DOS71_1S.PAK is from a different
         # 7.1 lineage and would violate the per-DOS authenticity rule).
@@ -2777,15 +2820,31 @@ class DiskManager:
         # ran from.
         if request.boot_mode is BootMode.MSDOS71:
             partition_image = f"{vhd_path}@@{partition_offset_bytes}"
-            staged = self._stage_msdos71_osr2_dos_payload(
+            # ALWAYS stage HIMEM.SYS at C:\ — required by OSR2 IO.SYS
+            # regardless of install profile.  IFSHLP.SYS + DBLBUFF.SYS
+            # are staged unconditionally as well, by the QEMU SYS
+            # install flow itself (vhd_pre_install_copies in
+            # ``msdos71_profile``), because they live inside Quantum-
+            # compressed cabinets only host-side 7-Zip can decompress.
+            essentials_staged = self._stage_msdos71_osr2_boot_essentials(
                 request=request,
                 partition_image=partition_image,
             )
-            if staged:
+            install_dir = ""
+            if request.msdos_install_profile is MSDOSInstallProfile.FULL:
+                tools_staged = self._stage_msdos71_osr2_dos_payload(
+                    request=request,
+                    partition_image=partition_image,
+                )
+                if tools_staged:
+                    install_dir = "DOS"
+            if essentials_staged:
                 self._write_sane_msdos_startup_files(
                     partition_image=partition_image,
-                    install_dir="DOS",
+                    install_dir=install_dir,
                 )
+            return
+        if request.msdos_install_profile is not MSDOSInstallProfile.FULL:
             return
         assets = self.boot_resolver.resolve(request)
         partition_image = f"{vhd_path}@@{partition_offset_bytes}"
@@ -2876,10 +2935,14 @@ class DiskManager:
             b"FILES=30\r\n"
             b"BUFFERS=20\r\n"
         )
+        if install_dir:
+            path_line = b"PATH C:\\;C:\\" + install_dir.encode("ascii") + b"\r\n"
+        else:
+            path_line = b"PATH C:\\\r\n"
         autoexec_bat = (
             b"@ECHO OFF\r\n"
-            b"PATH C:\\;C:\\" + install_dir.encode("ascii") + b"\r\n"
-            b"PROMPT $P$G\r\n"
+            + path_line
+            + b"PROMPT $P$G\r\n"
         )
         scratch_root = Path(os.environ.get("TEMP", os.environ.get("TMPDIR", ".")))
         scratch_root.mkdir(parents=True, exist_ok=True)
