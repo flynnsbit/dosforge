@@ -17,7 +17,7 @@ class BrowseView(ttk.Frame):
         self._build()
 
     def _build(self) -> None:
-        card = Card(self, title="Browse for a disk image")
+        card = Card(self, self.app.theme, title="Browse for a disk image")
         card.pack(fill="both", expand=True, padx=2, pady=2)
         body = card.body
 

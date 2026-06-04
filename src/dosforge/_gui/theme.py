@@ -73,7 +73,7 @@ _LIGHT = Palette(
     mode="light",
     window_bg="#f3f3f3",
     surface="#ffffff",
-    surface_alt="#fbfbfb",
+    surface_alt="#f5f5f5",
     border="#e3e3e3",
     text="#1a1a1a",
     text_muted="#5d5d5d",
@@ -86,7 +86,7 @@ _LIGHT = Palette(
 
 _DARK = Palette(
     mode="dark",
-    window_bg="#202020",
+    window_bg="#1c1c1c",
     surface="#2b2b2b",
     surface_alt="#272727",
     border="#3a3a3a",
@@ -214,25 +214,26 @@ class ThemeManager:
 
         self.root.configure(background=pal.window_bg)
 
-        # Base label fonts/colors.
-        style.configure("TLabel", font=self.font_body)
-        style.configure("Title.TLabel", font=self.font_title, foreground=pal.text)
-        style.configure(
-            "Subtitle.TLabel", font=self.font_small, foreground=pal.text_muted
-        )
-        style.configure("Heading.TLabel", font=self.font_heading, foreground=pal.text)
+        # Header text styles. These use the default TLabel inheritance so
+        # they pick up sv_ttk's correct background; we only override font
+        # and (optionally) foreground.
+        style.configure("Title.TLabel", font=self.font_title)
+        style.configure("Subtitle.TLabel", font=self.font_small, foreground=pal.text_muted)
+        style.configure("Heading.TLabel", font=self.font_heading)
+        style.configure("FieldLabel.TLabel", font=self.font_small, foreground=pal.text_muted)
         style.configure("Muted.TLabel", font=self.font_small, foreground=pal.text_muted)
-        style.configure(
-            "FieldLabel.TLabel", font=self.font_small, foreground=pal.text_muted
-        )
 
-        # Surfaces: header bar, nav rail, content background.
-        style.configure("Window.TFrame", background=pal.window_bg)
-        style.configure("Header.TFrame", background=pal.window_bg)
-        style.configure("Nav.TFrame", background=pal.nav_bg)
-        style.configure("Content.TFrame", background=pal.window_bg)
+        # Combobox dropdown popup colors (the popup is a plain Tk Listbox,
+        # not themed by sv_ttk).
+        self.root.option_add("*TCombobox*Listbox.background", pal.surface)
+        self.root.option_add("*TCombobox*Listbox.foreground", pal.text)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", pal.accent)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", pal.accent_text)
+        self.root.option_add("*TCombobox*Listbox.borderWidth", 0)
+        self.root.option_add("*TCombobox*Listbox.font", self.font_body)
 
-        # Nav items: flat full-width buttons; active uses accent text.
+        # Nav rail buttons live on a tk.Frame surface (NavRail), so we
+        # configure them explicitly.
         style.configure(
             "Nav.TButton",
             font=self.font_nav,
@@ -264,7 +265,7 @@ class ThemeManager:
             foreground=[("active", pal.accent)],
         )
 
-        # Status strip.
+        # Status strip lives on the window bg, not on a card surface.
         style.configure(
             "Status.TLabel",
             font=self.font_small,

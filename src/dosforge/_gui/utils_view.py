@@ -16,12 +16,12 @@ class UtilsView(ttk.Frame):
         self._build()
 
     def _build(self) -> None:
-        card = Card(self, title="Utilities")
+        card = Card(self, self.app.theme, title="Utilities")
         card.pack(fill="both", expand=True, padx=2, pady=2)
         body = card.body
         body.columnconfigure(0, weight=1)
 
-        btn_row = ttk.Frame(body, style="Card.TFrame")
+        btn_row = ttk.Frame(body)
         btn_row.grid(row=0, column=0, sticky="ew")
         if self.app.capabilities.supports_privilege_diagnostics:
             ttk.Button(

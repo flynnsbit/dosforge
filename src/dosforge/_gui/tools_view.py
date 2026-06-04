@@ -19,7 +19,7 @@ class ToolsView(ttk.Frame):
         self.refresh_target()
 
     def _build(self) -> None:
-        card = Card(self, title="Image tools (mtools)")
+        card = Card(self, self.app.theme, title="Image tools (mtools)")
         card.pack(fill="both", expand=True, padx=2, pady=2)
         body = card.body
         body.columnconfigure(0, weight=1)
@@ -29,7 +29,7 @@ class ToolsView(ttk.Frame):
         )
         self._target_lbl.grid(row=0, column=0, sticky="w", pady=(0, 10))
 
-        btn_row = ttk.Frame(body, style="Card.TFrame")
+        btn_row = ttk.Frame(body)
         btn_row.grid(row=1, column=0, sticky="ew")
         ttk.Button(
             btn_row, text="List contents", command=self._ls, takefocus=False
@@ -38,7 +38,7 @@ class ToolsView(ttk.Frame):
             btn_row, text="Open in file manager", command=self._open, takefocus=False
         ).pack(side="left", padx=(8, 0))
 
-        extract_row = ttk.Frame(body, style="Card.TFrame")
+        extract_row = ttk.Frame(body)
         extract_row.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         extract_row.columnconfigure(0, weight=1)
         ttk.Entry(extract_row, textvariable=self.var_extract).grid(

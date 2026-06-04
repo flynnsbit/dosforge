@@ -1,7 +1,15 @@
 """Reusable Fluent-style widgets for the dosforge GUI.
 
-All widgets are thin wrappers over ttk so the Sun Valley theme styles them
-automatically; custom styles come from :mod:`dosforge._gui.theme`.
+Cards are deliberately built from plain :class:`tkinter.Frame` (not ttk),
+because sv_ttk's ``Card.TFrame`` uses a custom ``Card.field`` element with
+its own panel border — nesting two ``Card.TFrame`` widgets renders two
+borders, which is what caused the visible "boxes inside boxes" in v0.5.0-
+gui-pre1. Plain frames let us paint a single, predictable surface color
+and one outer border per section.
+
+ttk widgets hosted on these surfaces (labels, checkbuttons) use the
+``DfCard*`` styles configured in :mod:`theme` so their backgrounds match
+the surface — ttk does NOT inherit ``bg`` from its tk parent.
 """
 
 from __future__ import annotations
@@ -11,13 +19,13 @@ from collections.abc import Callable
 from tkinter import ttk
 
 
-class ScrollableFrame(ttk.Frame):
+class ScrollableFrame(tk.Frame):
     """A vertically scrollable container. Add content to ``self.body``."""
 
     def __init__(self, parent, theme, **kwargs) -> None:
-        super().__init__(parent, style="Content.TFrame", **kwargs)
-        self._theme = theme
         pal = theme.palette
+        super().__init__(parent, bg=pal.window_bg, **kwargs)
+        self._theme = theme
         self._canvas = tk.Canvas(
             self,
             highlightthickness=0,
@@ -31,19 +39,20 @@ class ScrollableFrame(ttk.Frame):
         self._scroll.pack(side="right", fill="y")
         self._canvas.pack(side="left", fill="both", expand=True)
 
-        self.body = ttk.Frame(self._canvas, style="Content.TFrame")
+        self.body = ttk.Frame(self._canvas)
         self._window = self._canvas.create_window(
             (0, 0), window=self.body, anchor="nw"
         )
 
         self.body.bind("<Configure>", self._on_body_configure)
         self._canvas.bind("<Configure>", self._on_canvas_configure)
-        # Scope the mouse wheel to this canvas while hovered.
         self._canvas.bind("<Enter>", self._bind_wheel)
         self._canvas.bind("<Leave>", self._unbind_wheel)
 
     def refresh_theme(self) -> None:
-        self._canvas.configure(background=self._theme.palette.window_bg)
+        pal = self._theme.palette
+        self.configure(bg=pal.window_bg)
+        self._canvas.configure(background=pal.window_bg)
 
     def _on_body_configure(self, _event) -> None:
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
@@ -62,30 +71,44 @@ class ScrollableFrame(ttk.Frame):
 
 
 class Card(ttk.Frame):
-    """A Fluent 'card' panel with an optional heading. Add to ``self.body``."""
+    """A Fluent card panel using sv_ttk's ``Card.TFrame`` style.
 
-    def __init__(self, parent, title: str | None = None, **kwargs) -> None:
-        super().__init__(parent, style="Card.TFrame", padding=18, **kwargs)
+    The body is a plain ttk.Frame (no Card style), so widgets nested
+    inside don't get a second panel border. Add content to ``self.body``.
+    """
+
+    def __init__(self, parent, theme, title: str | None = None, **kwargs) -> None:
+        super().__init__(parent, style="Card.TFrame", padding=16, **kwargs)
+        self._theme = theme
+        self._title_label: ttk.Label | None = None
         if title:
-            ttk.Label(self, text=title, style="Heading.TLabel").pack(
-                anchor="w", pady=(0, 12)
+            self._title_label = ttk.Label(
+                self, text=title, style="Heading.TLabel"
             )
-        self.body = ttk.Frame(self, style="Card.TFrame")
+            self._title_label.pack(anchor="w", pady=(0, 8))
+        self.body = ttk.Frame(self)
         self.body.pack(fill="both", expand=True)
 
+    def refresh_theme(self) -> None:
+        # sv_ttk handles bg via its sprite; nothing to refresh here.
+        pass
 
-class StatusBar(ttk.Frame):
+
+class StatusBar(tk.Frame):
     """Bottom status strip with a message + indeterminate busy bar."""
 
     def __init__(self, parent, theme) -> None:
-        super().__init__(parent, style="Window.TFrame", padding=(16, 6))
+        pal = theme.palette
+        super().__init__(parent, bg=pal.window_bg)
         self._theme = theme
-        self._label = ttk.Label(self, text="Ready.", style="Status.TLabel")
+        inner = tk.Frame(self, bg=pal.window_bg)
+        inner.pack(fill="x", padx=16, pady=6)
+        self._inner = inner
+        self._label = ttk.Label(inner, text="Ready.", style="Status.TLabel")
         self._label.pack(side="left", fill="x", expand=True)
-        self._progress = ttk.Progressbar(self, mode="indeterminate", length=160)
+        self._progress = ttk.Progressbar(inner, mode="indeterminate", length=160)
 
     def set_status(self, message: str, *, error: bool = False) -> None:
-        # Status text is single-line; collapse newlines for the strip.
         text = " ".join(message.splitlines()) if message else ""
         self._label.configure(
             text=text or "Ready.",
@@ -100,8 +123,13 @@ class StatusBar(ttk.Frame):
             self._progress.stop()
             self._progress.pack_forget()
 
+    def refresh_theme(self) -> None:
+        pal = self._theme.palette
+        self.configure(bg=pal.window_bg)
+        self._inner.configure(bg=pal.window_bg)
 
-class NavRail(ttk.Frame):
+
+class NavRail(tk.Frame):
     """Vertical Fluent NavigationView: one flat button per view."""
 
     def __init__(
@@ -111,13 +139,18 @@ class NavRail(ttk.Frame):
         on_select: Callable[[str], None],
         theme,
     ) -> None:
-        super().__init__(parent, style="Nav.TFrame", padding=(8, 12))
+        pal = theme.palette
+        super().__init__(parent, bg=pal.nav_bg)
+        self._theme = theme
         self._on_select = on_select
         self._buttons: dict[str, ttk.Button] = {}
         self._active: str | None = None
+        inner = tk.Frame(self, bg=pal.nav_bg)
+        inner.pack(fill="both", expand=True, padx=8, pady=12)
+        self._inner = inner
         for key, label in items:
             btn = ttk.Button(
-                self,
+                inner,
                 text=label,
                 style="Nav.TButton",
                 takefocus=False,
@@ -131,51 +164,66 @@ class NavRail(ttk.Frame):
         for k, btn in self._buttons.items():
             btn.configure(style="NavActive.TButton" if k == key else "Nav.TButton")
 
+    def refresh_theme(self) -> None:
+        pal = self._theme.palette
+        self.configure(bg=pal.nav_bg)
+        self._inner.configure(bg=pal.nav_bg)
+
 
 class Field:
     """A labeled form control that can be shown/hidden while keeping order.
 
-    Uses ``grid`` + ``grid_remove`` so hiding a field doesn't disturb the
-    layout of the others. ``row`` is assigned at build time.
+    The control is constructed by a caller-supplied factory whose argument
+    is the field's inner frame — this guarantees the control's actual
+    parent matches its layout master. (Using ``grid(in_=other_frame)`` on
+    a widget whose parent is elsewhere can render the widget invisibly,
+    which is exactly what bit us in v0.5.0-gui-pre2.)
     """
 
     def __init__(
         self,
         parent,
+        theme,
         key: str,
         label: str,
-        control: tk.Widget,
+        control_factory: Callable[[ttk.Frame], tk.Widget],
         *,
         browse_command: Callable[[], None] | None = None,
         help_text: str | None = None,
     ) -> None:
         self.key = key
-        self.control = control
-        self._frame = ttk.Frame(parent, style="Card.TFrame")
-        if label:
-            ttk.Label(self._frame, text=label, style="FieldLabel.TLabel").grid(
-                row=0, column=0, sticky="w", pady=(0, 2)
-            )
-
-        control_row = ttk.Frame(self._frame, style="Card.TFrame")
-        control_row.grid(row=1, column=0, sticky="ew")
-        control_row.columnconfigure(0, weight=1)
-        control.grid(in_=control_row, row=0, column=0, sticky="ew")
-        if browse_command is not None:
-            ttk.Button(
-                control_row, text="Browse…", command=browse_command, takefocus=False
-            ).grid(row=0, column=1, padx=(8, 0))
-        if help_text:
-            ttk.Label(self._frame, text=help_text, style="Muted.TLabel").grid(
-                row=2, column=0, sticky="w", pady=(2, 0)
-            )
+        self._frame = ttk.Frame(parent)
         self._frame.columnconfigure(0, weight=1)
+
+        row = 0
+        if label:
+            ttk.Label(
+                self._frame, text=label, style="FieldLabel.TLabel"
+            ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 2))
+            row += 1
+        control = control_factory(self._frame)
+        self.control = control
+        if browse_command is not None:
+            control.grid(row=row, column=0, sticky="ew")
+            ttk.Button(
+                self._frame,
+                text="Browse...",
+                command=browse_command,
+                takefocus=False,
+            ).grid(row=row, column=1, padx=(8, 0))
+        else:
+            control.grid(row=row, column=0, columnspan=2, sticky="ew")
+        if help_text:
+            ttk.Label(
+                self._frame, text=help_text, style="Muted.TLabel"
+            ).grid(row=row + 1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
         self._row = 0
         self._visible = True
 
     def place_at(self, row: int) -> None:
         self._row = row
-        self._frame.grid(row=row, column=0, sticky="ew", pady=8)
+        self._frame.grid(row=row, column=0, sticky="ew", pady=4)
 
     def set_visible(self, visible: bool) -> None:
         if visible == self._visible:

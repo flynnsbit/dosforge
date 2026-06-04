@@ -19,7 +19,7 @@ class MountsView(ttk.Frame):
         self.refresh_mounts()
 
     def _build(self) -> None:
-        card = Card(self, title="Mounts")
+        card = Card(self, self.app.theme, title="Mounts")
         card.pack(fill="both", expand=True, padx=2, pady=2)
         body = card.body
         body.columnconfigure(0, weight=1)
@@ -35,7 +35,7 @@ class MountsView(ttk.Frame):
                 wraplength=640,
             ).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
-        btn_row = ttk.Frame(body, style="Card.TFrame")
+        btn_row = ttk.Frame(body)
         btn_row.grid(row=1, column=0, sticky="ew")
         ttk.Button(
             btn_row,
@@ -48,7 +48,7 @@ class MountsView(ttk.Frame):
             btn_row, text="Refresh", command=self.refresh_mounts, takefocus=False
         ).pack(side="left", padx=(8, 0))
 
-        unmount_row = ttk.Frame(body, style="Card.TFrame")
+        unmount_row = ttk.Frame(body)
         unmount_row.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         unmount_row.columnconfigure(0, weight=1)
         ttk.Entry(unmount_row, textvariable=self.var_unmount).grid(
