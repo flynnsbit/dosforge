@@ -24,6 +24,7 @@ _WINDOWS_ALLOWED_TEST_FILES = frozenset(
         # Platform-neutral unit tests (no Linux-only syscall/path
         # assumptions in their bodies):
         "test_app_form.py",
+        "test_asset_skeleton.py",
         "test_boot_assets.py",
         "test_capabilities.py",
         "test_cli.py",

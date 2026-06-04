@@ -241,6 +241,28 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
             "Useful when 'install media not found' errors are unexpected."
         ),
     )
+    init_assets_cmd = subcommands.add_parser(
+        "init-assets",
+        help=(
+            "Create the dosassets/ directory skeleton (one folder + readme.txt "
+            "per supported DOS mode) so you know where to drop install media. "
+            "Defaults to $XDG_DATA_HOME/dosforge/dosassets/ on Linux."
+        ),
+    )
+    init_assets_cmd.add_argument(
+        "--target",
+        type=Path,
+        default=None,
+        help=(
+            "Directory to populate (default: $XDG_DATA_HOME/dosforge/dosassets, "
+            "i.e. ~/.local/share/dosforge/dosassets on most Linux hosts)."
+        ),
+    )
+    init_assets_cmd.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing readme.txt files instead of skipping them.",
+    )
 
     # ----------------------------------------------------------------
     # Image-content verbs (mtools-based, no mount required). These
@@ -412,6 +434,54 @@ def _where_assets_command() -> int:
     xdg = next(iter(_wellknown_asset_roots()))
     print(f"  mkdir -p {xdg}")
     print()
+    print("Tip: run 'dosforge init-assets' to materialize the per-mode")
+    print("readme.txt skeleton at the recommended XDG location.")
+    print()
+    return 0
+
+
+def _init_assets_command(target: Path | None, *, force: bool) -> int:
+    """Materialize the per-mode dosassets/ skeleton.
+
+    Drops one ``<mode>/readme.txt`` per supported DOS mode under
+    ``target`` (defaults to ``$XDG_DATA_HOME/dosforge/dosassets``).
+    Existing readmes are left alone unless ``--force`` is passed; user
+    install media that already lives alongside a readme is never
+    touched.
+    """
+    import os as _os
+
+    from .asset_skeleton import default_target, materialize
+
+    resolved_target = target if target is not None else default_target()
+    print(f"Materializing dosassets skeleton at: {resolved_target}")
+    try:
+        final, created, updated, skipped = materialize(target, force=force)
+    except OSError as exc:
+        print(
+            f"Error: cannot write skeleton at {resolved_target}: {exc}\n"
+            "Pick a writable --target path or run with appropriate "
+            "permissions (e.g. sudo for /usr/share/dosforge/dosassets).",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"  created: {created}   updated: {updated}   skipped: {skipped}"
+    )
+    if skipped and not force:
+        print(
+            "  (skipped readmes already exist; pass --force to refresh them)"
+        )
+    print()
+    print("Drop your DOS install media under the matching mode folder, e.g.:")
+    sample = final / "msdos622"
+    sep = _os.sep
+    print(
+        f"  {sample}{sep}  <- MS-DOS 6.22 install floppies "
+        "(DISK1.IMG, DISK2.IMG, ...)"
+    )
+    print()
+    print("Run 'dosforge where-assets' to confirm the location is now discovered.")
     return 0
 
 
@@ -778,6 +848,9 @@ def _run_manager_subcommand(args, parser) -> int:
 
         if args.command == "where-assets":
             return _where_assets_command()
+
+        if args.command == "init-assets":
+            return _init_assets_command(args.target, force=args.force)
 
         # --------------------------------------------------------------
         # Image-content verbs (cross-platform, no mount).

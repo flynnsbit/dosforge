@@ -142,14 +142,14 @@ included). Download from the latest `linux-v*` release on
 ```bash
 # 1. Grab and extract the bundle
 curl -L -o dosforge-linux.tar.gz \
-    https://github.com/flynnsbit/dosforge/releases/download/linux-v0.5.1/dosforge-0.5.1-linux.tar.gz
+    https://github.com/flynnsbit/dosforge/releases/download/linux-v0.5.2/dosforge-0.5.2-linux.tar.gz
 tar xzf dosforge-linux.tar.gz
-cd dosforge-0.5.1-linux
+cd dosforge-0.5.2-linux
 
 # 2. Install the Python package into a venv
 python3 -m venv .venv
 . .venv/bin/activate
-pip install ./dosforge-0.5.1-py3-none-any.whl
+pip install ./dosforge-0.5.2-py3-none-any.whl
 
 # 3. Install the system tools dosforge shells out to
 sudo apt install qemu-system-x86 qemu-utils nbd-client \
@@ -161,10 +161,10 @@ sudo dnf install qemu-system-x86 qemu-img nbd mtools \
 sudo pacman -S qemu-base qemu-img nbd mtools p7zip \
     innoextract tk                                    # Arch
 
-# 4. Bootstrap the dosassets/ skeleton into a fixed user-scope location
-#    so dosforge finds your install media from any directory:
-mkdir -p ~/.local/share/dosforge
-cp -r dosassets ~/.local/share/dosforge/
+# 4. Materialize the dosassets/ folder skeleton (one folder + readme.txt
+#    per supported DOS mode) so you know exactly where to drop install
+#    media. Defaults to ~/.local/share/dosforge/dosassets/.
+dosforge init-assets
 
 # 5. Verify
 dosforge where-assets   # prints the dosassets resolution order
@@ -188,6 +188,11 @@ sudo apt install qemu-system-x86 qemu-utils nbd-client \
 When you install editable from a checkout, the repo's own `dosassets/`
 directory is the search root — just run `dosforge` from the repo and
 drop install media into `dosassets/<mode>/` as usual.
+
+You can also run `dosforge init-assets` from an editable install to
+hydrate `~/.local/share/dosforge/dosassets/` with the per-mode folder +
+readme.txt skeleton; the readmes ship inside the wheel so it works
+from any working directory.
 
 #### Where to put DOS install media
 

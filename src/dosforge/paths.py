@@ -72,6 +72,23 @@ def _wellknown_asset_roots() -> list[Path]:
     return roots
 
 
+def _has_install_media(directory: Path) -> bool:
+    """True if ``directory`` holds anything besides the bundled readme.
+
+    A directory containing only ``readme.txt`` (in any case) is a bare
+    ``dosforge init-assets`` skeleton folder and should not shadow a
+    lower-priority directory that actually holds install media.
+    """
+    try:
+        for entry in directory.iterdir():
+            if entry.name.lower() == "readme.txt":
+                continue
+            return True
+    except OSError:
+        return False
+    return False
+
+
 def xdg_state_home() -> Path:
     """Legacy XDG helper — Linux-only.
 
@@ -153,6 +170,11 @@ def resolve_dos_asset_dir(
     5. ``<base>/<name>`` (legacy: users who organise assets at the
        project root rather than under ``dosassets/``).
 
+    When several candidates exist, prefers any candidate that holds
+    real install media (i.e. files other than ``readme.txt``) over a
+    bare ``dosforge init-assets``-style skeleton dir containing only a
+    readme. This prevents the XDG skeleton from shadowing real install
+    media a user kept in ``~/.dosforge/`` or ``/usr/share/dosforge/``.
     Returns ``None`` if none of the candidates resolve to a directory.
     """
     base_dir = base if base is not None else Path.cwd()
@@ -170,13 +192,19 @@ def resolve_dos_asset_dir(
     candidates.extend((root / raw).resolve() for root in _wellknown_asset_roots())
     candidates.append((base_dir / raw).resolve())
     seen: set[Path] = set()
+    ordered: list[Path] = []
     for candidate in candidates:
         if candidate in seen:
             continue
         seen.add(candidate)
         if candidate.is_dir():
+            ordered.append(candidate)
+    # Prefer directories that contain real install media over a bare
+    # readme-only skeleton, otherwise fall back to first-match precedence.
+    for candidate in ordered:
+        if _has_install_media(candidate):
             return candidate
-    return None
+    return ordered[0] if ordered else None
 
 
 def describe_dos_asset_locations(name: str, *, base: Path | None = None) -> str:

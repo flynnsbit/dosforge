@@ -57,6 +57,9 @@ jobs:
       - name: Verify dosassets folder skeleton
         run: python scripts/check-dosassets-readmes.py
 
+      - name: Verify wheel-bundled _skeleton mirror is in sync with dosassets/
+        run: python scripts/sync-asset-skeleton.py --check
+
       - name: Build sdist + wheel
         run: |
           python -m build --sdist --wheel --outdir dist/
@@ -69,6 +72,22 @@ jobs:
           /tmp/venv-smoke/bin/dosforge --help | head -20
           /tmp/venv-smoke/bin/dosforge create --help | head -5
           /tmp/venv-smoke/bin/dosforge check-deps --help | head -5
+          # init-assets smoke: hydrate into a temp dir and verify content.
+          /tmp/venv-smoke/bin/dosforge init-assets --target /tmp/dosassets-smoke
+          test -f /tmp/dosassets-smoke/msdos622/readme.txt
+          test -f /tmp/dosassets-smoke/pcdos71/readme.txt
+          # Expected count is whatever the wheel ships, computed at runtime.
+          expected=$(/tmp/venv-smoke/bin/python -c \
+            'from dosforge.asset_skeleton import iter_skeleton_modes; print(len(iter_skeleton_modes()))')
+          echo "expected skeleton modes: $expected"
+          # Re-running should skip everything (idempotent).
+          /tmp/venv-smoke/bin/dosforge init-assets --target /tmp/dosassets-smoke \
+              | tee /tmp/dosassets-rerun.txt
+          grep -q "skipped: ${expected}" /tmp/dosassets-rerun.txt
+          # --force should refresh every readme.
+          /tmp/venv-smoke/bin/dosforge init-assets --target /tmp/dosassets-smoke --force \
+              | tee /tmp/dosassets-force.txt
+          grep -q "updated: ${expected}" /tmp/dosassets-force.txt
 
       - name: Assemble Linux release tarball with install instructions
         run: |
@@ -130,9 +149,10 @@ jobs:
           **Recommended for pip-only installs** (you want to run
           dosforge from any directory):
 
-              # Bootstrap the directory skeleton from this bundle
-              mkdir -p ~/.local/share/dosforge
-              cp -r dosassets ~/.local/share/dosforge/
+              # Materialize the per-mode folder + readme.txt skeleton
+              # under ~/.local/share/dosforge/dosassets/. The readmes
+              # ship inside the wheel itself.
+              dosforge init-assets
 
           Then drop your install media into the matching
           \`~/.local/share/dosforge/dosassets/<mode>/\` folder. Each
