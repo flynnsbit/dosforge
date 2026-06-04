@@ -9,8 +9,20 @@ from typing import Callable
 from typing import cast
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Checkbox, DirectoryTree, Footer, Header, Input, Label, Select, Static
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import (
+    Button,
+    Checkbox,
+    DirectoryTree,
+    Footer,
+    Header,
+    Input,
+    Label,
+    Select,
+    Static,
+    TabbedContent,
+    TabPane,
+)
 from textual.widgets._directory_tree import DirEntry
 
 from .disk import DiskManager
@@ -88,34 +100,106 @@ _FLOPPY_OPTIONS = [
 
 class DosForgeApp(App[None]):
     TITLE = "DosForge"
-    SUB_TITLE = "Create, mount, browse, and unmount DOS-friendly disk images"
-    BINDINGS = [("q", "quit", "Quit")]
+    SUB_TITLE = "Build, browse, and mount DOS-friendly disk images"
+    BINDINGS = [
+        ("q", "quit", "Quit"),
+        ("ctrl+1", "show_tab('tab-new')", "New Disk"),
+        ("ctrl+2", "show_tab('tab-browse')", "Browse"),
+        ("ctrl+3", "show_tab('tab-tools')", "Image Tools"),
+        ("ctrl+4", "show_tab('tab-mounts')", "Mounts"),
+        ("ctrl+5", "show_tab('tab-utils')", "Utilities"),
+    ]
 
     CSS = """
     Screen {
       layout: vertical;
+      background: $surface;
     }
-    #layout {
+    #context-bar {
+      height: 1;
+      padding: 0 1;
+      color: $text 70%;
+      background: $boost;
+    }
+    TabbedContent {
+      height: 1fr;
+    }
+    TabPane {
+      padding: 1 2;
+    }
+
+    /* ── New Disk wizard ── */
+    #wizard-layout {
       layout: horizontal;
       height: 1fr;
     }
-    #left-pane, #right-pane {
-      width: 1fr;
-      padding: 0 1;
+    #wizard-main {
+      width: 2fr;
+      padding: 0 1 0 0;
     }
-    #right-pane {
-      overflow-y: auto;
+    #wizard-side {
+      width: 1fr;
+      padding: 0;
+    }
+    #wizard-progress {
+      height: 1;
+      padding: 0 1;
+      color: $primary;
+      text-style: bold;
+      margin: 0 0 1 0;
+    }
+    .wizard-step {
+      height: auto;
+      padding: 1;
+      border: round $primary 40%;
+      margin: 0 0 1 0;
+    }
+    .wizard-step-title {
+      text-style: bold;
+      color: $primary;
+      margin: 0 0 1 0;
+    }
+    #wizard-summary {
+      border: round $primary 40%;
+      padding: 1;
+      height: 1fr;
+      color: $text;
+    }
+    #wizard-nav {
+      height: 3;
+      margin: 1 0 0 0;
+      align: left middle;
+    }
+    #wizard-nav Button {
+      width: 22;
+      margin: 0 1 0 0;
+    }
+    #wizard-nav #quick-create-btn {
+      width: 24;
+      margin-left: 2;
+    }
+
+    /* ── Browse / tools tabs ── */
+    #browse-tab, #tools-tab, #mounts-tab, #utils-tab {
+      layout: vertical;
+      height: 1fr;
     }
     #vhd-tree {
       height: 1fr;
-      border: round $panel;
+      border: round $primary 40%;
     }
     #mounts, #status {
-      border: round $panel;
+      border: round $primary 40%;
       padding: 1;
-      min-height: 5;
+      min-height: 3;
     }
-    Input, Select, Checkbox, Button, Label {
+    #status {
+      height: 3;
+      margin: 0;
+    }
+
+    /* ── Inputs / selects / labels ── */
+    Input, Select, Checkbox, Label, Static {
       margin: 0 0 1 0;
     }
     .path-row {
@@ -126,17 +210,49 @@ class DosForgeApp(App[None]):
       width: 1fr;
       margin: 0;
     }
-    #right-pane .path-row Button, #left-pane .path-row Button {
+    .path-row Button {
       width: 6;
       min-width: 6;
       max-width: 6;
       margin: 0 0 0 1;
       padding: 0;
     }
-    #right-pane Button {
-      width: 100%;
-      margin: 0 1 1 1;
+
+    /* ── Button palette: single blue primary, neutral secondary,
+       red only for destructive. Drops the cyan/orange/green mix. ── */
+    Button {
+      margin: 0 1 1 0;
       padding: 0 2;
+    }
+    Button.btn-primary {
+      background: $primary;
+      color: $text;
+      text-style: bold;
+    }
+    Button.btn-primary:hover {
+      background: $primary 80%;
+    }
+    Button.btn-secondary {
+      background: $boost;
+      color: $primary;
+    }
+    Button.btn-secondary:hover {
+      background: $primary 20%;
+    }
+    Button.btn-destructive {
+      background: $error;
+      color: $text;
+    }
+    Button.btn-destructive:hover {
+      background: $error 80%;
+    }
+    Button.btn-ghost {
+      background: transparent;
+      color: $text 70%;
+    }
+    Button.btn-ghost:hover {
+      background: $primary 15%;
+      color: $text;
     }
     """
 
@@ -145,145 +261,314 @@ class DosForgeApp(App[None]):
         self.manager = DiskManager()
         self.selected_image: Path | None = None
         self.path_picker_target: str | None = None
+        # Wizard state (1..4). Step 1 is shown by default; the rest are
+        # toggled via display so the existing test_app_form.py assertions
+        # against per-widget `.display` continue to read the correct
+        # value (since _sync_create_form_visibility still runs).
+        self._wizard_step: int = 1
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Horizontal(id="layout"):
-            with Vertical(id="left-pane"):
-                yield Label("Browse images and asset folders")
-                yield ParentDirectoryTree(str(Path.cwd()), id="vhd-tree")
-                yield Static("Selected image: (none)", id="selected-vhd")
-                # Linux-only: kernel-mount + qemu-nbd path. Hidden on
-                # backends without supports_kernel_mount (Windows).
-                yield Button("Mount selected image", id="mount-btn", variant="primary")
-                yield Input(placeholder="Mounted path to unmount", id="unmount-input")
-                yield Button("Unmount mount path", id="unmount-btn", variant="warning")
-                # Cross-platform: mtools-based image content verbs. Shown
-                # on backends without supports_kernel_mount as the
-                # browse/extract alternative to mount/unmount.
-                yield Button(
-                    "List contents (ls)",
-                    id="ls-btn",
-                    variant="primary",
-                )
-                with Horizontal(classes="path-row", id="extract-row"):
-                    yield Input(
-                        placeholder="DOS path inside image (e.g. /CONFIG.SYS)",
-                        id="extract-input",
+        yield Static("Selected image: (none)", id="context-bar")
+        with TabbedContent(initial="tab-new"):
+            # ── New Disk (wizard) ────────────────────────────────────
+            with TabPane("✨  New Disk", id="tab-new"):
+                with Horizontal(id="wizard-layout"):
+                    with Vertical(id="wizard-main"):
+                        yield Static("", id="wizard-progress")
+                        yield Label("Create disk image", id="create-title")
+
+                        # Step 1: Media
+                        with Container(id="step-1", classes="wizard-step"):
+                            yield Label(
+                                "Step 1 — Media",
+                                classes="wizard-step-title",
+                            )
+                            yield Label("Disk type")
+                            yield Select(
+                                options=[
+                                    ("VHD (fixed-size hard disk)", MediaType.VHD.value),
+                                    ("IMG (floppy)", MediaType.IMG.value),
+                                ],
+                                value=MediaType.VHD.value,
+                                id="media-type",
+                            )
+                            yield Label("Machine target")
+                            yield Select(
+                                options=_MACHINE_TARGET_OPTIONS,
+                                value=MachineTarget.GENERIC.value,
+                                id="machine-target",
+                            )
+                            yield Select(
+                                options=_MARTYPC_XEBEC_DRIVE_TYPE_OPTIONS,
+                                value=MartyPCXebecDriveType.TYPE2.value,
+                                id="martypc-xebec-drive-type",
+                            )
+                            yield Select(
+                                options=_MARTYPC_AT_DRIVE_TYPE_OPTIONS,
+                                value=DEFAULT_MARTYPC_AT_FORMAT_SLUG,
+                                id="martypc-at-drive-type",
+                            )
+                            yield Label("Output path")
+                            with Horizontal(classes="path-row", id="create-path-row"):
+                                yield Input(
+                                    placeholder="Path (for example: ~/vhd/disk.vhd)",
+                                    id="create-path",
+                                )
+                                yield Button("📁", id="browse-create-path-btn", classes="btn-ghost")
+                            yield Label("Static size")
+                            yield Input(
+                                value="512M",
+                                placeholder="Static size (for example: 512M)",
+                                id="create-size",
+                            )
+                            yield Label("BIOS preset (locks size to exact CHS)")
+                            yield Select(
+                                options=_BIOS_DRIVE_TYPE_OPTIONS,
+                                value=_BIOS_CUSTOM_VALUE,
+                                id="bios-drive-type",
+                            )
+                            yield Label("Filesystem")
+                            yield Select(
+                                options=[
+                                    ("FAT12 (MartyPC Xebec Type 1 only)", DiskFormat.FAT12.value),
+                                    ("FAT16", DiskFormat.FAT16.value),
+                                    ("FAT32", DiskFormat.FAT32.value),
+                                ],
+                                value=DiskFormat.FAT16.value,
+                                id="create-format",
+                            )
+                            yield Label("Floppy size")
+                            yield Select(
+                                options=_FLOPPY_OPTIONS,
+                                value=FloppyType.F1440K.value,
+                                id="floppy-type",
+                            )
+                            yield Checkbox(
+                                "System format (bootable DOS IMG)",
+                                id="img-system-format",
+                            )
+
+                        # Step 2: Boot
+                        with Container(id="step-2", classes="wizard-step"):
+                            yield Label(
+                                "Step 2 — Boot OS",
+                                classes="wizard-step-title",
+                            )
+                            yield Label("Boot mode")
+                            yield Select(
+                                options=[
+                                    ("None (data disk only)", BootMode.NONE.value),
+                                    ("FreeDOS bootable", BootMode.FREEDOS.value),
+                                    ("MS-DOS 7.1 bootable", BootMode.MSDOS71.value),
+                                    (
+                                        "IBM PC 8088/V20 (DOS 3.3 / 5.0)",
+                                        BootMode.IBM8088.value,
+                                    ),
+                                    ("MS-DOS 3.3 bootable", BootMode.MSDOS33.value),
+                                    ("MS-DOS 3.31 bootable", BootMode.MSDOS331.value),
+                                    ("MS-DOS 5.0 bootable", BootMode.MSDOS5.value),
+                                    ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
+                                    ("PC-DOS bootable", BootMode.PCDOS.value),
+                                    (
+                                        "PC-DOS 7.0 bootable (XDF media)",
+                                        BootMode.PCDOS7.value,
+                                    ),
+                                    (
+                                        "PC-DOS 7.1 bootable (FAT32)",
+                                        BootMode.PCDOS71.value,
+                                    ),
+                                    ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
+                                ],
+                                value=BootMode.NONE.value,
+                                id="boot-mode",
+                            )
+                            yield Label("FreeDOS source")
+                            yield Select(
+                                options=[
+                                    ("Local FreeDOS assets", FreeDOSSource.LOCAL.value),
+                                    (
+                                        "Auto-download FreeDOS image",
+                                        FreeDOSSource.AUTO.value,
+                                    ),
+                                ],
+                                value=FreeDOSSource.AUTO.value,
+                                id="freedos-source",
+                            )
+                            yield Label("DOS install profile")
+                            yield Select(
+                                options=_DOS_INSTALL_PROFILE_OPTIONS,
+                                value=MSDOSInstallProfile.MINIMAL.value,
+                                id="dos-profile",
+                            )
+                            yield Label("IBM DOS version")
+                            yield Select(
+                                options=_IBM_DOS_VERSION_OPTIONS,
+                                value=IBMDOSVersion.DOS33.value,
+                                id="ibm-dos-version",
+                            )
+
+                        # Step 3: Assets & payload
+                        with Container(id="step-3", classes="wizard-step"):
+                            yield Label(
+                                "Step 3 — Boot assets and payload",
+                                classes="wizard-step-title",
+                            )
+                            yield Label("Boot assets directory or install image")
+                            with Horizontal(classes="path-row", id="boot-assets-row"):
+                                yield Input(
+                                    placeholder=(
+                                        "Boot assets: bare name like 'msdos33' "
+                                        "(looks in ./dosassets/), or full path"
+                                    ),
+                                    id="boot-assets",
+                                )
+                                yield Button("📁", id="browse-boot-assets-btn", classes="btn-ghost")
+                            yield Label("Custom payload directory (optional)")
+                            with Horizontal(classes="path-row", id="custom-payload-row"):
+                                yield Input(
+                                    placeholder=(
+                                        "Extra files to copy to C:\\ root (optional)"
+                                    ),
+                                    id="custom-payload",
+                                )
+                                yield Button(
+                                    "📁",
+                                    id="browse-custom-payload-btn",
+                                    classes="btn-ghost",
+                                )
+                            yield Label("FreeDOS download URL (optional)")
+                            yield Input(
+                                placeholder="FreeDOS download URL (optional)",
+                                id="freedos-url",
+                            )
+                            yield Button(
+                                "Fetch latest FreeDOS into ./freedos",
+                                id="fetch-freedos-btn",
+                                classes="btn-secondary",
+                            )
+
+                        # Step 4: Confirm
+                        with Container(id="step-4", classes="wizard-step"):
+                            yield Label(
+                                "Step 4 — Review and create",
+                                classes="wizard-step-title",
+                            )
+                            yield Label("Volume label (optional)")
+                            yield Input(
+                                placeholder="Volume label (optional)",
+                                id="volume-label",
+                            )
+                            yield Checkbox(
+                                "Overwrite existing image",
+                                id="overwrite",
+                            )
+                            yield Button(
+                                "▶  Create + format VHD",
+                                id="create-btn",
+                                classes="btn-primary",
+                            )
+
+                        # Wizard nav
+                        with Horizontal(id="wizard-nav"):
+                            yield Button(
+                                "← Back",
+                                id="wizard-back-btn",
+                                classes="btn-secondary",
+                            )
+                            yield Button(
+                                "Next: Boot →",
+                                id="wizard-next-btn",
+                                classes="btn-primary",
+                            )
+                            yield Button(
+                                "⚡ Quick Create",
+                                id="quick-create-btn",
+                                classes="btn-ghost",
+                            )
+
+                    with Vertical(id="wizard-side"):
+                        yield Static(
+                            "Summary will appear here as you fill the wizard.",
+                            id="wizard-summary",
+                        )
+
+            # ── Browse ───────────────────────────────────────────────
+            with TabPane("📁  Browse", id="tab-browse"):
+                with Vertical(id="browse-tab"):
+                    yield Label("Browse images and asset folders")
+                    yield ParentDirectoryTree(str(Path.cwd()), id="vhd-tree")
+                    yield Static("Selected image: (none)", id="selected-vhd")
+
+            # ── Image Tools ──────────────────────────────────────────
+            with TabPane("🔧  Image Tools", id="tab-tools"):
+                with Vertical(id="tools-tab"):
+                    yield Label(
+                        "Inspect or extract files from the selected image "
+                        "(uses mtools — no admin / kernel mount needed)."
                     )
-                    yield Button("Extract", id="extract-btn")
-                with Horizontal(classes="path-row", id="open-path-row"):
-                    yield Input(placeholder="Path to open in file manager", id="open-input")
-                    yield Button("📁", id="browse-open-btn")
-                yield Button("Open path in Files", id="open-btn")
-                yield Static("No active mounts tracked.", id="mounts")
-            with Vertical(id="right-pane"):
-                yield Label("Create disk image", id="create-title")
-                yield Select(
-                    options=[("VHD", MediaType.VHD.value), ("IMG (floppy)", MediaType.IMG.value)],
-                    value=MediaType.VHD.value,
-                    id="media-type",
-                )
-                yield Select(
-                    options=_MACHINE_TARGET_OPTIONS,
-                    value=MachineTarget.GENERIC.value,
-                    id="machine-target",
-                )
-                yield Select(
-                    options=_MARTYPC_XEBEC_DRIVE_TYPE_OPTIONS,
-                    value=MartyPCXebecDriveType.TYPE2.value,
-                    id="martypc-xebec-drive-type",
-                )
-                yield Select(
-                    options=_MARTYPC_AT_DRIVE_TYPE_OPTIONS,
-                    value=DEFAULT_MARTYPC_AT_FORMAT_SLUG,
-                    id="martypc-at-drive-type",
-                )
-                with Horizontal(classes="path-row", id="create-path-row"):
-                    yield Input(placeholder="Path (for example: ~/vhd/disk.vhd)", id="create-path")
-                    yield Button("📁", id="browse-create-path-btn")
-                yield Input(value="512M", placeholder="Static size (for example: 512M)", id="create-size")
-                # Classic AT BIOS HDD-type preset. Default is "Custom"
-                # (typed size). Picking a Phoenix/AMI Type N entry locks
-                # the size to the preset's exact CHS so 86Box BIOS
-                # auto-detect shows "Type N" instead of "User-defined".
-                yield Select(
-                    options=_BIOS_DRIVE_TYPE_OPTIONS,
-                    value=_BIOS_CUSTOM_VALUE,
-                    id="bios-drive-type",
-                )
-                yield Select(
-                    options=[
-                        ("FAT12 (MartyPC Xebec Type 1 only)", DiskFormat.FAT12.value),
-                        ("FAT16", DiskFormat.FAT16.value),
-                        ("FAT32", DiskFormat.FAT32.value),
-                    ],
-                    value=DiskFormat.FAT16.value,
-                    id="create-format",
-                )
-                yield Select(
-                    options=_FLOPPY_OPTIONS,
-                    value=FloppyType.F1440K.value,
-                    id="floppy-type",
-                )
-                yield Checkbox("System format (bootable DOS IMG)", id="img-system-format")
-                yield Select(
-                    options=[
-                        ("Choose OS", BootMode.NONE.value),
-                        ("FreeDOS bootable", BootMode.FREEDOS.value),
-                        ("MS-DOS 7.1 bootable", BootMode.MSDOS71.value),
-                        ("IBM PC 8088/V20 (DOS 3.3 / 5.0)", BootMode.IBM8088.value),
-                        ("MS-DOS 3.3 bootable", BootMode.MSDOS33.value),
-                        ("MS-DOS 3.31 bootable", BootMode.MSDOS331.value),
-                        ("MS-DOS 5.0 bootable", BootMode.MSDOS5.value),
-                        ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
-                        ("PC-DOS bootable", BootMode.PCDOS.value),
-                        ("PC-DOS 7.0 bootable (XDF media)", BootMode.PCDOS7.value),
-                        ("PC-DOS 7.1 bootable (FAT32)", BootMode.PCDOS71.value),
-                        ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
-                    ],
-                    value=BootMode.NONE.value,
-                    id="boot-mode",
-                )
-                yield Select(
-                    options=[
-                        ("Local FreeDOS assets", FreeDOSSource.LOCAL.value),
-                        ("Auto-download FreeDOS image", FreeDOSSource.AUTO.value),
-                    ],
-                    value=FreeDOSSource.AUTO.value,
-                    id="freedos-source",
-                )
-                yield Select(
-                    options=_DOS_INSTALL_PROFILE_OPTIONS,
-                    value=MSDOSInstallProfile.MINIMAL.value,
-                    id="dos-profile",
-                )
-                yield Select(
-                    options=_IBM_DOS_VERSION_OPTIONS,
-                    value=IBMDOSVersion.DOS33.value,
-                    id="ibm-dos-version",
-                )
-                with Horizontal(classes="path-row", id="boot-assets-row"):
-                    yield Input(
-                        placeholder=(
-                            "Boot assets: bare name like 'msdos33' (looks in ./dosassets/), "
-                            "or full path to a dir of install disks"
-                        ),
-                        id="boot-assets",
+                    yield Button(
+                        "List contents (ls)",
+                        id="ls-btn",
+                        classes="btn-secondary",
                     )
-                    yield Button("📁", id="browse-boot-assets-btn")
-                with Horizontal(classes="path-row", id="custom-payload-row"):
-                    yield Input(
-                        placeholder="Custom payload directory — extra files to copy to C:\\ root (optional)",
-                        id="custom-payload",
+                    with Horizontal(classes="path-row", id="extract-row"):
+                        yield Input(
+                            placeholder="DOS path inside image (e.g. /CONFIG.SYS)",
+                            id="extract-input",
+                        )
+                        yield Button("Extract", id="extract-btn", classes="btn-secondary")
+                    with Horizontal(classes="path-row", id="open-path-row"):
+                        yield Input(
+                            placeholder="Path to open in file manager",
+                            id="open-input",
+                        )
+                        yield Button("📁", id="browse-open-btn", classes="btn-ghost")
+                    yield Button(
+                        "Open path in Files",
+                        id="open-btn",
+                        classes="btn-secondary",
                     )
-                    yield Button("📁", id="browse-custom-payload-btn")
-                yield Input(placeholder="FreeDOS download URL (optional)", id="freedos-url")
-                yield Button("Fetch latest FreeDOS into ./freedos", id="fetch-freedos-btn")
-                yield Button("Run privilege diagnostics", id="diag-btn")
-                yield Input(placeholder="Volume label (optional)", id="volume-label")
-                yield Checkbox("Overwrite existing image", id="overwrite")
-                yield Button("Create + format VHD", id="create-btn", variant="success")
+
+            # ── Mounts ───────────────────────────────────────────────
+            with TabPane("🔌  Mounts", id="tab-mounts"):
+                with Vertical(id="mounts-tab"):
+                    yield Label(
+                        "Mount or unmount the currently selected disk image. "
+                        "On Windows this uses Mount-DiskImage (admin required); "
+                        "on Linux it uses qemu-nbd + loop mount."
+                    )
+                    yield Button(
+                        "Mount selected image",
+                        id="mount-btn",
+                        classes="btn-primary",
+                    )
+                    yield Input(
+                        placeholder="Mounted path to unmount",
+                        id="unmount-input",
+                    )
+                    yield Button(
+                        "Unmount mount path",
+                        id="unmount-btn",
+                        classes="btn-destructive",
+                    )
+                    yield Static("No active mounts tracked.", id="mounts")
+
+            # ── Utilities ────────────────────────────────────────────
+            with TabPane("⚙  Utilities", id="tab-utils"):
+                with Vertical(id="utils-tab"):
+                    yield Label("Diagnostics and maintenance helpers.")
+                    yield Button(
+                        "Run privilege diagnostics",
+                        id="diag-btn",
+                        classes="btn-secondary",
+                    )
+                    yield Static(
+                        "Tip: download FreeDOS assets from the New Disk wizard "
+                        "(Step 3) using the 'Fetch latest FreeDOS' button.",
+                        id="utils-tip",
+                    )
+
         yield Static("", id="status")
         yield Footer()
 
@@ -314,8 +599,19 @@ class DosForgeApp(App[None]):
         # Privilege diagnostics button only makes sense on sudo backends.
         if not self.manager.backend.requires_sudo_for_disk_ops:
             self.query_one("#diag-btn", Button).display = False
+        # Initialize wizard at step 1 (hides steps 2-4).
+        self._set_wizard_step(1)
         self._sync_create_form_visibility()
+        self._refresh_summary()
+        self._update_context_bar()
         self._refresh_mounts()
+
+    def action_show_tab(self, tab_id: str) -> None:
+        """Keyboard shortcut handler: switch to a named tab."""
+        try:
+            self.query_one(TabbedContent).active = tab_id
+        except Exception:
+            pass
 
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         selected = Path(event.path).expanduser().resolve()
@@ -332,6 +628,7 @@ class DosForgeApp(App[None]):
         self.selected_image = selected
         size_bytes = selected.stat().st_size
         self.query_one("#selected-vhd", Static).update(f"Selected image: {selected}")
+        self._update_context_bar()
         self.query_one("#create-path", Input).value = str(selected)
         if suffix == ".vhd":
             self.query_one("#media-type", Select).value = MediaType.VHD.value
@@ -363,6 +660,12 @@ class DosForgeApp(App[None]):
         button_id = event.button.id
         if button_id == "create-btn":
             self._handle_create()
+        elif button_id == "wizard-back-btn":
+            self._handle_wizard_back()
+        elif button_id == "wizard-next-btn":
+            self._handle_wizard_next()
+        elif button_id == "quick-create-btn":
+            self._handle_quick_create()
         elif button_id == "mount-btn":
             self._handle_mount_selected()
         elif button_id == "unmount-btn":
@@ -588,6 +891,118 @@ class DosForgeApp(App[None]):
             (is_vhd or img_system_format) and not is_martypc
         )
         self.query_one("#freedos-url", Input).display = show_freedos_url
+        # Refresh the wizard's live summary card whenever form state moves.
+        self._refresh_summary()
+
+    # ── Wizard state machine ───────────────────────────────────────
+
+    _STEP_LABELS: tuple[str, ...] = ("Media", "Boot", "Payload", "Confirm")
+
+    def _set_wizard_step(self, step: int) -> None:
+        """Show wizard step ``step`` and hide the others. Step is 1..4.
+
+        Per-widget ``.display`` flags inside each step continue to be
+        controlled by ``_sync_create_form_visibility``; this method only
+        flips the step containers and updates the progress + nav button
+        labels. Tests query per-widget ``.display`` so they pass even
+        when an ancestor step container is hidden.
+        """
+        self._wizard_step = max(1, min(4, step))
+        for index in range(1, 5):
+            try:
+                container = self.query_one(f"#step-{index}", Container)
+            except Exception:
+                continue
+            container.display = index == self._wizard_step
+
+        # Progress indicator
+        parts: list[str] = []
+        for index, label in enumerate(self._STEP_LABELS, start=1):
+            marker = "●" if index == self._wizard_step else ("✓" if index < self._wizard_step else "○")
+            parts.append(f"{marker} {index}. {label}")
+        try:
+            self.query_one("#wizard-progress", Static).update("    ".join(parts))
+        except Exception:
+            pass
+
+        # Nav button labels
+        try:
+            back = self.query_one("#wizard-back-btn", Button)
+            nxt = self.query_one("#wizard-next-btn", Button)
+            back.display = self._wizard_step > 1
+            if self._wizard_step >= 4:
+                nxt.display = False
+            else:
+                nxt.display = True
+                next_label = self._STEP_LABELS[self._wizard_step]
+                nxt.label = f"Next: {next_label} →"
+        except Exception:
+            pass
+
+    def _handle_wizard_back(self) -> None:
+        self._set_wizard_step(self._wizard_step - 1)
+
+    def _handle_wizard_next(self) -> None:
+        if self._wizard_step >= 4:
+            self._handle_create()
+            return
+        self._set_wizard_step(self._wizard_step + 1)
+
+    def _handle_quick_create(self) -> None:
+        """Skip the wizard and submit with current values."""
+        self._set_wizard_step(4)
+        self._handle_create()
+
+    def _refresh_summary(self) -> None:
+        """Rebuild the live summary card from current form values."""
+        if len(self.query("#wizard-summary")) == 0:
+            return
+        try:
+            media = MediaType(cast(str, self.query_one("#media-type", Select).value))
+            machine = MachineTarget(cast(str, self.query_one("#machine-target", Select).value))
+            boot = BootMode(cast(str, self.query_one("#boot-mode", Select).value))
+            profile = MSDOSInstallProfile(
+                cast(str, self.query_one("#dos-profile", Select).value)
+            )
+            path = self.query_one("#create-path", Input).value.strip() or "(not set)"
+            size = self.query_one("#create-size", Input).value.strip() or "(default)"
+            fmt = cast(str, self.query_one("#create-format", Select).value)
+            floppy = cast(str, self.query_one("#floppy-type", Select).value)
+            img_sysfmt = self.query_one("#img-system-format", Checkbox).value
+            boot_assets = self.query_one("#boot-assets", Input).value.strip() or "(auto)"
+            custom_payload = (
+                self.query_one("#custom-payload", Input).value.strip() or "(none)"
+            )
+            label_text = self.query_one("#volume-label", Input).value.strip() or "(default)"
+            overwrite = self.query_one("#overwrite", Checkbox).value
+        except Exception:
+            return
+
+        media_line = (
+            f"VHD  size={size}  fs={fmt}" if media is MediaType.VHD
+            else f"IMG floppy={floppy}  bootable={'yes' if img_sysfmt else 'no'}"
+        )
+        boot_line = boot.value if boot is not BootMode.NONE else "(none)"
+        if boot is not BootMode.NONE and media is MediaType.VHD:
+            boot_line += f"  profile={profile.value}"
+
+        summary_lines = [
+            f"[b]Output[/b]    {path}",
+            f"[b]Media[/b]     {media_line}",
+            f"[b]Machine[/b]   {machine.value}",
+            f"[b]Boot[/b]      {boot_line}",
+            f"[b]Assets[/b]    {boot_assets}",
+            f"[b]Payload[/b]   {custom_payload}",
+            f"[b]Label[/b]     {label_text}",
+            f"[b]Overwrite[/b] {'yes' if overwrite else 'no'}",
+        ]
+        self.query_one("#wizard-summary", Static).update("\n".join(summary_lines))
+
+    def _switch_to_tab(self, tab_id: str) -> None:
+        try:
+            self.query_one(TabbedContent).active = tab_id
+        except Exception:
+            pass
 
     def _handle_create(self) -> None:
         try:
@@ -602,8 +1017,30 @@ class DosForgeApp(App[None]):
         self._set_status(f"Created and prepared: {request.path}")
         self.selected_image = request.path.expanduser().resolve()
         self.query_one("#selected-vhd", Static).update(f"Selected image: {self.selected_image}")
+        self._update_context_bar()
         self._refresh_browser_tree()
         self._refresh_mounts()
+
+    def _update_context_bar(self) -> None:
+        """Update the always-visible context strip above the tabs."""
+        try:
+            bar = self.query_one("#context-bar", Static)
+        except Exception:
+            return
+        parts: list[str] = []
+        if self.selected_image is not None:
+            parts.append(f"📀 {self.selected_image}")
+        else:
+            parts.append("📀 (no image selected)")
+        try:
+            boot = cast(str, self.query_one("#boot-mode", Select).value)
+            media = cast(str, self.query_one("#media-type", Select).value)
+            parts.append(f"media={media}")
+            if boot and boot != BootMode.NONE.value:
+                parts.append(f"boot={boot}")
+        except Exception:
+            pass
+        bar.update("    ".join(parts))
 
     def _handle_mount_selected(self) -> None:
         if self.selected_image is None:
@@ -964,11 +1401,20 @@ class DosForgeApp(App[None]):
             self._apply_path_picker_selection(selected)
             return
         self._start_path_picker(target)
-        self._set_status("GUI file picker unavailable or canceled. Select from the left tree.")
+        # If the native dialog didn't pop, fall back to the in-app tree
+        # which lives on the Browse tab. Switch the user there so the
+        # tree is visible.
+        self._switch_to_tab("tab-browse")
+        self._set_status(
+            "GUI file picker unavailable or canceled. "
+            "Pick a file or folder from the tree, then return to the wizard."
+        )
 
     def _start_path_picker(self, target: str) -> None:
         self.path_picker_target = target
-        self._set_status("Select a file or folder from the left tree to populate this field.")
+        self._set_status(
+            "Select a file or folder from the Browse tab tree to populate this field."
+        )
 
     def _pick_path_with_dialog(self, target: str) -> Path | None:
         if target == "custom-payload":
@@ -1198,9 +1644,12 @@ class DosForgeApp(App[None]):
         return None
 
     def _is_boot_assets_picker_active(self) -> bool:
-        if len(self.query("#boot-assets")) == 0:
-            return False
-        return bool(self.query_one("#boot-assets", Input).display)
+        # Use explicit picker state instead of widget visibility:
+        # in the wizard layout the boot-assets row may have its own
+        # display=True but live inside a hidden step container, so the
+        # old `.display` check produced false positives that would
+        # repurpose plain tree navigation as a boot-assets pick.
+        return self.path_picker_target == "boot-assets"
 
 
 class ParentDirectoryTree(DirectoryTree):

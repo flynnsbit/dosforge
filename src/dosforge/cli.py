@@ -311,6 +311,30 @@ def ensure_startup_sudo_auth(runner: CommandRunner | None = None) -> None:
     )
 
 
+def _maximize_console_window() -> None:
+    """Best-effort: maximize the host console window on Windows before
+    launching the Textual TUI. No-op on non-Windows or when no console
+    is attached (e.g. running via a non-console launcher). Safe to fail
+    silently — the TUI still launches at the default size.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+        hwnd = kernel32.GetConsoleWindow()
+        if not hwnd:
+            return
+        SW_MAXIMIZE = 3
+        user32.ShowWindow(hwnd, SW_MAXIMIZE)
+    except Exception:
+        # Maximizing is a UX nicety, never a hard requirement. Swallow
+        # any ctypes/import/permission error and continue.
+        return
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -330,6 +354,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 2
+            _maximize_console_window()
             DosForgeApp().run()
             return 0
 

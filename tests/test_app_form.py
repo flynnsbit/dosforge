@@ -342,6 +342,10 @@ def test_selecting_directory_sets_boot_assets_when_picker_is_visible(tmp_path) -
         async with app.run_test():
             app.query_one("#boot-mode", Select).value = BootMode.IBM8088.value
             app._sync_create_form_visibility()
+            # Wizard-redesign: the picker is now explicit. Tapping the
+            # browse button next to #boot-assets sets path_picker_target;
+            # we simulate that here without invoking the native dialog.
+            app._start_path_picker("boot-assets")
             app.on_directory_tree_directory_selected(SimpleNamespace(path=str(assets_dir)))
             assert app.query_one("#boot-assets", Input).value == str(assets_dir.resolve())
 
@@ -367,15 +371,16 @@ def test_create_controls_share_horizontal_alignment() -> None:
         app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
 
         async with app.run_test():
+            # Wizard redesign: step-1 controls live in one container and
+            # share alignment. Cross-step alignment (e.g. boot-mode is in
+            # step-2) is no longer meaningful since steps render
+            # sequentially — assert alignment within the visible step.
             create_path_row = app.query_one("#create-path-row")
             create_path_input = app.query_one("#create-path", Input)
             create_format = app.query_one("#create-format", Select)
-            boot_mode = app.query_one("#boot-mode", Select)
 
             assert create_format.region.x == create_path_row.region.x
             assert create_format.region.width == create_path_row.region.width
-            assert boot_mode.region.x == create_path_row.region.x
-            assert boot_mode.region.width == create_path_row.region.width
             assert create_path_input.region.x == create_path_row.region.x
 
     asyncio.run(run())
