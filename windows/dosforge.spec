@@ -154,3 +154,22 @@ coll = COLLECT(
     upx=False,
     name="dosforge",
 )
+
+# Post-build: move dosassets/ out of _internal/ so the per-mode folders
+# (and their readme.txt instructions) sit alongside the EXEs. Users can
+# then drop their install media into dosassets/<mode>/ without having
+# to dig into the Python runtime folder. Mirrors the lite-bundle layout.
+import shutil as _shutil
+
+_bundle_root = Path(DISTPATH) / "dosforge"
+_src = _bundle_root / "_internal" / "dosassets"
+_dst = _bundle_root / "dosassets"
+
+if _src.is_dir():
+    if _dst.exists():
+        raise SystemExit(
+            f"Post-build error: destination {_dst} already exists. "
+            "Run with --noconfirm or delete the existing dist/dosforge/ first."
+        )
+    _shutil.move(str(_src), str(_dst))
+    print(f"[dosforge] moved dosassets/ out of _internal/ -> {_dst}")

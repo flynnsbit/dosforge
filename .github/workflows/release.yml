@@ -101,6 +101,9 @@ jobs:
           python -m pip install -e .[dev]
           python -m pip install pyinstaller py7zr zstandard
 
+      - name: Verify dosassets folder skeleton (every mode has a readme.txt)
+        run: python scripts/check-dosassets-readmes.py
+
       - name: Fetch bundled Windows vendor binaries (QEMU, mtools)
         run: python scripts/fetch-windows-vendor.py
 
@@ -156,6 +159,24 @@ jobs:
           $helpExit = $LASTEXITCODE
           if ($helpExit -ne 0 -or -not ($help -match "create")) {
             $failures += "dosforge.exe --help failed (exit=$helpExit). Output: $help"
+          }
+
+          # dosassets/ folder skeleton must sit next to the EXE so users
+          # can drop install media in without digging into _internal/.
+          # Every mode folder must contain a readme.txt.
+          $dosassetsTop = "$bundle\dosassets"
+          if (-not (Test-Path $dosassetsTop)) {
+            $failures += "$variant bundle missing top-level dosassets/ folder"
+          } else {
+            $modeDirs = Get-ChildItem -LiteralPath $dosassetsTop -Directory -ErrorAction SilentlyContinue
+            if ($modeDirs.Count -lt 25) {
+              $failures += "$variant bundle dosassets/ has only $($modeDirs.Count) mode folders (expected ~29)"
+            }
+            foreach ($d in $modeDirs) {
+              if (-not (Test-Path (Join-Path $d.FullName 'readme.txt'))) {
+                $failures += "$variant bundle dosassets/$($d.Name)/ is missing readme.txt"
+              }
+            }
           }
 
           $totalMB = [math]::Round((Get-ChildItem $bundle -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)

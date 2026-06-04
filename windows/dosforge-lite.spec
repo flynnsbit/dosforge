@@ -35,7 +35,10 @@ else:
         "Run scripts\\fetch-windows-vendor.py first."
     )
 
-# Lite: only readme.txt stubs, no binary DOS payloads.
+# Lite: ship the directory skeleton — every dosassets/<mode>/ folder
+# with its readme.txt. The readme tells the user which install media
+# files to drop in. dosforge's CI verifies via scripts/check-dosassets-readmes.py
+# that every mode folder has a readme.txt so this glob is exhaustive.
 dosassets = REPO_ROOT / "dosassets"
 for entry in dosassets.rglob("readme.txt"):
     rel = entry.relative_to(dosassets).parent
