@@ -93,3 +93,12 @@ vendor/windows/licenses/
 # Editor / IDE workspace files
 .vscode/
 .idea/
+
+# Local PyInstaller build artifacts (created by PyInstaller windows\\dosforge.spec)
+# and convenience wrappers that invoke them — never committed.
+/dist/
+/build/
+/test-out/
+/dosforge.cmd
+/dosforge-gui.cmd
+
