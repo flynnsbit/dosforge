@@ -1911,6 +1911,26 @@ class DiskManager:
                 f"starting at LBA {start_lba}."
             )
 
+        # MBR partition CHS encoding: AT BIOSes apply ECHS bit-shift
+        # translation when the drive's physical cylinder count exceeds
+        # 1024 (every drive >~504 MB at 16h/63s). The BIOS doubles heads
+        # and halves cylinders until cyl <= 1024, presenting a virtual
+        # geometry like 64h/63s instead of the footer's 16h/63s. The MBR
+        # boot code uses INT 13h AH=02 with the partition entry's CHS,
+        # which the BIOS resolves through THAT translated geometry —
+        # so the partition table CHS must be encoded with the translated
+        # heads/spt or the MBR loads the wrong sector and the boot
+        # silently fails (blinking cursor on 86Box).
+        partition_chs_heads = footer.heads
+        partition_chs_spt = footer.sectors_per_track
+        if footer.heads > 0 and footer.cylinders > 1024:
+            heads = footer.heads
+            cyls = footer.cylinders
+            while cyls > 1024 and heads < 256:
+                heads *= 2
+                cyls = (cyls + 1) // 2
+            partition_chs_heads = min(heads, 255)
+
         # Partition type byte: legacy DOS gets 0x04 (FAT16 <32 MiB,
         # pre-FAT16B) or 0x01 (FAT12); pcdos71 / msdos71 get 0x0C
         # (FAT32 LBA) or 0x0E (FAT16 LBA); modern gets 0x0C / 0x06.
@@ -1933,8 +1953,8 @@ class DiskManager:
                 partition_type=partition_type,
                 first_lba=start_lba,
                 sector_count=partition_sectors,
-                chs_heads=footer.heads,
-                chs_spt=footer.sectors_per_track,
+                chs_heads=partition_chs_heads,
+                chs_spt=partition_chs_spt,
             ),
         )
 
@@ -2120,12 +2140,33 @@ class DiskManager:
                 vhd_path=target_path,
                 partition_offset_bytes=partition_offset_bytes,
             )
-            # Skip the FAT16 BPB heads/spt patch on FAT32 modes:
-            # PC-DOS 7.1's FORMAT32 and MS-DOS 7.10 OSR2's SYS both
-            # leave the partition with the correct FAT32 BPB geometry
-            # (matching the VHD footer / SeaBIOS), and the FAT16
-            # heads/spt fields live at different BPB offsets there.
-            if request.boot_mode not in (BootMode.PCDOS71, BootMode.MSDOS71):
+            # Patch the partition's FAT BPB heads/spt so the VBR's
+            # internal CHS calculations match what the target BIOS will
+            # present at boot time.
+            if request.boot_mode is BootMode.PCDOS71:
+                # FAT32 on a >504 MB drive: AT BIOSes apply ECHS bit-
+                # shift translation (e.g. 64h/63s for a 1 GB drive). The
+                # BPB must use the translated heads/spt so the VBR's
+                # INT 13h CHS reads land on the right sectors. Without
+                # this, 86Box shows a blinking cursor after the MBR
+                # loads (silent VBR failure).
+                self._patch_partition_bpb_to_translated_geometry(
+                    vhd_path=target_path,
+                    partition_offset_bytes=partition_offset_bytes,
+                )
+            elif request.boot_mode is not BootMode.MSDOS71:
+                # FAT16 modes: QEMU SYS install leaves QEMU's SeaBIOS
+                # geometry in the BPB. Patch to the VHD footer CHS that
+                # the target controller will actually present (16h/63s
+                # on generic targets; MartyPC Xebec drive geometry on
+                # Xebec targets — that's what avoids the "two beeps +
+                # ROM-BASIC" boot failure on Xebec).
+                #
+                # MSDOS71 (Win95 OSR2 SYS A: C:) is intentionally left
+                # alone — the existing mformat-laid BPB has worked on
+                # 86Box historically. If 86Box ever shows a blinking
+                # cursor on msdos71, the fix is the same as pcdos71:
+                # patch BPB to translated geometry.
                 self._patch_partition_bpb_to_footer_geometry(
                     vhd_path=target_path,
                     partition_offset_bytes=partition_offset_bytes,
@@ -3629,6 +3670,37 @@ class DiskManager:
         with vhd_path.open("r+b") as handle:
             handle.seek(partition_offset_bytes + 24)
             handle.write(struct.pack("<HH", sectors_per_track, heads))
+
+    def _patch_partition_bpb_to_translated_geometry(
+        self,
+        *,
+        vhd_path: Path,
+        partition_offset_bytes: int,
+    ) -> None:
+        """Patch the BPB to ECHS-translated heads/spt for >504 MB drives.
+
+        AT BIOSes apply bit-shift translation to drives whose physical
+        cylinder count exceeds 1024 (every >504 MB drive at 16h/63s),
+        doubling heads and halving cylinders until cyl ≤ 1024. The
+        resulting virtual geometry (e.g. 64h/63s for a 1 GB drive) is
+        what 86Box and modern QEMU IDE controllers present to DOS,
+        and what the VBR's INT 13h CHS reads must match.
+
+        For drives ≤504 MB this is a no-op (no translation needed,
+        falls back to the footer's geometry).
+        """
+        footer = core_vhd_footer.read_footer(vhd_path)
+        if footer.heads <= 0 or footer.sectors_per_track <= 0:
+            return
+        heads = footer.heads
+        cyls = footer.cylinders
+        while cyls > 1024 and heads < 256:
+            heads *= 2
+            cyls = (cyls + 1) // 2
+        translated_heads = min(heads, 255)
+        with vhd_path.open("r+b") as handle:
+            handle.seek(partition_offset_bytes + 24)
+            handle.write(struct.pack("<HH", footer.sectors_per_track, translated_heads))
 
     def _rewrite_mbr_for_xt_class(
         self,
