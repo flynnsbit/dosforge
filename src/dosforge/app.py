@@ -9,7 +9,7 @@ from typing import Callable
 from typing import cast
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
     Button,
     Checkbox,
@@ -115,32 +115,26 @@ class DosForgeApp(App[None]):
       layout: vertical;
       background: $surface;
     }
+    Header {
+      background: $primary 30%;
+    }
     #context-bar {
       height: 1;
-      padding: 0 1;
-      color: $text 70%;
+      padding: 0 2;
+      color: $text 80%;
       background: $boost;
     }
     TabbedContent {
       height: 1fr;
     }
     TabPane {
-      padding: 1 2;
+      padding: 1 2 0 2;
+    }
+    Tabs {
+      background: $surface;
     }
 
-    /* ── New Disk wizard ── */
-    #wizard-layout {
-      layout: horizontal;
-      height: 1fr;
-    }
-    #wizard-main {
-      width: 2fr;
-      padding: 0 1 0 0;
-    }
-    #wizard-side {
-      width: 1fr;
-      padding: 0;
-    }
+    /* ── New Disk wizard ────────────────────────────────────────── */
     #wizard-progress {
       height: 1;
       padding: 0 1;
@@ -148,34 +142,65 @@ class DosForgeApp(App[None]):
       text-style: bold;
       margin: 0 0 1 0;
     }
-    .wizard-step {
-      height: auto;
-      padding: 1;
-      border: round $primary 40%;
-      margin: 0 0 1 0;
+    #wizard-layout {
+      layout: horizontal;
+      height: 1fr;
     }
-    .wizard-step-title {
+    #wizard-main {
+      width: 2fr;
+      height: 1fr;
+      padding: 0 1 0 0;
+    }
+    #wizard-side {
+      width: 1fr;
+      height: 1fr;
+      padding: 0;
+    }
+    #wizard-scroll {
+      height: 1fr;
+      border: round $primary 50%;
+      padding: 1 2;
+      background: $boost 20%;
+    }
+    #wizard-scroll:focus-within {
+      border: round $primary;
+    }
+    #create-title {
       text-style: bold;
       color: $primary;
       margin: 0 0 1 0;
+      height: 1;
+    }
+    .wizard-step {
+      height: auto;
+      padding: 0;
+    }
+    .wizard-step-title {
+      text-style: bold;
+      color: $accent;
+      margin: 0 0 1 0;
+      height: 1;
     }
     #wizard-summary {
-      border: round $primary 40%;
-      padding: 1;
+      border: round $primary 50%;
+      padding: 1 2;
       height: 1fr;
       color: $text;
+      background: $boost 20%;
     }
     #wizard-nav {
       height: 3;
       margin: 1 0 0 0;
+      padding: 0 1;
       align: left middle;
+      background: $surface;
     }
     #wizard-nav Button {
-      width: 22;
+      width: 20;
       margin: 0 1 0 0;
     }
     #wizard-nav #quick-create-btn {
-      width: 24;
+      width: 18;
       margin-left: 2;
     }
 
@@ -186,24 +211,47 @@ class DosForgeApp(App[None]):
     }
     #vhd-tree {
       height: 1fr;
-      border: round $primary 40%;
+      border: round $primary 50%;
+      padding: 0 1;
     }
-    #mounts, #status {
-      border: round $primary 40%;
+    #vhd-tree:focus-within {
+      border: round $primary;
+    }
+    #selected-vhd {
+      height: 1;
+      padding: 0 1;
+      color: $text 80%;
+      margin: 1 0 0 0;
+    }
+    #mounts {
+      border: round $primary 50%;
       padding: 1;
-      min-height: 3;
+      height: 1fr;
+      min-height: 5;
     }
     #status {
       height: 3;
+      padding: 0 2;
       margin: 0;
+      color: $text 80%;
+      background: $boost;
     }
 
-    /* ── Inputs / selects / labels ── */
-    Input, Select, Checkbox, Label, Static {
+    /* ── Inputs / selects / labels: compact spacing ── */
+    Label {
+      margin: 0 0 0 0;
+      color: $text 80%;
+      height: 1;
+    }
+    Input, Select {
       margin: 0 0 1 0;
     }
+    Checkbox {
+      margin: 1 0 1 0;
+      background: transparent;
+    }
     .path-row {
-      height: auto;
+      height: 3;
       margin: 0 0 1 0;
     }
     .path-row Input {
@@ -211,9 +259,9 @@ class DosForgeApp(App[None]):
       margin: 0;
     }
     .path-row Button {
-      width: 6;
-      min-width: 6;
-      max-width: 6;
+      width: 5;
+      min-width: 5;
+      max-width: 5;
       margin: 0 0 0 1;
       padding: 0;
     }
@@ -223,6 +271,7 @@ class DosForgeApp(App[None]):
     Button {
       margin: 0 1 1 0;
       padding: 0 2;
+      min-width: 12;
     }
     Button.btn-primary {
       background: $primary;
@@ -249,10 +298,21 @@ class DosForgeApp(App[None]):
     Button.btn-ghost {
       background: transparent;
       color: $text 70%;
+      min-width: 5;
     }
     Button.btn-ghost:hover {
       background: $primary 15%;
       color: $text;
+    }
+
+    /* ── Tool rows ── */
+    #extract-row, #open-row {
+      height: 3;
+      margin: 0 0 1 0;
+    }
+    #extract-row Input, #open-row Input {
+      width: 1fr;
+      margin: 0;
     }
     """
 
@@ -273,203 +333,204 @@ class DosForgeApp(App[None]):
         with TabbedContent(initial="tab-new"):
             # ── New Disk (wizard) ────────────────────────────────────
             with TabPane("New Disk", id="tab-new"):
+                yield Static("", id="wizard-progress")
                 with Horizontal(id="wizard-layout"):
                     with Vertical(id="wizard-main"):
-                        yield Static("", id="wizard-progress")
-                        yield Label("Create disk image", id="create-title")
+                        with VerticalScroll(id="wizard-scroll"):
+                            yield Label("Create disk image", id="create-title")
 
-                        # Step 1: Media
-                        with Container(id="step-1", classes="wizard-step"):
-                            yield Label(
-                                "Step 1 — Media",
-                                classes="wizard-step-title",
-                            )
-                            yield Label("Disk type")
-                            yield Select(
-                                options=[
-                                    ("VHD (fixed-size hard disk)", MediaType.VHD.value),
-                                    ("IMG (floppy)", MediaType.IMG.value),
-                                ],
-                                value=MediaType.VHD.value,
-                                id="media-type",
-                            )
-                            yield Label("Machine target")
-                            yield Select(
-                                options=_MACHINE_TARGET_OPTIONS,
-                                value=MachineTarget.GENERIC.value,
-                                id="machine-target",
-                            )
-                            yield Select(
-                                options=_MARTYPC_XEBEC_DRIVE_TYPE_OPTIONS,
-                                value=MartyPCXebecDriveType.TYPE2.value,
-                                id="martypc-xebec-drive-type",
-                            )
-                            yield Select(
-                                options=_MARTYPC_AT_DRIVE_TYPE_OPTIONS,
-                                value=DEFAULT_MARTYPC_AT_FORMAT_SLUG,
-                                id="martypc-at-drive-type",
-                            )
-                            yield Label("Output path")
-                            with Horizontal(classes="path-row", id="create-path-row"):
-                                yield Input(
-                                    placeholder="Path (for example: ~/vhd/disk.vhd)",
-                                    id="create-path",
+                            # Step 1: Media
+                            with Container(id="step-1", classes="wizard-step"):
+                                yield Label(
+                                    "Step 1 — Media",
+                                    classes="wizard-step-title",
                                 )
-                                yield Button("...", id="browse-create-path-btn", classes="btn-ghost")
-                            yield Label("Static size")
-                            yield Input(
-                                value="512M",
-                                placeholder="Static size (for example: 512M)",
-                                id="create-size",
-                            )
-                            yield Label("BIOS preset (locks size to exact CHS)")
-                            yield Select(
-                                options=_BIOS_DRIVE_TYPE_OPTIONS,
-                                value=_BIOS_CUSTOM_VALUE,
-                                id="bios-drive-type",
-                            )
-                            yield Label("Filesystem")
-                            yield Select(
-                                options=[
-                                    ("FAT12 (MartyPC Xebec Type 1 only)", DiskFormat.FAT12.value),
-                                    ("FAT16", DiskFormat.FAT16.value),
-                                    ("FAT32", DiskFormat.FAT32.value),
-                                ],
-                                value=DiskFormat.FAT16.value,
-                                id="create-format",
-                            )
-                            yield Label("Floppy size")
-                            yield Select(
-                                options=_FLOPPY_OPTIONS,
-                                value=FloppyType.F1440K.value,
-                                id="floppy-type",
-                            )
-                            yield Checkbox(
-                                "System format (bootable DOS IMG)",
-                                id="img-system-format",
-                            )
-
-                        # Step 2: Boot
-                        with Container(id="step-2", classes="wizard-step"):
-                            yield Label(
-                                "Step 2 — Boot OS",
-                                classes="wizard-step-title",
-                            )
-                            yield Label("Boot mode")
-                            yield Select(
-                                options=[
-                                    ("None (data disk only)", BootMode.NONE.value),
-                                    ("FreeDOS bootable", BootMode.FREEDOS.value),
-                                    ("MS-DOS 7.1 bootable", BootMode.MSDOS71.value),
-                                    (
-                                        "IBM PC 8088/V20 (DOS 3.3 / 5.0)",
-                                        BootMode.IBM8088.value,
-                                    ),
-                                    ("MS-DOS 3.3 bootable", BootMode.MSDOS33.value),
-                                    ("MS-DOS 3.31 bootable", BootMode.MSDOS331.value),
-                                    ("MS-DOS 5.0 bootable", BootMode.MSDOS5.value),
-                                    ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
-                                    ("PC-DOS bootable", BootMode.PCDOS.value),
-                                    (
-                                        "PC-DOS 7.0 bootable (XDF media)",
-                                        BootMode.PCDOS7.value,
-                                    ),
-                                    (
-                                        "PC-DOS 7.1 bootable (FAT32)",
-                                        BootMode.PCDOS71.value,
-                                    ),
-                                    ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
-                                ],
-                                value=BootMode.NONE.value,
-                                id="boot-mode",
-                            )
-                            yield Label("FreeDOS source")
-                            yield Select(
-                                options=[
-                                    ("Local FreeDOS assets", FreeDOSSource.LOCAL.value),
-                                    (
-                                        "Auto-download FreeDOS image",
-                                        FreeDOSSource.AUTO.value,
-                                    ),
-                                ],
-                                value=FreeDOSSource.AUTO.value,
-                                id="freedos-source",
-                            )
-                            yield Label("DOS install profile")
-                            yield Select(
-                                options=_DOS_INSTALL_PROFILE_OPTIONS,
-                                value=MSDOSInstallProfile.MINIMAL.value,
-                                id="dos-profile",
-                            )
-                            yield Label("IBM DOS version")
-                            yield Select(
-                                options=_IBM_DOS_VERSION_OPTIONS,
-                                value=IBMDOSVersion.DOS33.value,
-                                id="ibm-dos-version",
-                            )
-
-                        # Step 3: Assets & payload
-                        with Container(id="step-3", classes="wizard-step"):
-                            yield Label(
-                                "Step 3 — Boot assets and payload",
-                                classes="wizard-step-title",
-                            )
-                            yield Label("Boot assets directory or install image")
-                            with Horizontal(classes="path-row", id="boot-assets-row"):
-                                yield Input(
-                                    placeholder=(
-                                        "Boot assets: bare name like 'msdos33' "
-                                        "(looks in ./dosassets/), or full path"
-                                    ),
-                                    id="boot-assets",
+                                yield Label("Disk type")
+                                yield Select(
+                                    options=[
+                                        ("VHD (fixed-size hard disk)", MediaType.VHD.value),
+                                        ("IMG (floppy)", MediaType.IMG.value),
+                                    ],
+                                    value=MediaType.VHD.value,
+                                    id="media-type",
                                 )
-                                yield Button("...", id="browse-boot-assets-btn", classes="btn-ghost")
-                            yield Label("Custom payload directory (optional)")
-                            with Horizontal(classes="path-row", id="custom-payload-row"):
+                                yield Label("Machine target", id="machine-target-label")
+                                yield Select(
+                                    options=_MACHINE_TARGET_OPTIONS,
+                                    value=MachineTarget.GENERIC.value,
+                                    id="machine-target",
+                                )
+                                yield Select(
+                                    options=_MARTYPC_XEBEC_DRIVE_TYPE_OPTIONS,
+                                    value=MartyPCXebecDriveType.TYPE2.value,
+                                    id="martypc-xebec-drive-type",
+                                )
+                                yield Select(
+                                    options=_MARTYPC_AT_DRIVE_TYPE_OPTIONS,
+                                    value=DEFAULT_MARTYPC_AT_FORMAT_SLUG,
+                                    id="martypc-at-drive-type",
+                                )
+                                yield Label("Output path", id="create-path-label")
+                                with Horizontal(classes="path-row", id="create-path-row"):
+                                    yield Input(
+                                        placeholder="Path (for example: ~/vhd/disk.vhd)",
+                                        id="create-path",
+                                    )
+                                    yield Button("...", id="browse-create-path-btn", classes="btn-ghost")
+                                yield Label("Static size", id="create-size-label")
                                 yield Input(
-                                    placeholder=(
-                                        "Extra files to copy to C:\\ root (optional)"
-                                    ),
-                                    id="custom-payload",
+                                    value="512M",
+                                    placeholder="Static size (for example: 512M)",
+                                    id="create-size",
+                                )
+                                yield Label("BIOS preset (locks size to exact CHS)", id="bios-drive-type-label")
+                                yield Select(
+                                    options=_BIOS_DRIVE_TYPE_OPTIONS,
+                                    value=_BIOS_CUSTOM_VALUE,
+                                    id="bios-drive-type",
+                                )
+                                yield Label("Filesystem", id="create-format-label")
+                                yield Select(
+                                    options=[
+                                        ("FAT12 (MartyPC Xebec Type 1 only)", DiskFormat.FAT12.value),
+                                        ("FAT16", DiskFormat.FAT16.value),
+                                        ("FAT32", DiskFormat.FAT32.value),
+                                    ],
+                                    value=DiskFormat.FAT16.value,
+                                    id="create-format",
+                                )
+                                yield Label("Floppy size", id="floppy-type-label")
+                                yield Select(
+                                    options=_FLOPPY_OPTIONS,
+                                    value=FloppyType.F1440K.value,
+                                    id="floppy-type",
+                                )
+                                yield Checkbox(
+                                    "System format (bootable DOS IMG)",
+                                    id="img-system-format",
+                                )
+
+                            # Step 2: Boot
+                            with Container(id="step-2", classes="wizard-step"):
+                                yield Label(
+                                    "Step 2 — Boot OS",
+                                    classes="wizard-step-title",
+                                )
+                                yield Label("Boot mode", id="boot-mode-label")
+                                yield Select(
+                                    options=[
+                                        ("None (data disk only)", BootMode.NONE.value),
+                                        ("FreeDOS bootable", BootMode.FREEDOS.value),
+                                        ("MS-DOS 7.1 bootable", BootMode.MSDOS71.value),
+                                        (
+                                            "IBM PC 8088/V20 (DOS 3.3 / 5.0)",
+                                            BootMode.IBM8088.value,
+                                        ),
+                                        ("MS-DOS 3.3 bootable", BootMode.MSDOS33.value),
+                                        ("MS-DOS 3.31 bootable", BootMode.MSDOS331.value),
+                                        ("MS-DOS 5.0 bootable", BootMode.MSDOS5.value),
+                                        ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
+                                        ("PC-DOS bootable", BootMode.PCDOS.value),
+                                        (
+                                            "PC-DOS 7.0 bootable (XDF media)",
+                                            BootMode.PCDOS7.value,
+                                        ),
+                                        (
+                                            "PC-DOS 7.1 bootable (FAT32)",
+                                            BootMode.PCDOS71.value,
+                                        ),
+                                        ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
+                                    ],
+                                    value=BootMode.NONE.value,
+                                    id="boot-mode",
+                                )
+                                yield Label("FreeDOS source", id="freedos-source-label")
+                                yield Select(
+                                    options=[
+                                        ("Local FreeDOS assets", FreeDOSSource.LOCAL.value),
+                                        (
+                                            "Auto-download FreeDOS image",
+                                            FreeDOSSource.AUTO.value,
+                                        ),
+                                    ],
+                                    value=FreeDOSSource.AUTO.value,
+                                    id="freedos-source",
+                                )
+                                yield Label("DOS install profile", id="dos-profile-label")
+                                yield Select(
+                                    options=_DOS_INSTALL_PROFILE_OPTIONS,
+                                    value=MSDOSInstallProfile.MINIMAL.value,
+                                    id="dos-profile",
+                                )
+                                yield Label("IBM DOS version", id="ibm-dos-version-label")
+                                yield Select(
+                                    options=_IBM_DOS_VERSION_OPTIONS,
+                                    value=IBMDOSVersion.DOS33.value,
+                                    id="ibm-dos-version",
+                                )
+
+                            # Step 3: Assets & payload
+                            with Container(id="step-3", classes="wizard-step"):
+                                yield Label(
+                                    "Step 3 — Boot assets and payload",
+                                    classes="wizard-step-title",
+                                )
+                                yield Label("Boot assets directory or install image", id="boot-assets-label")
+                                with Horizontal(classes="path-row", id="boot-assets-row"):
+                                    yield Input(
+                                        placeholder=(
+                                            "Boot assets: bare name like 'msdos33' "
+                                            "(looks in ./dosassets/), or full path"
+                                        ),
+                                        id="boot-assets",
+                                    )
+                                    yield Button("...", id="browse-boot-assets-btn", classes="btn-ghost")
+                                yield Label("Custom payload directory (optional)", id="custom-payload-label")
+                                with Horizontal(classes="path-row", id="custom-payload-row"):
+                                    yield Input(
+                                        placeholder=(
+                                            "Extra files to copy to C:\\ root (optional)"
+                                        ),
+                                        id="custom-payload",
+                                    )
+                                    yield Button(
+                                        "...",
+                                        id="browse-custom-payload-btn",
+                                        classes="btn-ghost",
+                                    )
+                                yield Label("FreeDOS download URL (optional)", id="freedos-url-label")
+                                yield Input(
+                                    placeholder="FreeDOS download URL (optional)",
+                                    id="freedos-url",
                                 )
                                 yield Button(
-                                    "...",
-                                    id="browse-custom-payload-btn",
-                                    classes="btn-ghost",
+                                    "Fetch latest FreeDOS into ./freedos",
+                                    id="fetch-freedos-btn",
+                                    classes="btn-secondary",
                                 )
-                            yield Label("FreeDOS download URL (optional)")
-                            yield Input(
-                                placeholder="FreeDOS download URL (optional)",
-                                id="freedos-url",
-                            )
-                            yield Button(
-                                "Fetch latest FreeDOS into ./freedos",
-                                id="fetch-freedos-btn",
-                                classes="btn-secondary",
-                            )
 
-                        # Step 4: Confirm
-                        with Container(id="step-4", classes="wizard-step"):
-                            yield Label(
-                                "Step 4 — Review and create",
-                                classes="wizard-step-title",
-                            )
-                            yield Label("Volume label (optional)")
-                            yield Input(
-                                placeholder="Volume label (optional)",
-                                id="volume-label",
-                            )
-                            yield Checkbox(
-                                "Overwrite existing image",
-                                id="overwrite",
-                            )
-                            yield Button(
-                                "Create + format VHD",
-                                id="create-btn",
-                                classes="btn-primary",
-                            )
+                            # Step 4: Confirm
+                            with Container(id="step-4", classes="wizard-step"):
+                                yield Label(
+                                    "Step 4 — Review and create",
+                                    classes="wizard-step-title",
+                                )
+                                yield Label("Volume label (optional)")
+                                yield Input(
+                                    placeholder="Volume label (optional)",
+                                    id="volume-label",
+                                )
+                                yield Checkbox(
+                                    "Overwrite existing image",
+                                    id="overwrite",
+                                )
+                                yield Button(
+                                    "Create + format VHD",
+                                    id="create-btn",
+                                    classes="btn-primary",
+                                )
 
-                        # Wizard nav
+                        # Wizard nav (pinned below the scroll area, always visible)
                         with Horizontal(id="wizard-nav"):
                             yield Button(
                                 "← Back",
@@ -871,26 +932,54 @@ class DosForgeApp(App[None]):
                 size_input.disabled = False
         else:
             size_input.disabled = False
-        self.query_one("#create-format", Select).display = is_vhd and not is_martypc_xebec
-        self.query_one("#machine-target", Select).display = is_vhd
-        self.query_one("#martypc-xebec-drive-type", Select).display = is_martypc_xebec
-        self.query_one("#martypc-at-drive-type", Select).display = is_martypc_at
+
+        # Pair each widget with its Label so the label hides too when the
+        # widget hides. Otherwise you get orphan labels like "Floppy size"
+        # with no select beneath them.
+        def _toggle(widget_id: str, label_id: str | None, visible: bool) -> None:
+            try:
+                self.query_one(f"#{widget_id}").display = visible
+            except Exception:
+                pass
+            if label_id is not None:
+                try:
+                    self.query_one(f"#{label_id}").display = visible
+                except Exception:
+                    pass
+
+        _toggle("create-format", "create-format-label", is_vhd and not is_martypc_xebec)
+        _toggle("machine-target", "machine-target-label", is_vhd)
+        _toggle("martypc-xebec-drive-type", None, is_martypc_xebec)
+        _toggle("martypc-at-drive-type", None, is_martypc_at)
         # BIOS Type preset is only meaningful for generic VHD targets.
         # MartyPC has its own preset tables and would conflict.
-        self.query_one("#bios-drive-type", Select).display = is_vhd and not is_martypc
-        self.query_one("#floppy-type", Select).display = not is_vhd
+        _toggle("bios-drive-type", "bios-drive-type-label", is_vhd and not is_martypc)
+        # Hide the "Static size" label whenever the size input is hidden
+        # (MartyPC fixed-geometry targets).
+        try:
+            self.query_one("#create-size-label").display = is_vhd and not is_martypc
+        except Exception:
+            pass
+        _toggle("floppy-type", "floppy-type-label", not is_vhd)
         self.query_one("#img-system-format", Checkbox).display = not is_vhd
-        self.query_one("#boot-mode", Select).display = boot_controls_active
-        self.query_one("#freedos-source", Select).display = show_freedos
+        _toggle("boot-mode", "boot-mode-label", boot_controls_active)
+        _toggle("freedos-source", "freedos-source-label", show_freedos)
         self.query_one("#fetch-freedos-btn", Button).display = show_freedos
-        self.query_one("#dos-profile", Select).display = show_dos_profile
-        self.query_one("#ibm-dos-version", Select).display = show_ibm_dos_version
+        _toggle("dos-profile", "dos-profile-label", show_dos_profile)
+        _toggle("ibm-dos-version", "ibm-dos-version-label", show_ibm_dos_version)
         self.query_one("#boot-assets-row", Horizontal).display = show_boot_assets
+        try:
+            self.query_one("#boot-assets-label").display = show_boot_assets
+        except Exception:
+            pass
         # Custom payload doesn't work with fixed-geometry MartyPC targets.
-        self.query_one("#custom-payload-row", Horizontal).display = (
-            (is_vhd or img_system_format) and not is_martypc
-        )
-        self.query_one("#freedos-url", Input).display = show_freedos_url
+        custom_payload_visible = (is_vhd or img_system_format) and not is_martypc
+        self.query_one("#custom-payload-row", Horizontal).display = custom_payload_visible
+        try:
+            self.query_one("#custom-payload-label").display = custom_payload_visible
+        except Exception:
+            pass
+        _toggle("freedos-url", "freedos-url-label", show_freedos_url)
         # Refresh the wizard's live summary card whenever form state moves.
         self._refresh_summary()
 
