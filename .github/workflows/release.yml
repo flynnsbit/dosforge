@@ -1,10 +1,11 @@
 name: Release Windows bundle
 
-# Triggered automatically when a tag matching ``v*`` is pushed. Three
-# build jobs (full, cli) run in parallel after a tiny
-# create-release job stamps out an empty GitHub release.  Each build
+# Triggered automatically when a tag matching ``v*`` is pushed (but
+# NOT ``linux-v*`` tags — those fire the release-linux workflow).
+# Two build jobs (full, cli) run in parallel after a tiny
+# create-release job stamps out an empty GitHub release. Each build
 # job uploads its zip to that release with ``gh release upload
-# --clobber``.  Total wall-clock time is ~3-4 minutes instead of the
+# --clobber``. Total wall-clock time is ~3-4 minutes instead of the
 # 9-minute serial pipeline used previously.
 
 on:

@@ -1,0 +1,172 @@
+name: Release Linux bundle
+
+# Triggered when a ``linux-v*`` tag is pushed (or manually via
+# workflow_dispatch). Builds a pip-installable wheel + sdist + a
+# self-contained source tarball with install instructions, and
+# uploads them to a GitHub release named after the tag.
+#
+# Linux users get qemu / mtools / 7z / innoextract from their distro
+# (the tarball's INSTALL.md lists the apt/dnf/pacman one-liners). The
+# wheel pulls textual / sv-ttk / py7zr from PyPI.
+
+on:
+  push:
+    tags:
+      - 'linux-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to (re)build the release for (e.g. linux-v0.5.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write  # required for `gh release create` / `gh release upload`
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Compute version from tag
+        id: vars
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          # linux-v0.5.0 -> 0.5.0  (matches the pyproject.toml version)
+          version="${tag#linux-v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag"          >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+
+      - name: Verify dosassets folder skeleton
+        run: python scripts/check-dosassets-readmes.py
+
+      - name: Build sdist + wheel
+        run: |
+          python -m build --sdist --wheel --outdir dist/
+
+      - name: Verify wheel installs cleanly and CLI works
+        run: |
+          python -m venv /tmp/venv-smoke
+          /tmp/venv-smoke/bin/pip install --upgrade pip
+          /tmp/venv-smoke/bin/pip install dist/*.whl
+          /tmp/venv-smoke/bin/dosforge --help | head -20
+          /tmp/venv-smoke/bin/dosforge create --help | head -5
+          /tmp/venv-smoke/bin/dosforge check-deps --help | head -5
+
+      - name: Assemble Linux release tarball with install instructions
+        run: |
+          ver='${{ steps.vars.outputs.version }}'
+          stage="dosforge-${ver}-linux"
+          mkdir -p "$stage"
+          cp dist/*.whl dist/*.tar.gz "$stage/"
+          cp -r dosassets "$stage/"
+          cp -r scripts "$stage/"
+          [ -f README.md ] && cp README.md "$stage/" || true
+          [ -f CHANGELOG.md ] && cp CHANGELOG.md "$stage/" || true
+          cat > "$stage/INSTALL.md" <<EOF
+          # dosforge Linux install (v${ver})
+
+          ## 1. Install the Python package
+
+              python3 -m venv .venv
+              . .venv/bin/activate
+              pip install ./dosforge-${ver}-py3-none-any.whl
+
+          ## 2. Install the system tools dosforge shells out to
+
+              # Debian / Ubuntu
+              sudo apt install qemu-system-x86 qemu-utils nbd-client \\
+                  mtools p7zip-full innoextract python3-tk
+
+              # Fedora / RHEL
+              sudo dnf install qemu-system-x86 qemu-img nbd mtools \\
+                  p7zip p7zip-plugins innoextract python3-tkinter
+
+              # Arch
+              sudo pacman -S qemu-base qemu-img nbd mtools p7zip \\
+                  innoextract tk
+
+          ## 3. Run
+
+              dosforge                # help + examples
+              dosforge create --help  # full create reference
+              dosforge tui            # interactive TUI
+              dosforge gui            # desktop GUI (needs X11 / Wayland + Tk)
+
+          ## 4. DOS install media
+
+          Drop your install diskettes into the matching
+          dosassets/<mode>/ folder. Each folder ships a readme.txt
+          explaining the expected filenames.
+
+          For IBM PC-DOS 7.1 specifically (FAT32 + LBA), the official
+          IBM ServerGuide Scripting Toolkit is no longer hosted on
+          ibm.com but a verified mirror is preserved on the Internet
+          Archive:
+
+              python3 scripts/fetch-pcdos71-assets.py
+
+          downloads the IBM-distributed installer (SHA-1 verified)
+          and unpacks the required files into dosassets/pcdos71/
+          with per-file SHA-256 verification.
+
+          ## What's bootable on Linux
+
+          Every DOS boot mode that works on Windows works on Linux
+          too, via qemu-nbd for the disk-prep phase and qemu-system
+          for the in-guest install phase. Per-DOS authentic MBR
+          (FDISK /MBR) and FAT16/FAT32 BPB geometry handling apply
+          on both platforms identically because they run inside the
+          DOS guest.
+          EOF
+          tar czf "${stage}.tar.gz" "$stage"
+          sha256sum "${stage}.tar.gz" dist/*.whl dist/*.tar.gz
+          echo "stage_tarball=${stage}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Create (or recreate) the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag='${{ steps.vars.outputs.tag }}'
+          ver='${{ steps.vars.outputs.version }}'
+          notes="releases/${tag}-release-notes.md"
+          title="dosforge ${ver} (Linux)"
+
+          # Re-runnable: delete any pre-existing release for this tag.
+          gh release delete "$tag" --yes --cleanup-tag=false 2>/dev/null || true
+
+          if [ -f "$notes" ]; then
+            gh release create "$tag" --title "$title" --notes-file "$notes"
+          else
+            gh release create "$tag" --title "$title" --generate-notes
+          fi
+          echo "Release stamped at https://github.com/${{ github.repository }}/releases/tag/$tag"
+
+      - name: Upload Linux artifacts to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag='${{ steps.vars.outputs.tag }}'
+          gh release upload "$tag" \
+            "$stage_tarball" \
+            dist/*.whl \
+            dist/*.tar.gz \
+            --clobber
+          echo "Uploaded Linux artifacts to $tag"
