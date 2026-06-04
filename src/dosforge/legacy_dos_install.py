@@ -98,6 +98,14 @@ class LegacyDosInstallProfile:
     """Volume label written by FORMAT32 in the ``format32`` flow.
     Ignored by other install methods."""
 
+    supports_fdisk_mbr: bool = False
+    """If True, the install AUTOEXEC runs ``FDISK /MBR`` (or the
+    equivalent ``FDISK32 /MBR`` for PC-DOS 7.1) before formatting so
+    the resulting disk carries the OS's OWN authentic MBR boot code
+    instead of the generic dosforge MBR. Set True for DOS 5.0+ MS-DOS,
+    PC-DOS 5+ and Win95 OSR2 (all support FDISK /MBR). Left False for
+    DOS 3.x — those releases shipped FDISK without /MBR support."""
+
 
 # Pre-built profile descriptors keyed by short identifier.
 def compaq331_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
@@ -154,6 +162,9 @@ def msdos5_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
         # FORMAT does a sector-by-sector verify pass.  32 MiB in
         # software emulation takes a couple minutes; allow 5min.
         timeout_seconds=300.0,
+        # MS-DOS 5.0 FDISK supports /MBR — write authentic MS-DOS 5
+        # MBR boot code instead of dosforge's generic MBR.
+        supports_fdisk_mbr=True,
     )
 
 
@@ -170,6 +181,8 @@ def msdos622_profile(install_image: Path, boot_assets_dir: Path | None = None) -
         required_system_files=("IO.SYS", "MSDOS.SYS", "COMMAND.COM"),
         install_method="format",
         timeout_seconds=300.0,
+        # MS-DOS 6.22 FDISK supports /MBR.
+        supports_fdisk_mbr=True,
     )
 
 
@@ -194,6 +207,8 @@ def pcdos7_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
         required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
         install_method="format",
         timeout_seconds=300.0,
+        # PC-DOS 7.0 FDISK supports /MBR.
+        supports_fdisk_mbr=True,
     )
 
 
@@ -208,19 +223,27 @@ def pcdos71_profile(
     ``install_image`` should be a known-bootable PC-DOS 7.1 1.44 MB
     floppy (the SGTK ``tk_raid.vfd`` works) — the boot sector and IBMBIO/
     IBMDOS/COMMAND on it are reused. ``boot_assets_dir`` must contain
-    ``DOS/FORMAT32.COM`` (the FAT32-aware formatter), which is copied
-    into the install floppy so the auto-install script can run it.
+    ``DOS/FORMAT32.COM`` AND ``DOS/FDISK32.COM`` (both from IBM's
+    ServerGuide Scripting Toolkit), which are copied into the install
+    floppy so the auto-install script can run them.
 
     The installer:
 
-    1. Deletes the install floppy's incidental payload (STKHDER.BAT,
-       USRVARS.BAT, tkzip.exe, DOS\\ tree, CONFIG.SYS, AUTOEXEC.BAT) so
-       FORMAT32 has room to operate.
-    2. Copies FORMAT32.COM from the SGTK into the install floppy.
-    3. Generates an AUTOEXEC.BAT that runs FORMAT32 twice
-       (FORMAT32 /Q /V:LABEL then FORMAT32 /Q /S /V:LABEL — per the
-       vogons.org guide the /S transfer only works on the second pass)
-       and writes the C:\\VHDMK.OK marker on success.
+    1. Copies FORMAT32.COM and FDISK32.COM from the SGTK into the
+       install floppy (overwriting any existing copy via mcopy -o).
+    2. Generates an AUTOEXEC.BAT that:
+         a. Runs FDISK32 /MBR to write PC-DOS 7.1's authentic IBM MBR
+            boot code over whatever dosforge wrote during MBR prep.
+            This is the strict-authenticity fix: the boot disk's MBR
+            must come from the same DOS that owns the partition.
+            FDISK32's MBR is LBA-aware (INT 13h AH=42), so it doesn't
+            care about the AT BIOS's CHS translation mode (CHS / ECHS
+            / LBA) — eliminates the whole class of geometry-mismatch
+            blinking-cursor failures.
+         b. Runs FORMAT32 twice (FORMAT32 /Q /V:LABEL then
+            FORMAT32 /Q /S /V:LABEL — per vogons.org the /S transfer
+            only works on the second pass) and writes C:\\VHDMK.OK on
+            success.
 
     Per https://www.vogons.org/viewtopic.php?t=93030 — FORMAT32's /S
     writes a proper FAT32 boot sector with OEM 'IBM  7.1' and transfers
@@ -229,20 +252,10 @@ def pcdos71_profile(
     if boot_assets_dir is None:
         raise ValidationError(
             "pcdos71_profile requires the boot assets directory so it can "
-            "locate FORMAT32.COM for the install floppy."
+            "locate FORMAT32.COM and FDISK32.COM for the install floppy."
         )
-    format32 = boot_assets_dir / "DOS" / "FORMAT32.COM"
-    if not format32.is_file():
-        # Tolerate flat layouts: DOS/FORMAT32.COM or just FORMAT32.COM.
-        alt = boot_assets_dir / "FORMAT32.COM"
-        if alt.is_file():
-            format32 = alt
-        else:
-            raise ValidationError(
-                "pcdos71_profile: FORMAT32.COM not found under "
-                f"{boot_assets_dir}. Expected it at DOS/FORMAT32.COM "
-                "(IBM ServerGuide Scripting Toolkit layout) or at the root."
-            )
+    format32 = _find_pcdos71_tool(boot_assets_dir, "FORMAT32.COM")
+    fdisk32 = _find_pcdos71_tool(boot_assets_dir, "FDISK32.COM")
     return LegacyDosInstallProfile(
         label="PC-DOS 7.1",
         install_image=install_image,
@@ -253,17 +266,36 @@ def pcdos71_profile(
         # is comfortable for partitions up to a few hundred MiB.
         timeout_seconds=300.0,
         # tk_raid.vfd has ~90 KB of free space, more than enough for
-        # FORMAT32.COM (20 KB) + YES.TXT + the replacement CONFIG.SYS /
-        # AUTOEXEC.BAT we inject below. No need to delete the existing
-        # payload (tkzip.exe, DOS\, USRVARS.BAT, …) — mcopy -o overwrites
-        # CONFIG.SYS / AUTOEXEC.BAT and the unused leftover files just
-        # sit on the floppy. Skipping the deletes also avoids needing
-        # mdeltree (not in the bundled mtools on Windows).
+        # FORMAT32.COM (20 KB) + FDISK32.COM (21 KB) + YES.TXT + the
+        # replacement AUTOEXEC.BAT. No need to delete the existing
+        # payload — mcopy -o overwrites CONFIG.SYS / AUTOEXEC.BAT and
+        # the unused leftover files just sit on the floppy.
         pre_install_deletes=(),
         pre_install_copies=(
             (format32, "FORMAT32.COM"),
+            (fdisk32, "FDISK32.COM"),
         ),
         install_label=install_label,
+    )
+
+
+def _find_pcdos71_tool(boot_assets_dir: Path, name: str) -> Path:
+    """Locate a PC-DOS 7.1 tool under ``boot_assets_dir``.
+
+    Accepts both the IBM ServerGuide layout (``DOS/<name>``) and a flat
+    layout (``<name>``) for users who already extracted the DOS/ tree.
+    """
+    primary = boot_assets_dir / "DOS" / name
+    if primary.is_file():
+        return primary
+    alt = boot_assets_dir / name
+    if alt.is_file():
+        return alt
+    raise ValidationError(
+        f"pcdos71_profile: {name} not found under {boot_assets_dir}. "
+        f"Expected it at DOS/{name} (IBM ServerGuide Scripting Toolkit "
+        "layout) or at the root. Run scripts/fetch-pcdos71-assets.py to "
+        "populate dosassets/pcdos71/ from the official SGTK."
     )
 
 
@@ -500,6 +532,11 @@ def msdos71_profile(
         # + IFSHLP/DBLBUFF extraction from the staged WIN95_*.CAB files.
         timeout_seconds=240.0,
         vhd_pre_install_copies=tuple(vhd_pre_install),
+        # Win95 OSR2's FDISK.EXE (extracted from ebd.cab to the ramdrive
+        # before the SYS step) supports /MBR and writes IBM's LBA-aware
+        # MBR. The sys_w95 AUTOEXEC runs %RAMD%:\\FDISK.EXE /MBR if
+        # present, before SYS A: C:.
+        supports_fdisk_mbr=True,
     )
 
 
@@ -636,10 +673,23 @@ class LegacyDosQemuInstaller:
             # volume-label prompt. Then verify the system files were
             # transferred by SYS-equivalent of /S. COPY adds COMMAND.COM
             # (some DOS 3.x FORMAT /S only copies IO.SYS + MSDOS.SYS).
+            #
+            # If the DOS supports FDISK /MBR (5.0+), write its authentic
+            # MBR boot code first. DOS 3.x has no /MBR support so for
+            # those modes we keep dosforge's era-appropriate generic MBR.
             yes_input = b"Y\r\n\r\n"
+            if profile.supports_fdisk_mbr:
+                fdisk_mbr_line = (
+                    b"ECHO step=before-fdisk-mbr > A:\\STEP.TXT\r\n"
+                    b"FDISK /MBR > A:\\MBR_OUT.TXT\r\n"
+                    b"ECHO step=after-fdisk-mbr > A:\\STEP.TXT\r\n"
+                )
+            else:
+                fdisk_mbr_line = b""
             autoexec_bat = (
                 b"@ECHO OFF\r\n"
                 b"PROMPT $p$g\r\n"
+                + fdisk_mbr_line +
                 b"ECHO step=before-format > A:\\STEP.TXT\r\n"
                 b"FORMAT C: /S < A:\\YES.TXT > A:\\FMT_OUT.TXT\r\n"
                 b"ECHO step=after-format > A:\\STEP.TXT\r\n"
@@ -652,18 +702,28 @@ class LegacyDosQemuInstaller:
             )
             self._mcopy_text(work, "YES.TXT", yes_input)
         elif profile.install_method == "format32":
-            # PC-DOS 7.1: FORMAT32 /Q must run twice to reliably transfer
-            # system files. Per vogons.org/viewtopic.php?t=93030:
-            #   "FORMAT32 would surely fail to transfer system files on
-            #    first format. Only after doing a second format would the
-            #    system files get transferred."
-            # FORMAT32 /Q still prompts for confirmation; feed Y\r\n.
+            # PC-DOS 7.1: write the authentic IBM MBR first (FDISK32 /MBR),
+            # then run FORMAT32 twice (the /S transfer only works on the
+            # second pass — per vogons.org/viewtopic.php?t=93030).
+            #
+            # FDISK32 /MBR replaces whatever boot code dosforge wrote
+            # (an MS-DOS 3.30-extracted MBR) with IBM PC-DOS 7.1's own
+            # LBA-aware MBR. That kills the whole class of geometry-
+            # mismatch boot failures on AT BIOSes: the old MS-DOS 3.30
+            # MBR did CHS INT 13h reads which depend on the BIOS's CHS
+            # translation matching the partition entry's CHS; IBM's MBR
+            # uses INT 13h AH=42 (extended LBA reads) and only needs the
+            # partition entry's start_lba.
+            # Strict authenticity: every PC-DOS 7.1 disk's MBR comes
+            # from PC-DOS 7.1.
             yes_input = b"Y\r\nY\r\nY\r\nY\r\n"
             label = profile.install_label.encode("ascii", "ignore")[:11] or b"DOS71"
             autoexec_bat = (
                 b"@ECHO OFF\r\n"
                 b"PROMPT $p$g\r\n"
-                b"ECHO step=before-format1 > A:\\STEP.TXT\r\n"
+                b"ECHO step=before-fdisk-mbr > A:\\STEP.TXT\r\n"
+                b"FDISK32 /MBR > A:\\MBR_OUT.TXT\r\n"
+                b"ECHO step=after-fdisk-mbr > A:\\STEP.TXT\r\n"
                 b"FORMAT32 C: /Q /V:" + label + b" < A:\\YES.TXT > A:\\FMT1_OUT.TXT\r\n"
                 b"ECHO step=after-format1 > A:\\STEP.TXT\r\n"
                 b"FORMAT32 C: /Q /S /V:" + label + b" < A:\\YES.TXT > A:\\FMT2_OUT.TXT\r\n"
@@ -702,6 +762,11 @@ class LegacyDosQemuInstaller:
             # (setramd.bat + LglDrv table), extract ebd.cab to the
             # ramdrive, then run SYS A: C: from there. Diagnostic step
             # markers are dropped onto A:\\ at each phase for postmortem.
+            # Win95 OSR2 SYS install: extract the ramdisk tools first,
+            # write the authentic Win95 FDISK MBR over dosforge's generic
+            # one (FDISK.COM in ebd.cab is LBA-aware), then SYS A: C: to
+            # write the FAT32 boot sector + system files. Strict
+            # authenticity: the MBR is genuine OSR2 FDISK output.
             autoexec_bat = (
                 b"@ECHO OFF\r\n"
                 b"set EXPAND=YES\r\n"
@@ -713,6 +778,11 @@ class LegacyDosQemuInstaller:
                 b"ECHO step=before-extract > A:\\STEP.TXT\r\n"
                 b"%RAMD%:\\extract /y /e /l %RAMD%: A:\\ebd.cab > A:\\EXT_OUT.TXT\r\n"
                 b"ECHO step=after-extract > A:\\STEP.TXT\r\n"
+                b"IF NOT EXIST %RAMD%:\\FDISK.EXE GOTO SKIP_MBR\r\n"
+                b"ECHO step=before-fdisk-mbr > A:\\STEP.TXT\r\n"
+                b"%RAMD%:\\FDISK.EXE /MBR > A:\\MBR_OUT.TXT\r\n"
+                b"ECHO step=after-fdisk-mbr > A:\\STEP.TXT\r\n"
+                b":SKIP_MBR\r\n"
                 b"%RAMD%:\\sys.com A: C: > A:\\SYS_OUT.TXT\r\n"
                 b"ECHO step=after-sys > A:\\STEP.TXT\r\n"
                 b"copy A:\\COMMAND.COM C:\\ > A:\\CP_OUT.TXT\r\n"
