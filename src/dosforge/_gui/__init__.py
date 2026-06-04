@@ -85,8 +85,6 @@ class DosForgeGUI:
         self.theme.apply()
         set_window_icon(self.root)
 
-        self.worker = OperationWorker(self.root)
-
         # Header: title + theme toggle.
         header = ttk.Frame(self.root, style="Header.TFrame", padding=(20, 14, 20, 8))
         header.pack(side="top", fill="x")
@@ -120,6 +118,10 @@ class DosForgeGUI:
         # Status strip.
         self.status = StatusBar(self.root, self.theme)
         self.status.pack(side="bottom", fill="x")
+
+        # Worker needs the StatusBar so it can stream subprocess output
+        # into the log panel.
+        self.worker = OperationWorker(self.root, on_log=self.status.append_log)
 
         self._views: dict = {}
         self._build_views(nav_items)
@@ -202,6 +204,10 @@ class DosForgeGUI:
         if self.worker.busy:
             self.status.set_status("Please wait for the current operation to finish.")
             return
+        # Fresh log + visible panel so users can watch the steps run.
+        self.status.clear_log()
+        self.status.show_log()
+        self.status.append_log(f"[{name}] {busy_msg}\n")
         self.status.set_status(busy_msg)
         self.status.set_busy(True)
 
@@ -209,16 +215,21 @@ class DosForgeGUI:
             self.status.set_busy(False)
             if result.ok:
                 self.status.set_status(success_msg)
+                self.status.append_log(f"[{name}] {success_msg}\n")
                 if on_success is not None:
                     try:
                         on_success(result.value)
                     except DosForgeError as exc:
                         self.status.set_status(str(exc), error=True)
+                        self.status.append_log(f"[{name}] error: {exc}\n")
                     except Exception as exc:  # noqa: BLE001
                         self.status.set_status(str(exc), error=True)
+                        self.status.append_log(f"[{name}] error: {exc}\n")
             else:
                 err = result.error
-                self.status.set_status(str(err) if err else "Operation failed.", error=True)
+                msg = str(err) if err else "Operation failed."
+                self.status.set_status(msg, error=True)
+                self.status.append_log(f"[{name}] FAILED: {msg}\n")
 
         if not self.worker.submit(name, func, done):
             self.status.set_busy(False)

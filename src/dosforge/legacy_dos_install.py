@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from .commands import CommandRunner
+from .commands import CommandRunner, subprocess_no_window_kwargs
 from .errors import ValidationError
 
 
@@ -316,6 +316,7 @@ def _extract_osr2_cab_from_floppy(
         cwd=cache_dir,
         capture_output=True,
         text=True,
+        **subprocess_no_window_kwargs(),
     )
     if result.returncode != 0 or not cached.is_file() or cached.stat().st_size == 0:
         raise ValidationError(
@@ -395,6 +396,7 @@ def _extract_osr2_member_with_seven_zip(
         ],
         capture_output=True,
         text=True,
+        **subprocess_no_window_kwargs(),
     )
     # 7z exits 2 for "open errors" (spanned-cab warning) even when the
     # requested member extracts cleanly, so we trust the on-disk result.
@@ -823,6 +825,7 @@ class LegacyDosQemuInstaller:
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
+            **subprocess_no_window_kwargs(),
         )
 
         deadline = time.monotonic() + profile.timeout_seconds

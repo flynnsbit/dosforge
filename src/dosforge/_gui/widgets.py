@@ -95,18 +95,55 @@ class Card(ttk.Frame):
 
 
 class StatusBar(tk.Frame):
-    """Bottom status strip with a message + indeterminate busy bar."""
+    """Bottom status strip: status line + indeterminate busy bar + an
+    expandable log panel that shows step-by-step subprocess output.
+
+    The log panel is collapsed by default and toggled via the "Show log"
+    chevron button. When an operation runs, the GUI's run_operation
+    redirects stdout/stderr to ``append_log`` so users see progress
+    instead of guessing whether the app is still working.
+    """
+
+    _LOG_LINES_VISIBLE = 8
 
     def __init__(self, parent, theme) -> None:
         pal = theme.palette
         super().__init__(parent, bg=pal.window_bg)
         self._theme = theme
-        inner = tk.Frame(self, bg=pal.window_bg)
-        inner.pack(fill="x", padx=16, pady=6)
-        self._inner = inner
-        self._label = ttk.Label(inner, text="Ready.", style="Status.TLabel")
+
+        status_row = tk.Frame(self, bg=pal.window_bg)
+        status_row.pack(fill="x", padx=16, pady=(6, 4))
+        self._status_row = status_row
+        self._label = ttk.Label(status_row, text="Ready.", style="Status.TLabel")
         self._label.pack(side="left", fill="x", expand=True)
-        self._progress = ttk.Progressbar(inner, mode="indeterminate", length=160)
+        self._toggle_btn = ttk.Button(
+            status_row,
+            text="Show log",
+            command=self._toggle_log,
+            takefocus=False,
+        )
+        self._toggle_btn.pack(side="right")
+        self._progress = ttk.Progressbar(status_row, mode="indeterminate", length=160)
+
+        # Log panel — kept packed-but-hidden so toggling is fast.
+        log_holder = tk.Frame(self, bg=pal.window_bg)
+        self._log_holder = log_holder
+        self._log_text = tk.Text(
+            log_holder,
+            height=self._LOG_LINES_VISIBLE,
+            wrap="none",
+            relief="flat",
+            borderwidth=0,
+            font=("Consolas", 9),
+        )
+        self._log_scroll = ttk.Scrollbar(
+            log_holder, orient="vertical", command=self._log_text.yview
+        )
+        self._log_text.configure(yscrollcommand=self._log_scroll.set, state="disabled")
+        self._log_scroll.pack(side="right", fill="y")
+        self._log_text.pack(side="left", fill="both", expand=True, padx=(16, 0))
+        self._log_visible = False
+        self._apply_log_theme()
 
     def set_status(self, message: str, *, error: bool = False) -> None:
         text = " ".join(message.splitlines()) if message else ""
@@ -117,16 +154,57 @@ class StatusBar(tk.Frame):
 
     def set_busy(self, busy: bool) -> None:
         if busy:
-            self._progress.pack(side="right", padx=(12, 0))
+            self._progress.pack(side="right", padx=(12, 8))
             self._progress.start(12)
         else:
             self._progress.stop()
             self._progress.pack_forget()
 
+    def clear_log(self) -> None:
+        self._log_text.configure(state="normal")
+        self._log_text.delete("1.0", "end")
+        self._log_text.configure(state="disabled")
+
+    def append_log(self, text: str) -> None:
+        if not text:
+            return
+        self._log_text.configure(state="normal")
+        self._log_text.insert("end", text)
+        # Trim to keep the buffer from growing unbounded.
+        line_count = int(self._log_text.index("end-1c").split(".")[0])
+        if line_count > 500:
+            self._log_text.delete("1.0", f"{line_count - 500}.0")
+        self._log_text.see("end")
+        self._log_text.configure(state="disabled")
+
+    def show_log(self) -> None:
+        if not self._log_visible:
+            self._log_holder.pack(fill="both", expand=False, padx=16, pady=(0, 6))
+            self._toggle_btn.configure(text="Hide log")
+            self._log_visible = True
+
+    def _toggle_log(self) -> None:
+        if self._log_visible:
+            self._log_holder.pack_forget()
+            self._toggle_btn.configure(text="Show log")
+            self._log_visible = False
+        else:
+            self.show_log()
+
     def refresh_theme(self) -> None:
         pal = self._theme.palette
         self.configure(bg=pal.window_bg)
-        self._inner.configure(bg=pal.window_bg)
+        self._status_row.configure(bg=pal.window_bg)
+        self._log_holder.configure(bg=pal.window_bg)
+        self._apply_log_theme()
+
+    def _apply_log_theme(self) -> None:
+        pal = self._theme.palette
+        self._log_text.configure(
+            background=pal.surface_alt,
+            foreground=pal.text,
+            insertbackground=pal.text,
+        )
 
 
 class NavRail(tk.Frame):

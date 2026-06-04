@@ -34,6 +34,7 @@ import subprocess
 from pathlib import Path
 from uuid import uuid4
 
+from .commands import subprocess_no_window_kwargs
 from .errors import ValidationError
 from .paths import app_cache_dir
 
@@ -130,6 +131,7 @@ def extract_pcdos7_install_floppy(
             [mformat_exe, "-i", str(scratch_img), "-f", "1440", "::"],
             check=True,
             capture_output=True,
+            **subprocess_no_window_kwargs(),
         )
 
         conf = work / "extract.conf"
@@ -165,6 +167,7 @@ def extract_pcdos7_install_floppy(
             capture_output=True,
             text=True,
             timeout=time_limit_seconds + 15,
+            **subprocess_no_window_kwargs(),
         )
 
         if not scratch_img.is_file() or scratch_img.stat().st_size != 1474560:
@@ -185,6 +188,7 @@ def extract_pcdos7_install_floppy(
         check = subprocess.run(
             [mdir_exe, "-i", str(scratch_img), "-a", "::"],
             capture_output=True, text=True,
+            **subprocess_no_window_kwargs(),
         )
         if "IBMBIO" not in (check.stdout or "").upper():
             keep_work_for_postmortem = True

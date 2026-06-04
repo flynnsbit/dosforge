@@ -66,7 +66,7 @@ from uuid import uuid4
 
 from ._core import mbr as core_mbr
 from ._core import vhd_footer as core_vhd_footer
-from .commands import CommandRunner
+from .commands import CommandRunner, subprocess_no_window_kwargs
 from .errors import ValidationError
 
 
@@ -401,6 +401,7 @@ def run_boot_probe(
             capture_output=True,
             text=True,
             timeout=proc_timeout,
+            **subprocess_no_window_kwargs(),
         )
         exit_code: int | None = proc.returncode
         stderr_tail = (proc.stderr or "")[-2048:]

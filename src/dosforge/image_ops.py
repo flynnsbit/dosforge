@@ -27,6 +27,7 @@ from pathlib import Path
 
 from ._core import mbr as core_mbr
 from ._platform import get_backend
+from .commands import subprocess_no_window_kwargs
 from .errors import ValidationError
 
 
@@ -153,6 +154,7 @@ def _run_mtool(argv: list[str], *, capture: bool = False, cwd: Path | None = Non
             capture_output=not capture,
             text=not capture,
             cwd=cwd,
+            **subprocess_no_window_kwargs(),
         )
     except FileNotFoundError as exc:
         raise ValidationError(f"Missing external command: {argv[0]}") from exc
@@ -197,7 +199,13 @@ def cat(image_path: Path, dos_path: str, *, partition: int | None = None) -> byt
         "-",
     ]
     try:
-        completed = subprocess.run(argv, check=False, capture_output=True, text=False)
+        completed = subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=False,
+            **subprocess_no_window_kwargs(),
+        )
     except FileNotFoundError as exc:
         raise ValidationError(f"Missing external command: {argv[0]}") from exc
     if completed.returncode != 0:

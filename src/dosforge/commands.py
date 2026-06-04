@@ -3,11 +3,34 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from .errors import CommandError, DependencyError
+
+
+# On Windows, when the parent process is windowed (e.g. dosforge-gui.exe with
+# console=False), every subprocess spawned for a CLI tool like qemu-img.exe
+# or mformat.exe gets its own brand-new console window that flashes on screen.
+# Passing CREATE_NO_WINDOW (0x08000000) tells the OS not to create a console
+# for the child. stdout/stderr are still captured via pipes because every
+# call site uses ``capture_output=True``. On non-Windows this constant doesn't
+# exist and the kwargs dict is empty.
+def subprocess_no_window_kwargs() -> dict:
+    """Return kwargs to add to ``subprocess.run`` / ``Popen`` calls so the
+    child process does NOT pop a console window on Windows.
+
+    Importable from any module that calls subprocess directly.
+    """
+    if sys.platform != "win32":
+        return {}
+    flag = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    return {"creationflags": flag}
+
+
+_NO_WINDOW_KWARGS = subprocess_no_window_kwargs()
 
 
 @dataclass(slots=True)
@@ -72,6 +95,7 @@ class CommandRunner:
                 text=True,
                 cwd=cwd,
                 env=dict(env) if env is not None else None,
+                **_NO_WINDOW_KWARGS,
             )
         except FileNotFoundError as exc:
             missing = full_command[0] if full_command else "<unknown>"
@@ -87,6 +111,7 @@ class CommandRunner:
                     text=True,
                     cwd=cwd,
                     env=dict(env) if env is not None else None,
+                    **_NO_WINDOW_KWARGS,
                 )
                 full_command = fallback_command
             except FileNotFoundError as exc:
@@ -122,6 +147,7 @@ class CommandRunner:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
+                **_NO_WINDOW_KWARGS,
             )
         except FileNotFoundError as exc:
             missing = resolved[0] if resolved else "<unknown>"
