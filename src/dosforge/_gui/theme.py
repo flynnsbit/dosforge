@@ -280,7 +280,13 @@ class ThemeManager:
         )
 
     def _apply_titlebar_theme(self) -> None:
-        """Match the Win11 title bar to the app theme (DWM immersive dark)."""
+        """Match the Win11 title bar to the app theme (DWM immersive dark).
+
+        Setting the DWM attribute alone leaves the title bar stuck in light
+        mode until the window loses+regains focus. After setting it we kick
+        the non-client area with ``SetWindowPos(..., SWP_FRAMECHANGED)`` and
+        a brief withdraw/deiconify so the first paint is correct.
+        """
         if sys.platform != "win32":
             return
         try:
@@ -290,12 +296,36 @@ class ThemeManager:
             hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
             value = ctypes.c_int(1 if self.mode == "dark" else 0)
             # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (1903+); 19 on older builds.
+            set_ok = False
             for attr in (20, 19):
                 try:
                     ctypes.windll.dwmapi.DwmSetWindowAttribute(
                         hwnd, attr, ctypes.byref(value), ctypes.sizeof(value)
                     )
+                    set_ok = True
                 except Exception:
                     continue
+
+            if not set_ok:
+                return
+
+            # Force the non-client area (title bar) to repaint with the
+            # new attribute. Without this the title bar stays in light
+            # mode until the window loses and regains focus.
+            user32 = ctypes.windll.user32
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOZORDER = 0x0004
+            SWP_NOACTIVATE = 0x0010
+            SWP_FRAMECHANGED = 0x0020
+            user32.SetWindowPos(
+                hwnd,
+                0,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            )
         except Exception:
             pass
