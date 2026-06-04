@@ -123,18 +123,30 @@ jobs:
 
           # Variant-specific shape checks
           $hasTextual = Test-Path "$internal\textual\__init__.py"
+          $hasTkinter = Test-Path "$internal\tkinter"
+          $hasSvTtk = Test-Path "$internal\sv_ttk"
           $hasQemuSys = Test-Path "$internal\vendor\windows\bin\qemu-system-i386.exe"
+          $hasGuiExe = Test-Path "$bundle\dosforge-gui.exe"
           switch ($variant) {
             'full' {
-              if (-not $hasTextual) { $failures += "full bundle missing textual" }
+              if ($hasTextual) { $failures += "full bundle should no longer ship textual (TUI stack removed in v0.5.0-gui-pre3)" }
+              if (-not $hasGuiExe) { $failures += "full bundle missing dosforge-gui.exe" }
+              if (-not $hasTkinter) { $failures += "full bundle missing tkinter (GUI needs it)" }
+              if (-not $hasSvTtk) { $failures += "full bundle missing sv_ttk (GUI needs it)" }
               if (-not $hasQemuSys) { $failures += "full bundle missing qemu-system-i386" }
             }
             'lite' {
-              if (-not $hasTextual) { $failures += "lite bundle missing textual" }
+              if ($hasTextual) { $failures += "lite bundle should no longer ship textual" }
+              if (-not $hasGuiExe) { $failures += "lite bundle missing dosforge-gui.exe" }
+              if (-not $hasTkinter) { $failures += "lite bundle missing tkinter" }
+              if (-not $hasSvTtk) { $failures += "lite bundle missing sv_ttk" }
               if (-not $hasQemuSys) { $failures += "lite bundle missing qemu-system-i386" }
             }
             'cli' {
               if ($hasTextual) { $failures += "cli bundle leaked textual" }
+              if ($hasTkinter) { $failures += "cli bundle leaked tkinter" }
+              if ($hasSvTtk) { $failures += "cli bundle leaked sv_ttk" }
+              if ($hasGuiExe) { $failures += "cli bundle should not ship dosforge-gui.exe" }
               if ($hasQemuSys) { $failures += "cli bundle leaked qemu-system-i386" }
             }
           }
