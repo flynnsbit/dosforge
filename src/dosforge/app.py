@@ -272,7 +272,7 @@ class DosForgeApp(App[None]):
         yield Static("Selected image: (none)", id="context-bar")
         with TabbedContent(initial="tab-new"):
             # ── New Disk (wizard) ────────────────────────────────────
-            with TabPane("✨  New Disk", id="tab-new"):
+            with TabPane("New Disk", id="tab-new"):
                 with Horizontal(id="wizard-layout"):
                     with Vertical(id="wizard-main"):
                         yield Static("", id="wizard-progress")
@@ -315,7 +315,7 @@ class DosForgeApp(App[None]):
                                     placeholder="Path (for example: ~/vhd/disk.vhd)",
                                     id="create-path",
                                 )
-                                yield Button("📁", id="browse-create-path-btn", classes="btn-ghost")
+                                yield Button("...", id="browse-create-path-btn", classes="btn-ghost")
                             yield Label("Static size")
                             yield Input(
                                 value="512M",
@@ -423,7 +423,7 @@ class DosForgeApp(App[None]):
                                     ),
                                     id="boot-assets",
                                 )
-                                yield Button("📁", id="browse-boot-assets-btn", classes="btn-ghost")
+                                yield Button("...", id="browse-boot-assets-btn", classes="btn-ghost")
                             yield Label("Custom payload directory (optional)")
                             with Horizontal(classes="path-row", id="custom-payload-row"):
                                 yield Input(
@@ -433,7 +433,7 @@ class DosForgeApp(App[None]):
                                     id="custom-payload",
                                 )
                                 yield Button(
-                                    "📁",
+                                    "...",
                                     id="browse-custom-payload-btn",
                                     classes="btn-ghost",
                                 )
@@ -464,7 +464,7 @@ class DosForgeApp(App[None]):
                                 id="overwrite",
                             )
                             yield Button(
-                                "▶  Create + format VHD",
+                                "Create + format VHD",
                                 id="create-btn",
                                 classes="btn-primary",
                             )
@@ -482,7 +482,7 @@ class DosForgeApp(App[None]):
                                 classes="btn-primary",
                             )
                             yield Button(
-                                "⚡ Quick Create",
+                                "Quick Create",
                                 id="quick-create-btn",
                                 classes="btn-ghost",
                             )
@@ -494,14 +494,14 @@ class DosForgeApp(App[None]):
                         )
 
             # ── Browse ───────────────────────────────────────────────
-            with TabPane("📁  Browse", id="tab-browse"):
+            with TabPane("Browse", id="tab-browse"):
                 with Vertical(id="browse-tab"):
                     yield Label("Browse images and asset folders")
                     yield ParentDirectoryTree(str(Path.cwd()), id="vhd-tree")
                     yield Static("Selected image: (none)", id="selected-vhd")
 
             # ── Image Tools ──────────────────────────────────────────
-            with TabPane("🔧  Image Tools", id="tab-tools"):
+            with TabPane("Image Tools", id="tab-tools"):
                 with Vertical(id="tools-tab"):
                     yield Label(
                         "Inspect or extract files from the selected image "
@@ -523,7 +523,7 @@ class DosForgeApp(App[None]):
                             placeholder="Path to open in file manager",
                             id="open-input",
                         )
-                        yield Button("📁", id="browse-open-btn", classes="btn-ghost")
+                        yield Button("...", id="browse-open-btn", classes="btn-ghost")
                     yield Button(
                         "Open path in Files",
                         id="open-btn",
@@ -531,7 +531,7 @@ class DosForgeApp(App[None]):
                     )
 
             # ── Mounts ───────────────────────────────────────────────
-            with TabPane("🔌  Mounts", id="tab-mounts"):
+            with TabPane("Mounts", id="tab-mounts"):
                 with Vertical(id="mounts-tab"):
                     yield Label(
                         "Mount or unmount the currently selected disk image. "
@@ -555,7 +555,7 @@ class DosForgeApp(App[None]):
                     yield Static("No active mounts tracked.", id="mounts")
 
             # ── Utilities ────────────────────────────────────────────
-            with TabPane("⚙  Utilities", id="tab-utils"):
+            with TabPane("Utilities", id="tab-utils"):
                 with Vertical(id="utils-tab"):
                     yield Label("Diagnostics and maintenance helpers.")
                     yield Button(
@@ -1029,9 +1029,9 @@ class DosForgeApp(App[None]):
             return
         parts: list[str] = []
         if self.selected_image is not None:
-            parts.append(f"📀 {self.selected_image}")
+            parts.append(f"image: {self.selected_image}")
         else:
-            parts.append("📀 (no image selected)")
+            parts.append("image: (none selected)")
         try:
             boot = cast(str, self.query_one("#boot-mode", Select).value)
             media = cast(str, self.query_one("#media-type", Select).value)
