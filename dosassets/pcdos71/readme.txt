@@ -1,26 +1,55 @@
-PC-DOS 7.1 boot assets (from IBM ServerGuide Scripting Toolkit 1.3.07).
+IBM PC-DOS 7.1 install media (from the IBM ServerGuide Scripting Toolkit)
+=========================================================================
 
-Source: https://download.lenovo.com/servers/mig/systems/support/system_x/ibm_sw_sgtk_1_3_07_anyos_anycpu.zip
-Located in: sgdeploy/sgtk/DOS/ and sgdeploy/sgtk/ads/images/
+dosassets/pcdos71/
 
-Contents:
-  IBMBIO.COM, IBMDOS.COM, COMMAND.COM
-      PC-DOS 7.1 kernel + shell. These boot from FAT12, FAT16, AND FAT32.
-  DOS/
-      Full PC-DOS 7.1 tool set: FDISK32, FORMAT32, ATTRIB, CHKDSK, DEBUG,
-      DELTREE, DOSKEY, E (editor), FC, FIND, FORMAT, HIMEM, KEYB, LABEL,
-      MEM, MODE, MORE, MOVE, MSCDEX, RAMDRIVE, SMARTDRV, SUBST, TREE, XCOPY,
-      MOUSE, BLDLEVEL, etc. (SYS.COM is intentionally omitted ? the SGTK
-      ships PC-DOS 2000's SYS.COM which is incompatible with 7.1.)
-  install.vfd
-      A bootable PC-DOS 7.1 1.44 MB floppy (tk_raid.vfd from SGTK) used as
-      the base for the QEMU-driven FAT32 install. dosforge rewrites its
-      AUTOEXEC.BAT to drive FORMAT32 on the target VHD.
+dosforge's --boot-mode=pcdos71 needs:
 
-Per https://www.vogons.org/viewtopic.php?t=93030 :
-  - PC-DOS 7.1 is the only PC-DOS variant with FAT32/LBA support.
-  - Make the disk bootable with: FDISK32 then FORMAT32 /Q /V:LABEL
-    followed by FORMAT32 /Q /S /V:LABEL (the second pass transfers the
-    system files; PC-DOS FORMAT32's /S argument has a bug that prevents
-    the system-file copy on a freshly-unformatted partition).
-  - The boot sector that FORMAT32 writes carries OEM 'IBM  7.1'.
+  tk_raid.vfd       A bootable 1.44 MB PC-DOS 7.1 floppy from the IBM
+                    ServerGuide Scripting Toolkit (SGTK). Used as the
+                    install image: dosforge rewrites its AUTOEXEC.BAT
+                    in-place to run FORMAT32 against the target VHD.
+
+  DOS/FORMAT32.COM  IBM's FAT32-aware formatter (only present on PC-DOS 7.1).
+                    Copied into the install floppy by dosforge so the
+                    AUTOEXEC.BAT can call it.
+
+  DOS/IBMBIO.COM    PC-DOS 7.1 system files. Copied to the formatted
+  DOS/IBMDOS.COM    VHD by FORMAT32 /S during install.
+  DOS/COMMAND.COM
+
+Plus the rest of the PC-DOS 7.1 DOS/ tree (HIMEM.SYS, FDISK32.COM,
+DEBUG.COM, ATTRIB.EXE, MSCDEX.EXE, IBMCDET.SYS, IBMIDECD.SYS, ...) — all
+of which the SGTK ships under sgdeploy/sgtk/DOS/.
+
+How to populate this folder
+---------------------------
+
+Run::
+
+    python scripts/fetch-pcdos71-assets.py
+
+That script downloads the SGTK installer from the Internet Archive
+mirror, verifies its SHA-1, extracts it with 7-Zip, and copies the
+required files into this folder with per-file SHA-256 verification
+against the hashes published by github.com/Kreeblah/pcdos71-patch.
+
+Source provenance
+-----------------
+
+PC-DOS 7.1 was only ever distributed inside the IBM ServerGuide
+Scripting Toolkit, DOS Edition, v1.3.07. IBM's own support page
+
+  https://www.ibm.com/support/pages/ibm-serverguide-scripting-toolkit-dos-edition-version-1307
+
+still exists but no longer offers the download. The Internet Archive
+preserves a copy of the IBM-distributed installer
+
+  https://archive.org/details/pcdos-71-sgtk-1-3-07
+
+(``PCDOS71-sgtk_1_3_07.EXE``, 15,216,373 bytes,
+SHA-1 e9a1c3a2c9312148671e53887c05603f03b2a102).
+
+The files in this folder are NOT shipped with dosforge — they remain
+gitignored and must be fetched locally. dosforge's release zips never
+contain copyrighted DOS install media.
