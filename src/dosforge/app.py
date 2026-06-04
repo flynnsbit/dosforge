@@ -158,12 +158,12 @@ class DosForgeApp(App[None]):
     }
     #wizard-scroll {
       height: 1fr;
-      border: round $primary 50%;
+      border: round $primary;
       padding: 1 2;
-      background: $boost 20%;
+      background: $surface;
     }
     #wizard-scroll:focus-within {
-      border: round $primary;
+      border: round $accent;
     }
     #create-title {
       text-style: bold;
@@ -182,11 +182,11 @@ class DosForgeApp(App[None]):
       height: 1;
     }
     #wizard-summary {
-      border: round $primary 50%;
+      border: round $primary;
       padding: 1 2;
       height: 1fr;
       color: $text;
-      background: $boost 20%;
+      background: $surface;
     }
     #wizard-nav {
       height: 3;
@@ -211,11 +211,12 @@ class DosForgeApp(App[None]):
     }
     #vhd-tree {
       height: 1fr;
-      border: round $primary 50%;
+      border: round $primary;
       padding: 0 1;
+      background: $surface;
     }
     #vhd-tree:focus-within {
-      border: round $primary;
+      border: round $accent;
     }
     #selected-vhd {
       height: 1;
@@ -224,16 +225,17 @@ class DosForgeApp(App[None]):
       margin: 1 0 0 0;
     }
     #mounts {
-      border: round $primary 50%;
+      border: round $primary;
       padding: 1;
       height: 1fr;
       min-height: 5;
+      background: $surface;
     }
     #status {
       height: 3;
       padding: 0 2;
       margin: 0;
-      color: $text 80%;
+      color: $text;
       background: $boost;
     }
 
@@ -267,7 +269,11 @@ class DosForgeApp(App[None]):
     }
 
     /* ── Button palette: single blue primary, neutral secondary,
-       red only for destructive. Drops the cyan/orange/green mix. ── */
+       red only for destructive. Drops the cyan/orange/green mix.
+       NB: hover/focus backgrounds use SOLID colors only. Alpha
+       percentages like `$primary 20%` render as a stipple pattern
+       in conhost (no true alpha blending), which looks like the
+       button is covered in hash marks. ── */
     Button {
       margin: 0 1 1 0;
       padding: 0 2;
@@ -279,21 +285,39 @@ class DosForgeApp(App[None]):
       text-style: bold;
     }
     Button.btn-primary:hover {
-      background: $primary 80%;
+      background: $accent;
+      color: $text;
+    }
+    Button.btn-primary:focus {
+      background: $accent;
+      color: $text;
+      text-style: bold reverse;
     }
     Button.btn-secondary {
       background: $boost;
       color: $primary;
     }
     Button.btn-secondary:hover {
-      background: $primary 20%;
+      background: $primary;
+      color: $text;
+    }
+    Button.btn-secondary:focus {
+      background: $primary;
+      color: $text;
+      text-style: bold;
     }
     Button.btn-destructive {
       background: $error;
       color: $text;
     }
     Button.btn-destructive:hover {
-      background: $error 80%;
+      background: $warning;
+      color: $text;
+    }
+    Button.btn-destructive:focus {
+      background: $warning;
+      color: $text;
+      text-style: bold;
     }
     Button.btn-ghost {
       background: transparent;
@@ -301,8 +325,32 @@ class DosForgeApp(App[None]):
       min-width: 5;
     }
     Button.btn-ghost:hover {
-      background: $primary 15%;
+      background: $boost;
       color: $text;
+    }
+    Button.btn-ghost:focus {
+      background: $boost;
+      color: $text;
+    }
+
+    /* Inputs and selects: solid focus backgrounds. Default alpha
+       focus from Textual's stylesheet shows up as a hash pattern
+       in conhost. */
+    Input {
+      background: $surface;
+      color: $text;
+    }
+    Input:focus {
+      background: $surface;
+      border: tall $accent;
+    }
+    Select {
+      background: $surface;
+      color: $text;
+    }
+    Select:focus {
+      background: $surface;
+      border: tall $accent;
     }
 
     /* ── Tool rows ── */
@@ -533,12 +581,12 @@ class DosForgeApp(App[None]):
                         # Wizard nav (pinned below the scroll area, always visible)
                         with Horizontal(id="wizard-nav"):
                             yield Button(
-                                "← Back",
+                                "< Back",
                                 id="wizard-back-btn",
                                 classes="btn-secondary",
                             )
                             yield Button(
-                                "Next: Boot →",
+                                "Next: Boot >",
                                 id="wizard-next-btn",
                                 classes="btn-primary",
                             )
@@ -1004,10 +1052,16 @@ class DosForgeApp(App[None]):
                 continue
             container.display = index == self._wizard_step
 
-        # Progress indicator
+        # Progress indicator (ASCII markers — guaranteed to render
+        # regardless of console font; some Windows fonts lack ●○✓).
         parts: list[str] = []
         for index, label in enumerate(self._STEP_LABELS, start=1):
-            marker = "●" if index == self._wizard_step else ("✓" if index < self._wizard_step else "○")
+            if index < self._wizard_step:
+                marker = "[x]"
+            elif index == self._wizard_step:
+                marker = "[>]"
+            else:
+                marker = "[ ]"
             parts.append(f"{marker} {index}. {label}")
         try:
             self.query_one("#wizard-progress", Static).update("    ".join(parts))
@@ -1024,7 +1078,7 @@ class DosForgeApp(App[None]):
             else:
                 nxt.display = True
                 next_label = self._STEP_LABELS[self._wizard_step]
-                nxt.label = f"Next: {next_label} →"
+                nxt.label = f"Next: {next_label} >"
         except Exception:
             pass
 
@@ -1489,14 +1543,26 @@ class DosForgeApp(App[None]):
             self.path_picker_target = target
             self._apply_path_picker_selection(selected)
             return
+        # Native picker unavailable or user cancelled. Set the picker
+        # target so a later DirectoryTree selection routes back here,
+        # then show a NON-INTRUSIVE notification + status hint. Don't
+        # auto-switch tabs — that's jarring ("flashes") and loses the
+        # user's place in the wizard.
         self._start_path_picker(target)
-        # If the native dialog didn't pop, fall back to the in-app tree
-        # which lives on the Browse tab. Switch the user there so the
-        # tree is visible.
-        self._switch_to_tab("tab-browse")
+        try:
+            self.notify(
+                "Native file picker unavailable. Switch to the Browse "
+                "tab (Ctrl+2) and select a path from the tree to fill "
+                "this field.",
+                title="Picker unavailable",
+                severity="warning",
+                timeout=6,
+            )
+        except Exception:
+            pass
         self._set_status(
-            "GUI file picker unavailable or canceled. "
-            "Pick a file or folder from the tree, then return to the wizard."
+            "Picker unavailable — open the Browse tab (Ctrl+2), pick a "
+            "file/folder, then return to the wizard."
         )
 
     def _start_path_picker(self, target: str) -> None:

@@ -88,6 +88,15 @@ for _pkg in (
 # Pygments lexer used by Textual's syntax highlighting.
 hiddenimports.append("pygments.lexers.python")
 
+# tkinter for the native Win32 file picker (`...` browse buttons in
+# the TUI). Imported lazily inside _run_tkinter_picker so PyInstaller
+# static analysis misses it without an explicit hidden-import.
+hiddenimports.extend([
+    "tkinter",
+    "tkinter.filedialog",
+    "tkinter.ttk",
+])
+
 block_cipher = None
 
 a = Analysis(
@@ -99,7 +108,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "pytest", "pyinstaller", "zstandard"],
+    excludes=["pytest", "pyinstaller", "zstandard"],
     cipher=block_cipher,
     noarchive=False,
 )
