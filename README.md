@@ -129,11 +129,113 @@ Boot prep:
 
 ### Linux
 
+Two options. **Option A** is the easiest for end users; **Option B** is
+the developer / editable setup.
+
+#### Option A — Install from a release bundle (recommended)
+
+Each Linux release ships a self-contained tarball with the wheel, the
+sdist, and a complete `dosassets/` skeleton (per-mode readmes
+included). Download from the latest `linux-v*` release on
+[GitHub Releases](https://github.com/flynnsbit/dosforge/releases).
+
 ```bash
-python -m pip install -e .
+# 1. Grab and extract the bundle
+curl -L -o dosforge-linux.tar.gz \
+    https://github.com/flynnsbit/dosforge/releases/download/linux-v0.5.1/dosforge-0.5.1-linux.tar.gz
+tar xzf dosforge-linux.tar.gz
+cd dosforge-0.5.1-linux
+
+# 2. Install the Python package into a venv
+python3 -m venv .venv
+. .venv/bin/activate
+pip install ./dosforge-0.5.1-py3-none-any.whl
+
+# 3. Install the system tools dosforge shells out to
+sudo apt install qemu-system-x86 qemu-utils nbd-client \
+    mtools p7zip-full innoextract python3-tk          # Debian / Ubuntu
+# or
+sudo dnf install qemu-system-x86 qemu-img nbd mtools \
+    p7zip p7zip-plugins innoextract python3-tkinter   # Fedora / RHEL
+# or
+sudo pacman -S qemu-base qemu-img nbd mtools p7zip \
+    innoextract tk                                    # Arch
+
+# 4. Bootstrap the dosassets/ skeleton into a fixed user-scope location
+#    so dosforge finds your install media from any directory:
+mkdir -p ~/.local/share/dosforge
+cp -r dosassets ~/.local/share/dosforge/
+
+# 5. Verify
+dosforge where-assets   # prints the dosassets resolution order
+dosforge --help
 ```
 
-Then run `dosforge` from anywhere.
+#### Option B — Install from source (developers)
+
+```bash
+git clone https://github.com/flynnsbit/dosforge.git
+cd dosforge
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .[dev]
+
+# System tools (same one-liner as Option A, step 3)
+sudo apt install qemu-system-x86 qemu-utils nbd-client \
+    mtools p7zip-full innoextract python3-tk
+```
+
+When you install editable from a checkout, the repo's own `dosassets/`
+directory is the search root — just run `dosforge` from the repo and
+drop install media into `dosassets/<mode>/` as usual.
+
+#### Where to put DOS install media
+
+dosforge looks for install diskettes in this order (highest priority
+first):
+
+1. `$DOSFORGE_DOSASSETS_DIR` — export this to override everything
+2. `$PWD/dosassets/` — wins when you `cd` into the extracted bundle or repo
+3. `$XDG_DATA_HOME/dosforge/dosassets/`
+   (defaults to `~/.local/share/dosforge/dosassets/`)
+4. `~/.dosforge/dosassets/`
+5. `/usr/local/share/dosforge/dosassets/`
+6. `/usr/share/dosforge/dosassets/` — for distro packagers
+
+Run `dosforge where-assets` at any time to see which of these paths
+currently exist on your machine:
+
+```
+$ dosforge where-assets
+dosforge dosassets/ resolution order (highest priority first):
+
+  [ missing ]  DOSFORGE_DOSASSETS_DIR (env)      (not set)
+  [ missing ]  cwd/dosassets                     /home/you/dosassets
+  [FOUND]      well-known                        /home/you/.local/share/dosforge/dosassets
+  [ missing ]  well-known                        /home/you/.dosforge/dosassets
+  [ missing ]  well-known                        /usr/local/share/dosforge/dosassets
+  [ missing ]  well-known                        /usr/share/dosforge/dosassets
+```
+
+Once your asset library is in place, drop install media into the
+matching `<mode>/` subdirectory. Each mode folder ships a `readme.txt`
+with the expected filenames.
+
+#### IBM PC-DOS 7.1 specifically (FAT32 + LBA)
+
+PC-DOS 7.1 was only ever distributed inside the IBM ServerGuide
+Scripting Toolkit. ibm.com no longer hosts it but the Internet Archive
+preserves a verified mirror. dosforge ships a fetcher that downloads,
+verifies, and stages the required files:
+
+```bash
+python3 scripts/fetch-pcdos71-assets.py
+```
+
+Downloads the IBM installer (SHA-1 verified) and unpacks the required
+files into `dosassets/pcdos71/` (or wherever
+`DOSFORGE_DOSASSETS_DIR` points) with per-file SHA-256 verification
+against community-published reference hashes.
 
 ### Windows
 
