@@ -6,6 +6,104 @@ The format is loosely based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] — 2026-06-05
+
+First Linux release with **every supported boot mode × FAT combination
+validated in 86Box** (16 VHDs total). Folds in the never-tagged 0.5.2
+`init-assets` work plus the 0.5.1→0.6.0 boot-test fix sweep.
+
+### Added
+
+- **PC-DOS 7.1 FAT16 install path.** `--boot-mode=pcdos71` now accepts
+  `--format=fat16` and runs PC-DOS 7.1's own `FORMAT.COM` (FAT12/16) from
+  the SGTK `tk_raid.vfd` install media (`FORMAT32.COM` continues to
+  handle the FAT32 path). MBR partition type is `0x0E` (FAT16 LBA);
+  IBMBIO.COM/IBMDOS.COM get `+R +S +H` so the PC-DOS 7.1 VBR loader
+  finds them. `pcdos71_fat16_profile` skips `FDISK /MBR` because the
+  combination corrupted the install floppy mid-AUTOEXEC.
+- **`dosforge init-assets` subcommand.** Hydrates the per-mode
+  `dosassets/` folder tree + readmes at
+  `$XDG_DATA_HOME/dosforge/dosassets/` (defaults to
+  `~/.local/share/dosforge/dosassets/`). 29 readmes ship inside the
+  wheel so it works from any working directory and doesn't require the
+  release tarball.
+- **`docs/flow.md`** — build-flow reference covering every boot mode:
+  tools used (qemu-img, qemu-nbd, mkfs.fat, mformat, mcopy, mattrib,
+  qemu-system-i386, DOSBox-X), per-mode pipeline steps, MBR partition
+  type, VBR OEM string, profile module, and QEMU-driven install
+  internals.
+- **CI smoke-tests `init-assets`** — release-linux workflow installs
+  the wheel into a scratch venv and verifies content + idempotency +
+  `--force` semantics before publishing.
+
+### Fixed — boot-test failures
+
+All fixed on the Linux NBD pipeline; Windows path inherits the same
+geometry/format logic.
+
+- **MBR partition CHS rewrite.** After `parted` writes the partition
+  table, `_rewrite_mbr_partition_entry_for_footer()` re-encodes the
+  CHS bytes using the VHD footer's geometry so 86Box AUTO IDE picks
+  NORMAL translation and the partition entry lines up with what the
+  BIOS reports.
+- **BPB geometry patch covers FAT32.** `_patch_partition_bpb_to_footer_geometry()`
+  previously only patched FAT16 partitions; FAT32 partitions now get
+  the same heads/spt fixup so the FAT32 VBR's INT 13h reads land on
+  the right cluster.
+- **FreeDOS FAT32 boot sector.** Replaced the broken hand-rolled
+  `BOOTSECT_FAT32.BIN` with the real `boot32lb` extracted from a
+  reference FreeDOS install. Fixes the "blinking cursor after Verifying
+  DMI Pool Data" hang on FAT32 FreeDOS VHDs in 86Box.
+- **Compaq DOS 3.31 + MS-DOS 3.31 install.** `compaq331_profile` now
+  writes MBR partition type `0x06` (FAT16B / BIGDOS) instead of `0x04`;
+  `msdos331_profile` keeps `0x04` (FAT16 short — what real MS-DOS 3.31
+  writes). Compaq's `FORMAT.COM` refuses to format type-`0x04`
+  partitions and was failing silently before the partition prompt.
+- **MS-DOS 5.0 / 6.22 / PC-DOS 7.0 FORMAT C: /S.** The `format_yes_input`
+  field now feeds `Y\r\nY\r\n\r\n` instead of `Y\r\n\r\n` — DOS 5+
+  FORMAT asks "Proceed with Format?" twice when the partition already
+  has a FAT (the one `mkfs.fat` laid down differs from FORMAT's spec).
+  Without the second Y, FORMAT bailed without transferring system
+  files, leaving "Missing operating system" or "Non-System disk" at
+  boot.
+- **`pcdos` boot mode** now routes through the PC-DOS 7.0 QEMU install
+  pipeline (LOADDSKF-decompressed 144US1.DSK) instead of inheriting
+  FreeDOS-style staging. Produces an authentic IBM 7.0 boot.
+- **PC-DOS 7.1 FAT32** is required by `FORMAT32.COM` (it rejects
+  partitions smaller than 1 GiB / not laid out as FAT32). Validation
+  now refuses FAT16 unless the new fat16 profile is used.
+
+### Changed
+
+- **Repo root cleanup.** All `.md` files except `README.md` moved into
+  `docs/` (`CHANGELOG.md`, `FREEDOS_VHD_REFERENCE.md`,
+  `MSDOS33_VHD_REFERENCE.md`, `WINDOWS_WORK.md`, `windows-progress.md`,
+  `testing-notes.md`). Path references in `.gitignore`,
+  `releases/README.md`, and `.github/workflows/release-linux.yml`
+  updated to match.
+- **README Linux install section** rewritten for `init-assets`:
+  recommends `dosforge init-assets` instead of the old
+  `mkdir -p ~/.local/share/dosforge && cp -r dosassets …` two-step.
+
+### Validated in 86Box
+
+Every boot mode × FAT combination boots to a DOS prompt:
+
+| Boot mode    | FAT16 (32 MiB)        | FAT32 (128 MiB+)        |
+|--------------|-----------------------|-------------------------|
+| `freedos`    | ✅                    | ✅                      |
+| `msdos33`    | ✅                    | n/a                     |
+| `msdos331`   | ✅                    | n/a                     |
+| `compaq331`  | ✅                    | n/a                     |
+| `msdos5`     | ✅                    | n/a                     |
+| `msdos622`   | ✅                    | n/a                     |
+| `msdos71`    | ✅                    | ✅                      |
+| `pcdos`      | ✅                    | n/a                     |
+| `pcdos7`     | ✅                    | n/a                     |
+| `pcdos71`    | ✅ (NEW)              | ✅ (1 GiB+)             |
+| `ibm8088`    | ✅ (DOS33 + DOS50)    | n/a                     |
+| `4dos`       | ✅ (overlay on host)  | ✅ (overlay on host)    |
+
 ## [0.3.2] — 2026-05-24
 
 ### Added — third Windows release variant: CLI-only
