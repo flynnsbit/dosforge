@@ -672,14 +672,12 @@ def test_uses_legacy_dos_qemu_install_ibm8088_dos50_routes_through_qemu() -> Non
 def test_uses_legacy_dos_qemu_install_other_modes_false() -> None:
     from dosforge.disk import _uses_legacy_dos_qemu_install
 
-    # MSDOS5 / MSDOS622 / MSDOS71 / PCDOS7 / IBM8088 all moved into
-    # the QEMU install path; remaining "other" modes are NONE +
-    # FREEDOS + PCDOS (the 2.x/3.x umbrella) which still use the
-    # static-template install.
+    # MSDOS5 / MSDOS622 / MSDOS71 / PCDOS / PCDOS7 / IBM8088 all moved
+    # into the QEMU install path; remaining "other" modes are NONE +
+    # FREEDOS which still use the static-template install.
     for mode in (
         BootMode.NONE,
         BootMode.FREEDOS,
-        BootMode.PCDOS,
     ):
         request = CreateRequest(
             path=Path("/tmp/x.vhd"),
@@ -688,6 +686,21 @@ def test_uses_legacy_dos_qemu_install_other_modes_false() -> None:
             boot_mode=mode,
         )
         assert _uses_legacy_dos_qemu_install(request) is False, mode
+
+
+def test_uses_legacy_dos_qemu_install_pcdos_true() -> None:
+    """PCDOS (generic "PC-DOS bootable") routes through the QEMU
+    pipeline so its VHD gets an authentic IBM PC-DOS 7.0 VBR instead
+    of the mkfs.fat stub VBR that the static path left in place."""
+    from dosforge.disk import _uses_legacy_dos_qemu_install
+
+    request = CreateRequest(
+        path=Path("/tmp/x.vhd"),
+        size_bytes=64 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.PCDOS,
+    )
+    assert _uses_legacy_dos_qemu_install(request) is True
 
 
 def test_legacy_dos_install_descriptor_ibm8088_dos33_uses_msdos33() -> None:
