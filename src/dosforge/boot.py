@@ -3797,7 +3797,7 @@ class BootInstaller:
             device_byte_offset=510,
             data=data[510:512],
         )
-        if disk_format is DiskFormat.FAT16 and bios_chs is not None:
+        if disk_format in (DiskFormat.FAT12, DiskFormat.FAT16, DiskFormat.FAT32) and bios_chs is not None:
             self._patch_fat16_bpb_geometry(
                 partition_device=partition_device,
                 bios_chs=bios_chs,

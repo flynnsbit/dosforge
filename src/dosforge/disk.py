@@ -483,7 +483,7 @@ class DiskManager:
         request.path = target_path
         fat_bios_chs = (
             self._read_vpc_bios_chs_geometry(target_path)
-            if request.disk_format in (DiskFormat.FAT12, DiskFormat.FAT16)
+            if request.disk_format in (DiskFormat.FAT12, DiskFormat.FAT16, DiskFormat.FAT32)
             else None
         )
 
