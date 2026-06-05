@@ -1150,15 +1150,19 @@ class DiskManager:
         }
         if request.boot_mode in legacy_fat16_modes and request.disk_format is not DiskFormat.FAT16:
             raise ValidationError("Legacy DOS boot profiles support FAT16 only.")
-        # PC-DOS 7.1 is the unique pre-Windows IBM DOS that supports FAT32
-        # via FORMAT32.COM. Accept FAT16 too for compatibility with smaller
-        # / vintage targets.
+        # PC-DOS 7.1's install pipeline is built around FORMAT32.COM
+        # which only handles FAT32 partitions (FORMAT32 reports
+        # "The drive you specified is not partitioned as a FAT32 drive."
+        # on FAT16 targets).  For FAT16 IBM DOS users want ``pcdos7``
+        # (PC-DOS 7.0 + standard FORMAT.COM, FAT16-only).
         if (
             request.boot_mode is BootMode.PCDOS71
-            and request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT32)
+            and request.disk_format is not DiskFormat.FAT32
         ):
             raise ValidationError(
-                "PC-DOS 7.1 boot mode supports FAT16 and FAT32."
+                "PC-DOS 7.1 boot mode requires FAT32. PC-DOS 7.1's "
+                "FORMAT32.COM only handles FAT32 partitions. For FAT16 "
+                "IBM DOS use --boot-mode=pcdos7 (PC-DOS 7.0) instead."
             )
         # PC-DOS FORMAT32 refuses to format partitions below ~1 GiB
         # ("The drive specified is too small to use FAT32."). The
