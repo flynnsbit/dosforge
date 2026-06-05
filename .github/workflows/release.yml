@@ -1,7 +1,7 @@
 name: Release Windows bundle
 
-# Triggered automatically when a tag matching ``v*`` is pushed (but
-# NOT ``linux-v*`` tags — those fire the release-linux workflow).
+# Triggered automatically when a tag matching ``windows-v*`` is pushed
+# (mirrors the ``linux-v*`` convention used by release-linux.yml).
 # Two build jobs (full, cli) run in parallel after a tiny
 # create-release job stamps out an empty GitHub release. Each build
 # job uploads its zip to that release with ``gh release upload
@@ -11,11 +11,11 @@ name: Release Windows bundle
 on:
   push:
     tags:
-      - 'v*'
+      - 'windows-v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to (re)build the release for (e.g. v0.3.0)'
+        description: 'Tag to (re)build the release for (e.g. windows-v0.6.0)'
         required: true
         type: string
 
@@ -44,7 +44,12 @@ jobs:
         id: vars
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          version="${tag#v}"
+          # Strip the ``windows-v`` prefix (e.g. windows-v0.6.0 -> 0.6.0)
+          # so artifact filenames stay aligned with pyproject.toml's
+          # version. Fall back to stripping the bare ``v`` for any
+          # legacy v* tags that might be force-pushed via dispatch.
+          version="${tag#windows-v}"
+          version="${version#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag"          >> "$GITHUB_OUTPUT"
 
