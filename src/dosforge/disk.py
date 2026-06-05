@@ -542,6 +542,15 @@ class DiskManager:
 
         self._with_connected_nbd(target_path, configure, image_format="vpc")
 
+        # Fix parted's partition-entry CHS so 86Box AUTO IDE doesn't fall
+        # back to LRG translation (see ``_rewrite_mbr_partition_entry_for_footer``).
+        # Skipped for XT-class targets; they get a full MBR rewrite below.
+        if not _needs_xt_class_mbr_rewrite(request):
+            self._rewrite_mbr_partition_entry_for_footer(
+                vhd_path=target_path,
+                request=request,
+            )
+
         # XT-class machine targets (MartyPC Xebec on msdos33-layout) need
         # an MS-DOS 3.3-style MBR + a track-aligned partition entry.
         # parted's MBR uses LBA INT 13h reads and invents BIOS-canonical
@@ -598,6 +607,16 @@ class DiskManager:
                 vhd_path=target_path,
                 partition_offset_bytes=partition_offset_bytes,
             )
+            # QEMU's FORMAT/FDISK may have rewritten sector 0 (boot code +
+            # partition table) using SeaBIOS-canonical CHS, re-introducing
+            # the parted-style CHS mismatch we just fixed above. Re-apply
+            # the footer-aligned CHS so 86Box AUTO IDE keeps NORMAL
+            # translation. Skipped for XT-class (handled by full MBR rewrite).
+            if not _needs_xt_class_mbr_rewrite(request):
+                self._rewrite_mbr_partition_entry_for_footer(
+                    vhd_path=target_path,
+                    request=request,
+                )
             # Custom payload (for these modes) is copied via mtools after
             # the QEMU SYS step, since the NBD path is no longer active.
             custom_payload = self._resolve_custom_payload_path(request)
@@ -3771,6 +3790,96 @@ class DiskManager:
             handle.write(b"\x00" * 16 * 3)
             # Boot signature.
             handle.write(b"\x55\xaa")
+
+    def _rewrite_mbr_partition_entry_for_footer(
+        self,
+        *,
+        vhd_path: Path,
+        request: CreateRequest,
+    ) -> None:
+        """Re-encode MBR partition entry 1's CHS + type to match the VHD footer.
+
+        Called after ``parted --script mkpart`` (and, for legacy DOS modes,
+        after the QEMU FORMAT/FDISK step) on the Linux NBD flow to fix a
+        long-standing bug: parted writes the partition entry's CHS bytes
+        using its own BIOS-canonical geometry (head=31 / spt=63 style),
+        which mismatches the VHD footer's actual geometry (typically
+        16h/63s) and causes 86Box AUTO IDE to fall back to LRG translation
+        — INT 13h reads then land on the wrong sectors and the disk fails
+        to boot with "Missing operating system".
+
+        This rewrite preserves parted's boot code (bytes 0..439), disk
+        signature (440..443), and boot signature (510..511); only bytes
+        446..461 (partition entry 1) are touched. Entries 2..4 (462..509)
+        are also preserved since parted may have used them too.
+
+        The CHS recomputation uses ``footer.heads`` / ``footer.spt`` (no
+        ECHS translation — the VHDs we currently generate are <504 MB
+        effective so BIOS reports the footer geometry directly). The
+        partition-type byte mirrors the Windows path computation at
+        ``create_and_prepare_vhd_no_kernel`` (FAT32→0x0C, FAT32+msdos71/
+        pcdos71→0x0C, FAT16 LBA→0x0E for msdos71/pcdos71, FAT16→0x06,
+        FAT16<32M for msdos33/msdos331→0x04, FAT12→0x01).
+        """
+        if _needs_xt_class_mbr_rewrite(request):
+            # XT-class targets are handled by _rewrite_mbr_for_xt_class which
+            # rewrites the entire MBR with a DOS-3.3-style layout.
+            return
+
+        try:
+            footer = core_vhd_footer.read_footer(vhd_path)
+        except (ValueError, OSError):
+            # Stub VHDs used in unit tests (and any path that doesn't have
+            # a real conectix footer) — nothing to align against.
+            return
+        if footer.heads <= 0 or footer.sectors_per_track <= 0:
+            return
+
+        with vhd_path.open("rb") as handle:
+            sector = handle.read(512)
+        if len(sector) < 512 or sector[510:512] != b"\x55\xaa":
+            # Sector 0 isn't a valid MBR; nothing we can safely patch.
+            return
+
+        entry = sector[0x1BE:0x1CE]
+        first_lba = struct.unpack("<I", entry[8:12])[0]
+        sector_count = struct.unpack("<I", entry[12:16])[0]
+        if first_lba == 0 or sector_count == 0:
+            return
+
+        # Determine partition-type byte (mirrors the Windows path logic).
+        msdos33_layout = _uses_msdos33_filesystem_layout(request)
+        pcdos71_layout = request.boot_mode is BootMode.PCDOS71
+        msdos71_layout = request.boot_mode is BootMode.MSDOS71
+        if msdos33_layout or request.boot_mode is BootMode.MSDOS331:
+            partition_type = 0x01 if request.disk_format is DiskFormat.FAT12 else 0x04
+        elif (pcdos71_layout or msdos71_layout) and request.disk_format is DiskFormat.FAT32:
+            partition_type = 0x0C
+        elif pcdos71_layout or msdos71_layout:
+            partition_type = 0x0E
+        elif request.disk_format is DiskFormat.FAT32:
+            partition_type = 0x0C
+        elif request.disk_format is DiskFormat.FAT12:
+            partition_type = 0x01
+        else:
+            partition_type = 0x06
+
+        new_entry = core_mbr.PartitionEntry(
+            bootable=entry[0] == 0x80,
+            partition_type=partition_type,
+            first_lba=first_lba,
+            sector_count=sector_count,
+            chs_heads=footer.heads,
+            chs_spt=footer.sectors_per_track,
+        ).encode()
+        assert len(new_entry) == 16, len(new_entry)
+
+        if new_entry == entry:
+            return
+
+        with vhd_path.open("r+b") as handle:
+            handle.seek(0x1BE)
+            handle.write(new_entry)
 
     def _ensure_sudo_ready(self) -> None:
         if not self.backend.requires_sudo_for_disk_ops:
