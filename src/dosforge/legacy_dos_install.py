@@ -106,6 +106,19 @@ class LegacyDosInstallProfile:
     PC-DOS 5+ and Win95 OSR2 (all support FDISK /MBR). Left False for
     DOS 3.x — those releases shipped FDISK without /MBR support."""
 
+    format_yes_input: bytes = b"Y\r\n\r\n"
+    """Bytes piped into ``FORMAT C: /S`` via stdin for the ``format``
+    install method.  DOS 3.x FORMAT only asks once and treats the first
+    keystroke as "press any key to begin format", so ``Y\\r\\n\\r\\n``
+    works (Y starts format, ENTER skips the volume label prompt).
+
+    DOS 5.0+ FORMAT asks "Proceed with Format (Y/N)?" once, and if the
+    existing on-disk FAT differs from what FORMAT would create (e.g.
+    the partition was pre-laid out by ``mkfs.fat``) it asks a SECOND
+    "Proceed with Format (Y/N)?" — needing ``Y\\r\\nY\\r\\n\\r\\n``
+    (first Y, second Y, ENTER for no volume label).  Without the
+    second Y, FORMAT bails out without transferring system files."""
+
 
 # Pre-built profile descriptors keyed by short identifier.
 def compaq331_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
@@ -175,6 +188,10 @@ def msdos5_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
         # MS-DOS 5.0 FDISK supports /MBR — write authentic MS-DOS 5
         # MBR boot code instead of dosforge's generic MBR.
         supports_fdisk_mbr=True,
+        # DOS 5+ asks "Proceed with Format?" twice when the partition
+        # already contains a valid FAT (mkfs.fat laid one down); need
+        # Y, Y, ENTER (no volume label).
+        format_yes_input=b"Y\r\nY\r\n\r\n",
     )
 
 
@@ -193,6 +210,8 @@ def msdos622_profile(install_image: Path, boot_assets_dir: Path | None = None) -
         timeout_seconds=300.0,
         # MS-DOS 6.22 FDISK supports /MBR.
         supports_fdisk_mbr=True,
+        # See msdos5_profile for the Y, Y, ENTER explanation.
+        format_yes_input=b"Y\r\nY\r\n\r\n",
     )
 
 
@@ -219,6 +238,8 @@ def pcdos7_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
         timeout_seconds=300.0,
         # PC-DOS 7.0 FDISK supports /MBR.
         supports_fdisk_mbr=True,
+        # See msdos5_profile for the Y, Y, ENTER explanation.
+        format_yes_input=b"Y\r\nY\r\n\r\n",
     )
 
 
@@ -677,17 +698,19 @@ class LegacyDosQemuInstaller:
         config_sys = b"FILES=8\r\nBUFFERS=8\r\n"
 
         if profile.install_method == "format":
-            # FORMAT C: /S prompts for confirmation. DOS 3.x FORMAT does
-            # honor stdin redirection from a file. We feed "Y\r\n\r\n" —
-            # Y for the confirmation prompt, then empty Enter for the
-            # volume-label prompt. Then verify the system files were
-            # transferred by SYS-equivalent of /S. COPY adds COMMAND.COM
-            # (some DOS 3.x FORMAT /S only copies IO.SYS + MSDOS.SYS).
+            # FORMAT C: /S prompts for confirmation.  The exact prompt
+            # sequence depends on the DOS version AND whether the target
+            # already contains a valid FAT (e.g. from a prior mkfs.fat),
+            # so the byte stream piped to FORMAT comes from the profile.
+            # See LegacyDosInstallProfile.format_yes_input for the rules.
+            #
+            # COPY adds COMMAND.COM after format (some DOS 3.x FORMAT /S
+            # only copies IO.SYS + MSDOS.SYS).
             #
             # If the DOS supports FDISK /MBR (5.0+), write its authentic
             # MBR boot code first. DOS 3.x has no /MBR support so for
             # those modes we keep dosforge's era-appropriate generic MBR.
-            yes_input = b"Y\r\n\r\n"
+            yes_input = profile.format_yes_input
             if profile.supports_fdisk_mbr:
                 fdisk_mbr_line = (
                     b"ECHO step=before-fdisk-mbr > A:\\STEP.TXT\r\n"
