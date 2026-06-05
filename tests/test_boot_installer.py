@@ -256,15 +256,30 @@ def test_copy_payload_via_mount_raises_when_compressed_payload_cannot_expand(
         )
 
 
-def test_boot_installer_reports_missing_mbr_boot_code(tmp_path: Path) -> None:
+def test_boot_installer_falls_back_to_builtin_msdos_mbr_when_candidates_missing(
+    tmp_path: Path,
+) -> None:
+    """When no candidate exists, _find_mbr_boot_code must materialize the
+    bundled MS-DOS MBR rather than raising.
+
+    Pre-Phase-14 the resolver raised ``ValidationError`` here.  After
+    commit 1b53550 (replace strict FreeDOS-style MBR with classic
+    MS-DOS MBR) the installer falls back to its built-in MS-DOS MBR so
+    Windows hosts and Linux hosts without syslinux installed can still
+    boot DOS.  The cached file is content-stamped via
+    ``materialize_versioned_cache`` and lives under ``mount_root``.
+    """
     runner = FakeRunner()
     installer = BootInstaller(
         runner,
         mount_root=tmp_path / "mount-root",
         mbr_boot_candidates=(tmp_path / "missing-mbr.bin",),
     )
-    with pytest.raises(ValidationError, match="Unable to locate syslinux MBR boot code file"):
-        installer._find_mbr_boot_code()
+    result = installer._find_mbr_boot_code()
+    assert result.is_file(), "expected built-in MBR to be materialized to disk"
+    assert result.stat().st_size >= 440, "MBR boot code must be at least 440 bytes"
+    assert (tmp_path / "mount-root") in result.parents
+    assert result.name.startswith("msdos-builtin-mbr-") and result.suffix == ".bin"
 
 
 def test_prepare_source_file_normalizes_config_sys(tmp_path: Path) -> None:

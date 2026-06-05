@@ -6,6 +6,15 @@ unit test (test files that don't reach for ``os.getuid()`` / ``/dev/`` /
 keep the Windows feedback loop fast and the matrix output readable.
 
 Linux behavior is unchanged: every test runs.
+
+In addition, the ``_isolate_asset_resolution`` autouse fixture below
+ensures every test runs against an empty set of well-known dosassets
+roots so that whatever the developer has under ``~/.local/share/dosforge``
+/ ``~/.dosforge`` / ``/usr/share/dosforge`` (e.g. from a prior
+``dosforge init-assets`` run) cannot shadow tests that monkeypatch
+``Path.cwd()`` into a tmp_path. Without this fixture, tests that
+assert "no dosassets found" pass in CI but fail on developer
+machines that have hydrated assets.
 """
 
 from __future__ import annotations
@@ -13,6 +22,35 @@ from __future__ import annotations
 import sys
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_asset_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Isolate dosassets resolution from the developer's host state.
+
+    1. Clear ``DOSFORGE_DOSASSETS_DIR`` so a stray env var (from a
+       prior frozen-bundle run or shell export) doesn't smuggle real
+       install media into otherwise-isolated tests.
+    2. Pin ``HOME`` / ``USERPROFILE`` / ``XDG_DATA_HOME`` to an empty
+       directory so the XDG / ``~/.dosforge`` well-known roots in
+       ``dosforge.paths._wellknown_asset_roots`` resolve to fresh
+       directories with no real install media on them.  This matches
+       the pinning pattern already used in test_disk_validation.py
+       (e.g. tests around resolve_dos_asset_dir XDG fallback) and
+       keeps tests deterministic regardless of whether the developer
+       has previously run ``dosforge init-assets``.
+
+    Tests that *want* to exercise the XDG-aware resolver can re-pin
+    HOME / XDG_DATA_HOME themselves; their ``monkeypatch.setenv``
+    calls run after this fixture and take precedence.
+    """
+    monkeypatch.delenv("DOSFORGE_DOSASSETS_DIR", raising=False)
+    isolated_home = tmp_path_factory.mktemp("isolated-home")
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.setenv("USERPROFILE", str(isolated_home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(isolated_home / "xdg"))
 
 
 # Tests known to run on Windows. Everything else is skipped by
