@@ -34,6 +34,7 @@ from .legacy_dos_install import (
     msdos622_profile,
     msdos71_profile,
     pcdos7_profile,
+    pcdos71_fat16_profile,
     pcdos71_profile,
 )
 from .dependencies import BOOT_COMMANDS, REQUIRED_COMMANDS, assert_dependencies, find_missing
@@ -326,11 +327,29 @@ def _legacy_dos_install_descriptor(request: CreateRequest) -> _LegacyDosInstallD
 
     IBM8088 reuses per-version DOS descriptors: DOS 3.3 -> MSDOS33,
     DOS 5.0 -> MSDOS5.  Same install media, same FORMAT C: /S flow.
+
+    PCDOS71 swaps profile based on disk_format: FAT32 uses FORMAT32.COM
+    (``pcdos71_profile``) and FAT16/FAT12 uses the regular FORMAT.COM
+    (``pcdos71_fat16_profile``).  Both ship with the SGTK install media.
     """
     if request.boot_mode is BootMode.IBM8088:
         if request.ibm_dos_version is IBMDOSVersion.DOS33:
             return _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.MSDOS33]
         return _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.MSDOS5]
+    if (
+        request.boot_mode is BootMode.PCDOS71
+        and request.disk_format is not DiskFormat.FAT32
+    ):
+        # Return a per-call descriptor with the FAT16 profile builder so
+        # the FORMAT.COM path is selected at install time.
+        base = _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.PCDOS71]
+        return _LegacyDosInstallDescriptor(
+            label=base.label,
+            asset_fallback_dirs=base.asset_fallback_dirs,
+            preferred_image_names=base.preferred_image_names,
+            system_file_marker=base.system_file_marker,
+            profile_builder=pcdos71_fat16_profile,
+        )
     return _LEGACY_DOS_INSTALL_DESCRIPTORS.get(request.boot_mode)
 
 
@@ -1165,20 +1184,9 @@ class DiskManager:
         }
         if request.boot_mode in legacy_fat16_modes and request.disk_format is not DiskFormat.FAT16:
             raise ValidationError("Legacy DOS boot profiles support FAT16 only.")
-        # PC-DOS 7.1's install pipeline is built around FORMAT32.COM
-        # which only handles FAT32 partitions (FORMAT32 reports
-        # "The drive you specified is not partitioned as a FAT32 drive."
-        # on FAT16 targets).  For FAT16 IBM DOS users want ``pcdos7``
-        # (PC-DOS 7.0 + standard FORMAT.COM, FAT16-only).
-        if (
-            request.boot_mode is BootMode.PCDOS71
-            and request.disk_format is not DiskFormat.FAT32
-        ):
-            raise ValidationError(
-                "PC-DOS 7.1 boot mode requires FAT32. PC-DOS 7.1's "
-                "FORMAT32.COM only handles FAT32 partitions. For FAT16 "
-                "IBM DOS use --boot-mode=pcdos7 (PC-DOS 7.0) instead."
-            )
+        # PC-DOS 7.1 supports both FAT32 (via FORMAT32.COM) and FAT16
+        # (via the regular FORMAT.COM) -- _legacy_dos_install_descriptor
+        # picks the right profile based on request.disk_format.
         # PC-DOS FORMAT32 refuses to format partitions below ~1 GiB
         # ("The drive specified is too small to use FAT32."). The
         # threshold matches Win9x's FAT32 minimum cluster-count math
@@ -2140,12 +2148,18 @@ class DiskManager:
                 # different BPB extension layout, and SYS C: / FORMAT32
                 # already wrote correct geometry matching the VHD footer.
                 if (
-                    request.boot_mode in (
-                        BootMode.COMPAQ331,
-                        BootMode.MSDOS331,
-                        BootMode.MSDOS5,
-                        BootMode.MSDOS622,
-                        BootMode.PCDOS7,
+                    (
+                        request.boot_mode in (
+                            BootMode.COMPAQ331,
+                            BootMode.MSDOS331,
+                            BootMode.MSDOS5,
+                            BootMode.MSDOS622,
+                            BootMode.PCDOS7,
+                        )
+                        or (
+                            request.boot_mode is BootMode.PCDOS71
+                            and request.disk_format is not DiskFormat.FAT32
+                        )
                     )
                     and fat_bios_chs is not None
                 ):
@@ -2190,7 +2204,7 @@ class DiskManager:
             # Patch the partition's FAT BPB heads/spt so the VBR's
             # internal CHS calculations match what the target BIOS will
             # present at boot time.
-            if request.boot_mode is BootMode.PCDOS71:
+            if request.boot_mode is BootMode.PCDOS71 and request.disk_format is DiskFormat.FAT32:
                 # FAT32 on a >504 MB drive: AT BIOSes apply ECHS bit-
                 # shift translation (e.g. 64h/63s for a 1 GB drive). The
                 # BPB must use the translated heads/spt so the VBR's

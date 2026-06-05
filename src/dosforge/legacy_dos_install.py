@@ -243,6 +243,54 @@ def pcdos7_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
     )
 
 
+def pcdos71_fat16_profile(
+    install_image: Path,
+    boot_assets_dir: Path | None = None,
+) -> LegacyDosInstallProfile:
+    """PC-DOS 7.1 FAT16 install profile.
+
+    Same install media (SGTK ``tk_raid.vfd``) as :func:`pcdos71_profile`
+    but drives PC-DOS 7.1's regular ``FORMAT.COM`` (not ``FORMAT32.COM``)
+    so it can format FAT12/FAT16 partitions.  FORMAT.COM is shipped in
+    the SGTK at ``DOS/FORMAT.COM`` -- copy it to the install floppy and
+    invoke the standard ``FORMAT C: /S`` flow with the Y/Y/ENTER prompt
+    sequence (DOS 5+ pattern, since the partition was pre-laid out by
+    ``mkfs.fat`` and FORMAT asks twice when the existing FAT differs).
+
+    The resulting VBR has OEM ``IBM  7.1`` byte-equivalent to a real
+    PC-DOS 7.1 FORMAT C: /S on a FAT16 partition.
+    """
+    if boot_assets_dir is None:
+        raise ValidationError(
+            "pcdos71_fat16_profile requires the boot assets directory so "
+            "it can locate FORMAT.COM for the install floppy."
+        )
+    format_com = _find_pcdos71_tool(boot_assets_dir, "FORMAT.COM")
+    return LegacyDosInstallProfile(
+        label="PC-DOS 7.1 (FAT16)",
+        install_image=install_image,
+        required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+        install_method="format",
+        timeout_seconds=300.0,
+        # Stage PC-DOS 7.1's regular FORMAT.COM onto the install floppy.
+        # tk_raid.vfd already ships IBMBIO/IBMDOS/COMMAND but no FORMAT
+        # tool, so we copy FORMAT.COM in via the standard pre-install
+        # mechanism used for FORMAT32.COM in the FAT32 profile.
+        pre_install_copies=((format_com, "FORMAT.COM"),),
+        # Skip FDISK /MBR: in the FAT16 path FDISK /MBR (even silent
+        # with stdout redirected to A:\MBR_OUT.TXT) interacts badly with
+        # the subsequent FORMAT C: /S step and ends up corrupting the
+        # floppy's FAT, leaving AUTOEXEC.BAT unable to continue past
+        # FORMAT. The MBR written by dosforge (LBA-aware INT 13h AH=42
+        # reads, partition type 0x0E) boots PC-DOS 7.1 just fine
+        # without the FDISK /MBR refresh.
+        supports_fdisk_mbr=False,
+        # Same Y/Y/ENTER pattern as msdos5/622/pcdos7 -- after mkfs.fat
+        # lays a FAT, FORMAT asks "Proceed with Format?" twice.
+        format_yes_input=b"Y\r\nY\r\n\r\n",
+    )
+
+
 def pcdos71_profile(
     install_image: Path,
     boot_assets_dir: Path | None = None,
@@ -1087,4 +1135,10 @@ __all__ = [
     "LegacyDosQemuInstaller",
     "compaq331_profile",
     "msdos33_profile",
+    "msdos5_profile",
+    "msdos622_profile",
+    "pcdos7_profile",
+    "pcdos71_profile",
+    "pcdos71_fat16_profile",
+    "msdos71_profile",
 ]
