@@ -1953,7 +1953,10 @@ class DiskManager:
         # Partition type byte: legacy DOS gets 0x04 (FAT16 <32 MiB,
         # pre-FAT16B) or 0x01 (FAT12); pcdos71 / msdos71 get 0x0C
         # (FAT32 LBA) or 0x0E (FAT16 LBA); modern gets 0x0C / 0x06.
-        # MSDOS331 caps at 32 MiB so also gets 0x04.
+        # MSDOS331 caps at 32 MiB and uses 0x04 (FAT16 short, matching
+        # what MS-DOS 3.31's FORMAT writes).  COMPAQ331 uses 0x06
+        # (FAT16B / BIGDOS) because Compaq DOS 3.31 *introduced* BIGDOS
+        # and its FORMAT.COM refuses to format type-0x04 partitions.
         if msdos33_layout or request.boot_mode is BootMode.MSDOS331:
             partition_type = 0x01 if request.disk_format is DiskFormat.FAT12 else 0x04
         elif (pcdos71_layout or msdos71_layout) and request.disk_format is DiskFormat.FAT32:
@@ -3417,25 +3420,23 @@ class DiskManager:
             return partition_device
 
         if boot_mode in (BootMode.COMPAQ331, BootMode.MSDOS331):
-            # Compaq / MS-DOS 3.31 SYS.COM rejects mkfs.fat's BPB layout
-            # (reserved_sec_count=8 in particular) with "No room for system
-            # on destination disk", and the resulting hard-disk boot
-            # sector hangs at "Verifying DMI pool data" because the
-            # DOS-3.31 loader can't navigate the unfamiliar BPB. mformat
-            # defaults to a DOS-3-compatible layout (reserved=1) that
-            # SYS accepts and that DOS-3.31's boot loader understands.
+            # Compaq DOS 3.31 / MS-DOS 3.31 install path: FORMAT C: /S
+            # inside QEMU lays out an authentic DOS-3.31 BPB and transfers
+            # IBMBIO.COM / IBMDOS.COM (or IO.SYS / MSDOS.SYS) in one pass.
+            # Same approach as msdos33 -- skip mformat (DOS 3.x SYS rejects
+            # any non-DOS-FORMAT BPB with "No room for system" because its
+            # bootstrap-cluster cap is too small for IO.SYS to fit), and
+            # zero the first 2 MiB so FORMAT doesn't see a stale BPB.
             #
-            # Microsoft MS-DOS 3.31 (msdos331) is capped at 32 MiB so it
-            # gets the FAT16-short partition type (0x04). Compaq DOS 3.31
-            # (compaq331) supports FAT16B up to ~504 MiB and keeps the
-            # parted-assigned 0x06 partition type.
-            if boot_mode is BootMode.MSDOS331:
-                self._set_mbr_partition_type(nbd_device, partition_index=1, fs_type=0x04)
-            mformat_cmd = ["mformat", "-i", partition_device]
-            if label:
-                mformat_cmd += ["-v", label]
-            mformat_cmd.append("::")
-            self.runner.run(mformat_cmd, sudo=True)
+            # Partition type: Compaq DOS 3.31 introduced FAT16B (BIGDOS,
+            # type 0x06) and its FORMAT.COM refuses to format type-0x04
+            # partitions even on <=32 MiB drives (reports "Format failure"
+            # before even prompting for confirmation).  MS-DOS 3.31's
+            # FORMAT happily accepts either; we use 0x06 for COMPAQ331 and
+            # 0x04 for MSDOS331 so each matches what its own FORMAT writes.
+            fs_type = 0x06 if boot_mode is BootMode.COMPAQ331 else 0x04
+            self._set_mbr_partition_type(nbd_device, partition_index=1, fs_type=fs_type)
+            self._zero_partition_head(partition_device, bytes_to_zero=2 * 1024 * 1024)
             return partition_device
 
         command = ["mkfs.fat", "-F", disk_format.mkfs_bits]

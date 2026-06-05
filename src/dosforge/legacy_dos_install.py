@@ -114,16 +114,26 @@ def compaq331_profile(install_image: Path, boot_assets_dir: Path | None = None) 
         label="Compaq DOS 3.31",
         install_image=install_image,
         # The Compaq install media uses IBMBIO.COM / IBMDOS.COM. The
-        # "Microsoft DOS 3.31" archive uses IO.SYS / MSDOS.SYS. The
-        # SYS C: step preserves whichever pair the install floppy
-        # shipped, so accept either in the post-install verification.
+        # "Microsoft DOS 3.31" archive uses IO.SYS / MSDOS.SYS. FORMAT
+        # C: /S preserves whichever pair the install floppy shipped,
+        # so accept either in the post-install verification.
         required_system_files=(
             ("IBMBIO.COM", "IO.SYS"),
             ("IBMDOS.COM", "MSDOS.SYS"),
             "COMMAND.COM",
         ),
-        install_method="sys",
-        timeout_seconds=60.0,
+        # FORMAT C: /S (not SYS C:) is the authentic install path: it
+        # lays out an empty partition's BPB from scratch (matching what
+        # a real Compaq DOS 3.31 / MS-DOS 3.31 install produces) and
+        # transfers system files in the same pass. SYS C: against an
+        # mformat-laid partition fails with "No room for system" on
+        # >=16 MiB FAT16 because DOS 3.x SYS hardcodes a small
+        # bootstrap-cluster cap and rejects layouts whose hidden_sectors
+        # or sectors_per_cluster don't match its expectations.
+        install_method="format",
+        # FORMAT does a sector-by-sector verify pass on the partition.
+        # 32 MiB takes a few minutes in software emulation; allow 5min.
+        timeout_seconds=300.0,
     )
 
 
