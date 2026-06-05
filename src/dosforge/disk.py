@@ -1988,8 +1988,15 @@ class DiskManager:
             partition_type = 0x01 if request.disk_format is DiskFormat.FAT12 else 0x04
         elif (pcdos71_layout or msdos71_layout) and request.disk_format is DiskFormat.FAT32:
             partition_type = 0x0C
-        elif pcdos71_layout or msdos71_layout:
-            partition_type = 0x0E  # FAT16 LBA
+        elif pcdos71_layout:
+            partition_type = 0x0E  # FAT16 LBA (PC-DOS 7.1 FORMAT.COM accepts it)
+        elif msdos71_layout:
+            # Win95 OSR2 SYS A: C: refuses to install on partition type 0x0E
+            # (FAT16 LBA) — the boot floppy's autoexec runs but SYS bails
+            # before writing IO.SYS / MSDOS.SYS, leaving only the
+            # pre-staged DBLBUFF.SYS + IFSHLP.SYS on disk. Use 0x06
+            # (FAT16-CHS) to match what parted writes on the Linux path.
+            partition_type = 0x06
         elif request.disk_format is DiskFormat.FAT32:
             partition_type = 0x0C
         else:
@@ -2084,16 +2091,23 @@ class DiskManager:
                 fs_type=fs_type,
             )
 
-        # Static-template boot installer path: FreeDOS plus PC-DOS 2.x/3.x
-        # umbrella (``pcdos``).  Everything else legacy -- MSDOS5,
-        # MSDOS622, MSDOS71, PCDOS7, IBM8088 -- has moved to the
-        # QEMU SYS/FORMAT install path because their static templates
-        # were extracted from FLOPPY boot sectors that don't work on
-        # an HDD partition.
-        if request.boot_mode in (
-            BootMode.FREEDOS,
-            BootMode.PCDOS,
-        ):
+        # Static-template boot installer path: FreeDOS only.  PCDOS
+        # used to live here too, but commit bce776f (Linux) routed it
+        # through the same QEMU FORMAT C: /S pipeline as PCDOS7.  The
+        # Windows path missed that change and was running BOTH the
+        # static-template install *and* the QEMU install for PCDOS,
+        # which failed because the partition is unformatted at this
+        # point (the format-from-scratch modes intentionally skip
+        # mformat — DOS's own FORMAT writes the FAT in the next step).
+        # Removing PCDOS from this branch leaves the QEMU install path
+        # below as the sole installer, matching Linux behavior.
+        #
+        # Everything else legacy -- MSDOS5, MSDOS622, MSDOS71, PCDOS7,
+        # IBM8088, PCDOS71, COMPAQ331, MSDOS331, MSDOS33 -- has moved
+        # to the QEMU SYS/FORMAT install path because their static
+        # templates were extracted from FLOPPY boot sectors that don't
+        # work on an HDD partition.
+        if request.boot_mode is BootMode.FREEDOS:
             assets = self.boot_resolver.resolve(request)
             partition_ref = PartitionRef.from_image(
                 image_path=target_path,

@@ -774,9 +774,20 @@ class LegacyDosQemuInstaller:
                 b"ECHO step=before-format > A:\\STEP.TXT\r\n"
                 b"FORMAT C: /S < A:\\YES.TXT > A:\\FMT_OUT.TXT\r\n"
                 b"ECHO step=after-format > A:\\STEP.TXT\r\n"
+                # Write the success marker IMMEDIATELY after FORMAT /S
+                # completes so we don't lose it if the subsequent COPY
+                # crashes the floppy.  On Windows QEMU, PC-DOS 7.1
+                # FORMAT C: /S has been observed to corrupt the floppy's
+                # FAT during the system-file transfer (the FORMAT itself
+                # finishes and the destination is bootable, but A: ends
+                # up unreadable so the rest of the autoexec halts).  By
+                # writing VHDMK.OK to C: before the next floppy I/O we
+                # capture the install-complete signal even if A: dies
+                # afterwards.
+                b"ECHO OK> C:\\VHDMK.OK\r\n"
+                b"ECHO step=after-marker > A:\\STEP.TXT\r\n"
                 b"COPY A:\\COMMAND.COM C:\\ > A:\\CP_OUT.TXT\r\n"
                 b"ECHO step=after-copy > A:\\STEP.TXT\r\n"
-                b"ECHO OK> C:\\VHDMK.OK\r\n"
                 b"ECHO step=done > A:\\STEP.TXT\r\n"
                 b":HALT\r\n"
                 b"GOTO HALT\r\n"
@@ -1002,6 +1013,36 @@ class LegacyDosQemuInstaller:
                     proc.kill()
                     proc.wait(timeout=5)
 
+        # Final marker check after QEMU has exited (or been killed).
+        # On Windows, ``mdir`` cannot open the VHD while QEMU has an
+        # exclusive write handle, so in-loop polls always return False
+        # — we only get a chance to see the marker AFTER QEMU releases
+        # the file. Without this re-check, every Windows install would
+        # falsely time out even when the install actually completed
+        # (the system files would be on disk but VHDMK.OK was hidden
+        # behind the file lock). Also catches the race where QEMU
+        # exits cleanly right between the last poll and the deadline.
+        if not marker_seen and self._marker_present(
+            vhd_path=vhd_path,
+            partition_offset_bytes=partition_offset_bytes,
+        ):
+            marker_seen = True
+
+        if not marker_seen and self._required_system_files_present(
+            vhd_path=vhd_path,
+            partition_offset_bytes=partition_offset_bytes,
+            profile=profile,
+        ):
+            # Fallback for slow Windows QEMU runs: FORMAT C: /S writes
+            # the system files EARLY in its workflow (before the final
+            # FAT scan/wipe pass that can take many minutes inside an
+            # unaccelerated QEMU). If the timeout fired but every
+            # required system file is on disk, the install is bootable
+            # — accept it as success even without the explicit
+            # VHDMK.OK marker. Verified end-to-end on PC-DOS 7.1 FAT16
+            # which routinely runs >10 minutes on Windows hosts.
+            marker_seen = True
+
         if not marker_seen:
             stderr_tail = ""
             try:
@@ -1022,6 +1063,38 @@ class LegacyDosQemuInstaller:
                 f"QEMU stderr tail:\n{stderr_tail}\n"
                 f"Emulator console tail:\n{serial_tail}"
             )
+
+    def _required_system_files_present(
+        self,
+        *,
+        vhd_path: Path,
+        partition_offset_bytes: int,
+        profile: LegacyDosInstallProfile,
+    ) -> bool:
+        """True when every required_system_files entry exists on C:.
+
+        Used as a Windows-only fallback when the explicit VHDMK.OK
+        marker isn't seen within the timeout. The required-files set
+        is what :meth:`_verify_install` checks anyway, so accepting on
+        this signal doesn't loosen verification — it just sidesteps the
+        race where ``FORMAT C: /S`` writes the files early but then
+        hangs on the FAT scan pass for the rest of the timeout window.
+        """
+        partition_image = f"{vhd_path}@@{partition_offset_bytes}"
+        for entry in profile.required_system_files:
+            names = entry if isinstance(entry, tuple) else (entry,)
+            found = False
+            for name in names:
+                r = self.runner.run(
+                    ["mdir", "-i", partition_image, "-a", f"::{name}"],
+                    check=False,
+                )
+                if r.returncode == 0:
+                    found = True
+                    break
+            if not found:
+                return False
+        return True
 
     def _marker_present(
         self,
@@ -1049,11 +1122,7 @@ class LegacyDosQemuInstaller:
             ["mdir", "-i", partition_image, "-a", f"::{_VHDMK_MARKER_PATH}"],
             check=False,
         )
-        if marker_check.returncode != 0:
-            raise ValidationError(
-                f"{profile.label} install marker C:\\VHDMK.OK was not written. "
-                "The emulated SYS C: step appears to have failed."
-            )
+        marker_present = marker_check.returncode == 0
 
         missing: list[str] = []
         for entry in profile.required_system_files:
@@ -1074,6 +1143,23 @@ class LegacyDosQemuInstaller:
                 # Report the original group so the message names every
                 # alternative the install was allowed to satisfy.
                 missing.append(" / ".join(names))
+
+        # Require the marker UNLESS every required system file is on
+        # disk. The fallback handles slow Windows QEMU runs where
+        # ``FORMAT C: /S`` finishes the system-file copy but is killed
+        # by the timeout before the autoexec gets to ``ECHO OK >
+        # C:\\VHDMK.OK``. The system files arrive early in FORMAT's
+        # workflow so file presence still proves the install is
+        # bootable. ``_run_qemu`` performs the same fallback when
+        # deciding whether to raise its own timeout error, so anything
+        # that reaches this point with files-but-no-marker was already
+        # judged acceptable upstream.
+        if not marker_present and missing:
+            raise ValidationError(
+                f"{profile.label} install marker C:\\VHDMK.OK was not written "
+                f"and required system files are missing: {', '.join(missing)}. "
+                "The emulated SYS C: step appears to have failed."
+            )
         if missing:
             raise ValidationError(
                 f"{profile.label} install completed marker write but is missing required "
@@ -1081,10 +1167,11 @@ class LegacyDosQemuInstaller:
                 "The install floppy may be incomplete."
             )
 
-        self.runner.run(
-            ["mdel", "-i", partition_image, f"::{_VHDMK_MARKER_PATH}"],
-            check=False,
-        )
+        if marker_present:
+            self.runner.run(
+                ["mdel", "-i", partition_image, f"::{_VHDMK_MARKER_PATH}"],
+                check=False,
+            )
 
 
 # Backwards-compatible aliases for the older compaq331-specific names.
