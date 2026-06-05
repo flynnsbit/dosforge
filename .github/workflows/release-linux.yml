@@ -98,7 +98,7 @@ jobs:
           cp -r dosassets "$stage/"
           cp -r scripts "$stage/"
           [ -f README.md ] && cp README.md "$stage/" || true
-          [ -f CHANGELOG.md ] && cp CHANGELOG.md "$stage/" || true
+          [ -f docs/CHANGELOG.md ] && cp docs/CHANGELOG.md "$stage/" || true
           cat > "$stage/INSTALL.md" <<EOF
           # dosforge Linux install (v${ver})
 

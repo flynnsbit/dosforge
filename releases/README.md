@@ -21,7 +21,7 @@ ships, the contract above becomes binding.
 ## How to make a release
 
 1. Bump `version` in `pyproject.toml`.
-2. Add an entry to `CHANGELOG.md`.
+2. Add an entry to `docs/CHANGELOG.md`.
 3. Run `./scripts/build-release.sh` from the repo root — this builds
    the wheel + sdist and assembles the new bundle under
    `releases/v<version>/`.

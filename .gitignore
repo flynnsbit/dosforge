@@ -75,8 +75,8 @@ __pycache__/
 /*.ima
 *.7z
 *.zip
-testing-notes.md
-testing-notes.md.*
+docs/testing-notes.md
+docs/testing-notes.md.*
 
 # Windows-bundled binaries (auto-populated by scripts/fetch-windows-vendor.py)
 vendor/windows/bin/
