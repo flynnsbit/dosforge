@@ -8,6 +8,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **FreeDOS FAT32 VHDs now work on Windows.** The
+  `_create_and_prepare_vhd_no_kernel` pipeline previously rejected
+  `freedos + fat32` with a hard `ValidationError`. The guard is removed
+  and `fat_bios_chs` is now computed for FAT32 partitions (in addition
+  to FAT12/FAT16) so the FreeDOS FAT32 VBR gets the correct
+  `heads`/`spt` BPB fields matching the VHD footer geometry — required
+  for 86Box AUTO IDE → NORMAL translation and clean boot.
+
 ## [0.6.1] — 2026-06-05
 
 ### Changed
