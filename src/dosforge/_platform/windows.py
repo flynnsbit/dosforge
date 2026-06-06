@@ -99,12 +99,23 @@ class WindowsBackend(PlatformBackend):
     # -- Binary resolution ---------------------------------------------------
 
     def tool_path(self, name: str) -> str:
-        """Resolve to ``vendor/windows/bin/<name>.exe`` if bundled."""
+        """Resolve to ``vendor/windows/bin/<name>.exe`` if bundled.
+
+        DOSBox-X is special-cased: its portable build needs its support
+        files (``dosbox-x.reference.conf``, ``messages/``, ``glshaders/``,
+        ``drivez/``, ``inpoutx64.dll``, ``FREECG98.BMP``) co-located with
+        the EXE, so the fetch script stages the whole mingw/ tree under
+        ``vendor/windows/bin/dosbox-x/`` (sibling to qemu/mtools) and we
+        resolve to ``dosbox-x/dosbox-x.exe`` there.
+        """
 
         if name not in _KNOWN_BUNDLED_TOOLS:
             return name
         for directory in _vendor_search_paths():
-            candidate = directory / f"{name}.exe"
+            if name == "dosbox-x":
+                candidate = directory / "dosbox-x" / "dosbox-x.exe"
+            else:
+                candidate = directory / f"{name}.exe"
             if candidate.exists():
                 return str(candidate)
         return name  # PATH fallback — fetch script likely hasn't run

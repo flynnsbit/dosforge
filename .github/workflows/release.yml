@@ -132,20 +132,32 @@ jobs:
           # Variant-specific shape checks
           $hasTextual = Test-Path "$internal\textual\__init__.py"
           $hasQemuSys = Test-Path "$internal\vendor\windows\bin\qemu-system-i386.exe"
-          $hasDosboxX = Test-Path "$internal\vendor\windows\bin\dosbox-x.exe"
+          $hasDosboxX = Test-Path "$internal\vendor\windows\bin\dosbox-x\dosbox-x.exe"
           $hasGuiExe = Test-Path "$bundle\dosforge-gui.exe"
           switch ($variant) {
             'full' {
               if (-not $hasTextual) { $failures += "full bundle missing textual (needed for 'dosforge tui')" }
               if (-not $hasGuiExe) { $failures += "full bundle missing dosforge-gui.exe" }
               if (-not $hasQemuSys) { $failures += "full bundle missing qemu-system-i386" }
-              if (-not $hasDosboxX) { $failures += "full bundle missing dosbox-x.exe (PC-DOS 2000 hydration needs it)" }
+              if (-not $hasDosboxX) {
+                $failures += "full bundle missing dosbox-x\dosbox-x.exe (PC-DOS 2000 hydration needs the whole dosbox-x/ subdir)"
+              } else {
+                # Sanity-check that the DOSBox-X support files we need
+                # came across too — without these the EXE will exit on
+                # startup with no useful error in silent mode.
+                $dbxDir = "$internal\vendor\windows\bin\dosbox-x"
+                foreach ($need in @("dosbox-x.reference.conf", "languages")) {
+                  if (-not (Test-Path (Join-Path $dbxDir $need))) {
+                    $failures += "full bundle missing dosbox-x\$need (DOSBox-X won't start without it)"
+                  }
+                }
+              }
             }
             'cli' {
               if ($hasTextual) { $failures += "cli bundle leaked textual" }
               if ($hasGuiExe) { $failures += "cli bundle should not ship dosforge-gui.exe" }
               if ($hasQemuSys) { $failures += "cli bundle leaked qemu-system-i386" }
-              if ($hasDosboxX) { $failures += "cli bundle leaked dosbox-x.exe" }
+              if ($hasDosboxX) { $failures += "cli bundle leaked dosbox-x/" }
             }
           }
 

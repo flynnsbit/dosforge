@@ -164,7 +164,40 @@ def _stage_extracts(component: dict[str, Any], staging: Path) -> None:
 
     BIN_DIR.mkdir(parents=True, exist_ok=True)
     for spec in component["extracts"]:
-        if "from_in_archive_glob" in spec:
+        if "from_in_archive_tree" in spec:
+            # Recursively copy a whole archive subdirectory into a
+            # vendor/windows/bin/<subdir>/ — preserves nested layout
+            # (used by dosbox-x to keep messages/, glshaders/,
+            # drivez/, dosbox-x.reference.conf, etc. next to the EXE).
+            src_rel = spec["from_in_archive_tree"]
+            target_dir = BIN_DIR / spec["to_in_bin_dir"]
+            target_dir = target_dir.resolve()
+            # Resolve src_rel inside the extracted archive. We do
+            # rglob first to find the root because some archives
+            # extract into a nested wrapper dir.
+            wanted = src_rel.rstrip("/").replace("\\", "/")
+            src_root: Path | None = None
+            wanted_parts = wanted.split("/")
+            for candidate in staging.rglob(wanted_parts[-1]):
+                if candidate.is_dir() and candidate.as_posix().endswith(wanted):
+                    src_root = candidate
+                    break
+            if src_root is None:
+                raise ManifestError(
+                    f"{component['name']}: tree '{src_rel}' not found in archive"
+                )
+            target_dir.mkdir(parents=True, exist_ok=True)
+            count = 0
+            for entry in src_root.rglob("*"):
+                if not entry.is_file():
+                    continue
+                rel = entry.relative_to(src_root)
+                dest = target_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(entry, dest)
+                count += 1
+            print(f"    staged {count} files into {target_dir.relative_to(REPO_ROOT)}/")
+        elif "from_in_archive_glob" in spec:
             pattern = spec["from_in_archive_glob"]
             target_dir = BIN_DIR / spec.get("to_in_bin_dir", ".")
             target_dir = target_dir.resolve()
