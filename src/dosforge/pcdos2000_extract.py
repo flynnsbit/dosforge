@@ -290,9 +290,11 @@ def _harvest_floppy_contents(
     for img in img_paths:
         # mcopy is picky about destination path syntax on Windows when
         # native Path strings contain backslashes — using cwd= +
-        # POSIX-style "./" sidesteps that entirely.
+        # POSIX-style "." sidesteps that entirely. We pass "." (no
+        # trailing slash) because mtools appends its own "/" when the
+        # destination is a dir, and ".//" makes mkdir fail.
         result = subprocess.run(
-            [mcopy_exe, "-s", "-n", "-m", "-i", str(img), "::", "./"],
+            [mcopy_exe, "-s", "-n", "-m", "-i", str(img), "::", "."],
             cwd=str(dest_dir),
             check=False,
             capture_output=True,
