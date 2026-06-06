@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
@@ -166,4 +167,137 @@ def runner_for_backend(backend) -> CommandRunner:
     return CommandRunner(
         tool_resolver=backend.tool_path,
         sudo_required=backend.requires_sudo_for_disk_ops,
+    )
+
+
+class SudoKeepAlive:
+    """Background sudo timestamp refresher.
+
+    Refreshes the kernel sudo credential cache by running
+    ``sudo -nv --preserve-env=HOME,PATH`` on a fixed cadence in a
+    daemon thread. Use as a context manager around long-running
+    operations (VHD/IMG builds, mounts) so that a single startup
+    ``sudo -v`` prompt is sufficient for the entire session, even on
+    distros with a short ``timestamp_timeout``.
+
+    The refresher is a no-op when ``required`` is False, so call sites
+    can wire it unconditionally and let the platform backend decide
+    whether sudo is actually in play (Windows sets it to False).
+
+    When the periodic refresh starts failing (most commonly because
+    the user ran ``sudo -k`` externally, or the timestamp simply got
+    too old), an ``on_failure`` callback is invoked once per stale
+    state. The callback runs from the daemon thread so it MUST be
+    thread-safe; the default is to silently swallow errors and rely
+    on the next ``sudo -n`` call in the main thread to surface the
+    failure through the existing reactive re-auth path.
+    """
+
+    def __init__(
+        self,
+        *,
+        required: bool,
+        interval_seconds: float = 60.0,
+        sudo_binary: str = "sudo",
+        on_failure: Callable[[subprocess.CompletedProcess[str]], None] | None = None,
+        runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    ) -> None:
+        self._required = required
+        # Floor to a small but non-zero interval so a misconfigured
+        # caller can't busy-spin on sudo. The default cadence (60s) is
+        # set in :func:`sudo_keepalive_for_backend`; tests are free to
+        # pass small values to exercise the loop quickly.
+        self._interval = max(interval_seconds, 0.05)
+        self._sudo_binary = sudo_binary
+        self._on_failure = on_failure
+        self._runner = runner or self._default_runner
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._failed = False
+
+    @staticmethod
+    def _default_runner(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            list(argv),
+            check=False,
+            capture_output=True,
+            text=True,
+            **_NO_WINDOW_KWARGS,
+        )
+
+    def start(self) -> None:
+        if not self._required or self._thread is not None:
+            return
+        self._stop.clear()
+        self._failed = False
+        thread = threading.Thread(
+            target=self._loop,
+            name="dosforge-sudo-keepalive",
+            daemon=True,
+        )
+        self._thread = thread
+        thread.start()
+
+    def stop(self, *, timeout: float = 1.0) -> None:
+        thread = self._thread
+        if thread is None:
+            return
+        self._stop.set()
+        thread.join(timeout=timeout)
+        self._thread = None
+
+    def __enter__(self) -> "SudoKeepAlive":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.stop()
+
+    def _loop(self) -> None:
+        argv = [self._sudo_binary, "-n", "-v", "--preserve-env=HOME,PATH"]
+        fallback_argv = [self._sudo_binary, "-n", "-v"]
+        # Wait first, then refresh — the startup ``sudo -v`` has just
+        # primed the cache so an immediate refresh is wasted work.
+        while not self._stop.wait(self._interval):
+            try:
+                result = self._runner(argv)
+            except FileNotFoundError:
+                # sudo missing entirely; nothing we can do from a
+                # background thread. Stop quietly.
+                return
+            if result.returncode != 0 and self._stderr_disallows_preserve_env(result.stderr):
+                try:
+                    result = self._runner(fallback_argv)
+                except FileNotFoundError:
+                    return
+            if result.returncode == 0:
+                self._failed = False
+                continue
+            if not self._failed:
+                self._failed = True
+                if self._on_failure is not None:
+                    try:
+                        self._on_failure(result)
+                    except Exception:  # pragma: no cover - callback robustness
+                        pass
+
+    @staticmethod
+    def _stderr_disallows_preserve_env(stderr: str) -> bool:
+        message = (stderr or "").lower()
+        return "not allowed to set the following environment variables" in message and (
+            "home" in message or "path" in message
+        )
+
+
+def sudo_keepalive_for_backend(backend, **kwargs) -> SudoKeepAlive:
+    """Build a :class:`SudoKeepAlive` keyed to ``backend``.
+
+    Convenience wrapper that consults
+    ``backend.requires_sudo_for_disk_ops`` so call sites don't have to
+    branch on platform: on Windows the returned object is a no-op.
+    """
+
+    return SudoKeepAlive(
+        required=getattr(backend, "requires_sudo_for_disk_ops", False),
+        **kwargs,
     )

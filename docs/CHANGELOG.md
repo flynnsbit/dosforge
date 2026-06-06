@@ -6,6 +6,33 @@ The format is loosely based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Linux sudo handling — prompt once, keep alive.** Headless CLI
+  invocations of `dosforge create`, `dosforge mount`, and
+  `dosforge unmount` now run the same startup `sudo -v` prompt the
+  TUI/GUI have always used, so a single password entry primes
+  privileged work for the whole command. A new background
+  `SudoKeepAlive` daemon refreshes the kernel sudo timestamp cache
+  every 60 seconds while a build or mount is in progress, so long
+  operations (PC-DOS 7.1 FAT32 install, Win95 OSR2 SYS) no longer
+  fail when the default 5-minute `timestamp_timeout` expires
+  mid-flight.
+
+### Fixed
+
+- **Docs/error-message correction.** Removed misleading guidance to
+  add `NOPASSWD` sudoers entries. No such entries are required;
+  `mformat` and the other mtools have always run as the user
+  (`<image>@@<offset>` syntax). Error messages in `dosforge
+  sudo-check` and the startup auth probe now point users at
+  `sudo -v` instead.
+- **`releases/linux-v0.6.0-release-notes.md`** — replaced the
+  incorrect "sudoers note for mformat" section with the actual
+  sudo-handling story (no NOPASSWD needed).
+
 ## [0.6.0] — 2026-06-05
 
 First Linux release with **every supported boot mode × FAT combination

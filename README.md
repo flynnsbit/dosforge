@@ -268,8 +268,15 @@ dosforge        # Linux: launches the TUI (sudo auth happens up-front)
 ```
 
 `dosforge` performs startup sudo auth for the TUI (`sudo -v`) on Linux
-so credential prompts happen up front. The Windows backend reports
-`requires_sudo_for_disk_ops=False`, so no sudo prompts ever appear.
+so credential prompts happen up front. The same one-time prompt now
+fires for headless CLI invocations of `create`, `mount`, and
+`unmount` too. A background keep-alive thread refreshes the kernel
+sudo timestamp cache once a minute while a build is running so long
+operations (PC-DOS 7.1 + FAT32 install, Win95 OSR2 SYS) don't expire
+mid-flight. No `NOPASSWD` sudoers rules are required; `mformat` and
+the other mtools run as your user without sudo. The Windows backend
+reports `requires_sudo_for_disk_ops=False`, so no sudo prompts ever
+appear there.
 
 ## TUI usage
 

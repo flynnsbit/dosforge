@@ -92,22 +92,24 @@ geometry/format logic.
 - **PC-DOS 7.1 FAT32** — validation now correctly directs users to the
   FAT32 path when their VHD is ≥1 GiB (FORMAT32 rejects smaller drives).
 
-## sudoers note for `mformat`
+## How `sudo` authentication works
 
-Some PC-DOS 7.1 / MS-DOS 7.10 install paths use `sudo mformat` to stage
-pre-install files on the install floppy. The Linux release's `install.sh`
-already sets up a NOPASSWD entry for the dosforge user covering qemu-nbd,
-mount, parted, etc. If you installed via `pip` only (without
-`install.sh`), add a `mformat` NOPASSWD line yourself:
+The Linux build needs root for a handful of disk operations
+(`qemu-nbd`, `mount`, `umount`, `parted`, `mkfs.fat`, `modprobe nbd`,
+`dd` to a block device). dosforge calls `sudo -v` once at startup
+to prompt for your password, then runs every privileged command with
+`sudo -n` against the cached credentials. A background keep-alive
+thread refreshes the cache every minute during long builds so the
+session never expires mid-install.
 
-```bash
-sudo bash -c 'echo "%wheel ALL=(root) NOPASSWD: /usr/bin/mformat" \
-  > /etc/sudoers.d/dosforge-mformat && chmod 0440 /etc/sudoers.d/dosforge-mformat \
-  && visudo -c -f /etc/sudoers.d/dosforge-mformat'
-```
+**No `NOPASSWD` sudoers entries are required** — earlier release
+notes that suggested adding one (e.g. for `mformat`) were incorrect.
+`mformat` and the other mtools (`mcopy`, `mdir`, `mattrib`) operate
+on `<image>@@<offset>` and run as your user without sudo.
 
-(Replace `%wheel` with your local sudo group if your distro uses `sudo`
-instead.)
+If `sudo -v` cannot prompt (no TTY, headless session), run
+`sudo -v` manually before invoking dosforge so the kernel timestamp
+cache is primed.
 
 ## Upgrading from v0.5.x
 

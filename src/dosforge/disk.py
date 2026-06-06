@@ -16,7 +16,7 @@ from typing import Callable
 from uuid import uuid4
 
 from .boot import BootAssetResolver, BootInstaller, PartitionRef
-from .commands import CommandRunner, runner_for_backend
+from .commands import CommandRunner, SudoKeepAlive, runner_for_backend, sudo_keepalive_for_backend
 from ._core import mbr as core_mbr
 from ._core import vhd_footer as core_vhd_footer
 from .fourdos_overlay import (
@@ -490,7 +490,21 @@ class DiskManager:
             assert_dependencies(media_type=media_type or MediaType.VHD)
         self._ensure_sudo_ready()
 
+    def _sudo_keepalive(self) -> SudoKeepAlive:
+        """Build a keep-alive sized to this manager's backend.
+
+        Returned object is a no-op context manager on Windows (or any
+        backend without ``requires_sudo_for_disk_ops``) — call sites
+        can wrap unconditionally.
+        """
+
+        return sudo_keepalive_for_backend(self.backend)
+
     def create_and_prepare(self, request: CreateRequest) -> None:
+        with self._sudo_keepalive():
+            self._create_and_prepare_impl(request)
+
+    def _create_and_prepare_impl(self, request: CreateRequest) -> None:
         self.preflight(request)
         self._apply_custom_payload_autosizing(request)
         self._validate_create_request(request)
@@ -662,6 +676,10 @@ class DiskManager:
                 )
 
     def mount_vhd(self, path: Path) -> MountRecord:
+        with self._sudo_keepalive():
+            return self._mount_vhd_impl(path)
+
+    def _mount_vhd_impl(self, path: Path) -> MountRecord:
         image_path = path.expanduser().resolve()
         if not image_path.exists():
             raise ValidationError(f"Disk image file does not exist: {image_path}")
@@ -678,6 +696,10 @@ class DiskManager:
         return self._mount_vhd(image_path)
 
     def unmount(self, mount_point: Path) -> MountRecord:
+        with self._sudo_keepalive():
+            return self._unmount_impl(mount_point)
+
+    def _unmount_impl(self, mount_point: Path) -> MountRecord:
         record = self.state_store.find_mount(mount_point.expanduser().resolve())
         if record is None:
             raise ValidationError(f"Mount point is not tracked by dosforge: {mount_point}")
@@ -949,7 +971,8 @@ class DiskManager:
                         name="Non-interactive sudo readiness",
                         status="fail",
                         detail=(
-                            f"{detail}. Run `sudo -v` before launch or configure scoped NOPASSWD sudoers rules."
+                            f"{detail}. Run `sudo -v` in this terminal before launching dosforge so the "
+                            "credential cache is primed for the session."
                         ),
                     )
                 )

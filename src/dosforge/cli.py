@@ -374,8 +374,8 @@ def ensure_startup_sudo_auth(runner: CommandRunner | None = None) -> None:
     detail = probe.stderr.strip() or probe.stdout.strip() or f"exit code {probe.returncode}"
     raise ValidationError(
         "Sudo credentials were accepted, but non-interactive sudo is not available for runtime disk operations. "
-        "This host may require a password for every sudo command. Configure sudo credential caching or scoped "
-        "NOPASSWD rules, then retry.\n"
+        "This host may require a password for every sudo command. Run `sudo -v` from a terminal immediately "
+        "before launching dosforge, or extend your sudo timestamp_timeout so the cached credentials survive the build.\n"
         f"Details: {detail}"
     )
 
@@ -668,10 +668,52 @@ def _dispatch_cli_subcommand(args, parser) -> int:
     return _run_manager_subcommand(args, parser)
 
 
+def _is_sudo_auth_error_message(message: str) -> bool:
+    """Heuristically detect CLI errors caused by a stale sudo cache."""
+
+    if not message:
+        return False
+    lowered = message.lower()
+    markers = (
+        "sudo authentication is required for disk operations",
+        "sudo: a password is required",
+        "non-interactive sudo is not available",
+        "a terminal is required to read the password",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _print_sudo_failure_guidance(message: str) -> None:
+    """Augment a sudo-related CLI error with actionable next steps."""
+
+    if sys.stdin.isatty():
+        hint = (
+            "Sudo credentials are not available. Run `sudo -v` in this "
+            "terminal to prime the cache, then re-run dosforge."
+        )
+    else:
+        hint = (
+            "Sudo credentials are not available and this session has no "
+            "TTY for prompting. Run dosforge from an interactive terminal "
+            "(or prime the cache with `sudo -v` in a script wrapper) "
+            "before invoking privileged subcommands."
+        )
+    print(f"\n{hint}", file=sys.stderr)
+
+
 def _run_manager_subcommand(args, parser) -> int:
     try:
 
         manager = DiskManager()
+
+        # Subcommands that perform privileged disk operations should
+        # prompt for sudo once upfront so the rest of the run uses
+        # the cached credentials non-interactively. TUI/GUI launches
+        # already do this; we mirror it here so headless CLI flows
+        # don't fall into the lazy-failure trap.
+        _SUDO_REQUIRING_COMMANDS = ("create", "mount", "unmount")
+        if args.command in _SUDO_REQUIRING_COMMANDS:
+            ensure_startup_sudo_auth()
 
         if args.command == "sudo-check":
             ok, summary = manager.privilege_diagnostics_summary()
@@ -916,7 +958,10 @@ def _run_manager_subcommand(args, parser) -> int:
                 print(f"Created directory {args.dos_path} in {args.image}")
                 return 0
     except DosForgeError as exc:
-        print(str(exc), file=sys.stderr)
+        message = str(exc)
+        print(message, file=sys.stderr)
+        if _is_sudo_auth_error_message(message):
+            _print_sudo_failure_guidance(message)
         return 1
 
     parser.print_help(sys.stderr)
