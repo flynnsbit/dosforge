@@ -441,22 +441,9 @@ def extract_pcdos2000_utilities(
         backend = get_backend()
 
     # Locate the tools we need up front so we fail loudly before any
-    # disk work if something's missing on PATH. 7-Zip is ONLY required
-    # for the archive flow; raw-IMG mode skips the extract step.
-    seven_zip_exe: str | None = None
-    if not source_is_dir:
-        try:
-            seven_zip_exe = backend.tool_path("7z")
-        except DosForgeError:
-            seven_zip_exe = shutil.which("7z") or shutil.which("7zz") or shutil.which("7za")
-            if seven_zip_exe is None:
-                raise ValidationError(
-                    "PC-DOS 2000 extraction requires 7-Zip on PATH "
-                    "(7z / 7zz / 7za) to expand the WinWorldPC archive. "
-                    "Install p7zip-full and retry, or pre-extract the "
-                    "archive into dosassets/pcdos2000/ so the raw "
-                    "disk01.img..disk06.img floppies can be used directly."
-                )
+    # disk work if something's missing on PATH. The .7z/.zip extraction
+    # is done in-process via py7zr/zipfile (no external 7z required),
+    # so we only check for DOSBox-X and mcopy here.
     try:
         dosbox_exe = backend.tool_path("dosbox-x")
     except DosForgeError:
@@ -488,18 +475,38 @@ def extract_pcdos2000_utilities(
                 )
             disks = preexisting_disks
         else:
-            # 1. Extract the WinWorldPC 7z into a flat scratch.
+            # 1. Extract the WinWorldPC .7z/.zip into a flat scratch
+            #    in-process — keeps the Windows bundle from needing a
+            #    7-Zip dependency on PATH.
             if progress is not None:
                 progress(f"  extracting {pcdos2000_source.name}…")
             archive_extract = work / "archive"
             archive_extract.mkdir()
-            assert seven_zip_exe is not None
-            subprocess.run(
-                [str(seven_zip_exe), "x", "-y", f"-o{archive_extract}", str(pcdos2000_source)],
-                check=True,
-                capture_output=True,
-                **subprocess_no_window_kwargs(),
-            )
+            suffix = pcdos2000_source.suffix.lower()
+            try:
+                if suffix == ".7z":
+                    import py7zr
+
+                    with py7zr.SevenZipFile(pcdos2000_source, "r") as archive:
+                        archive.extractall(path=archive_extract)
+                elif suffix == ".zip":
+                    import zipfile
+
+                    with zipfile.ZipFile(pcdos2000_source) as archive:
+                        archive.extractall(path=archive_extract)
+                else:
+                    raise ValidationError(
+                        f"PC-DOS 2000 archive {pcdos2000_source.name} has "
+                        f"unsupported extension '{suffix}' (expected .7z or .zip)."
+                    )
+            except ValidationError:
+                raise
+            except Exception as exc:  # pragma: no cover - py7zr/zipfile errors
+                keep_work_for_postmortem = True
+                raise ValidationError(
+                    f"Failed to extract PC-DOS 2000 archive "
+                    f"{pcdos2000_source.name}: {type(exc).__name__}: {exc}"
+                ) from exc
 
             # 2. Locate disk01.img..disk06.img anywhere under the extract.
             disks = sorted(
