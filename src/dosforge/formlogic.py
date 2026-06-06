@@ -550,6 +550,50 @@ def validate_media_step(state: FormState) -> str | None:
     return None
 
 
+def build_time_hint(state: FormState) -> str | None:
+    """Return a user-facing 'expect a slow build' hint for some boot modes.
+
+    Some DOS modes (notably FreeDOS, which ships ~1388 files in its
+    userspace tree) take significantly longer to build than the
+    typical 30-90s VHD build because every file is copied via a
+    separate mtools ``mcopy`` invocation on Windows, where each
+    subprocess spawn costs ~50-200 ms. Without a hint, the GUI's
+    "Creating + formatting…" spinner offers no signal that a
+    3-5 minute wait is expected versus the run being stuck.
+
+    Returns a single-line message suitable for appending to a status
+    bar / spinner / CLI log, or ``None`` when no special warning is
+    needed for the current configuration. Pure function: only reads
+    ``state``, no I/O.
+    """
+    try:
+        boot_mode = BootMode(state.boot_mode)
+    except ValueError:
+        return None
+    if not _is_vhd(state) and not state.img_system_format:
+        return None
+    return build_time_hint_for_boot_mode(boot_mode)
+
+
+def build_time_hint_for_boot_mode(boot_mode: BootMode) -> str | None:
+    """Lower-level :func:`build_time_hint` for callers that don't have a FormState.
+
+    Used by the TUI's :meth:`DosForgeApp._handle_create` (which works
+    against a built :class:`CreateRequest`) and the CLI's create
+    subcommand. The :func:`build_time_hint` wrapper is preferred when
+    a FormState is in hand because it also short-circuits on IMG
+    floppies that aren't system-formatted (no DOS payload to stage).
+    """
+    if boot_mode is BootMode.FREEDOS:
+        return (
+            "FreeDOS stages ~1388 userspace files (FDOS/ tree including "
+            "NLS locales) one at a time via mtools — expect 3-5 minutes "
+            "on Windows, ~1 minute on Linux. Other DOS modes finish in "
+            "30-90 seconds."
+        )
+    return None
+
+
 def coerce_on_ibm_version_change(state: FormState) -> FormState:
     if _is_vhd(state):
         return apply_ibm_default_size(state, force=False)
@@ -692,7 +736,7 @@ def build_summary(state: FormState) -> list[tuple[str, str]]:
     if boot_mode is not BootMode.NONE and media_type is MediaType.VHD:
         boot_line += f"  profile={MSDOSInstallProfile(state.dos_profile).value}"
 
-    return [
+    rows: list[tuple[str, str]] = [
         ("Output", path),
         ("Media", media_line),
         ("Machine", machine.value),
@@ -702,3 +746,12 @@ def build_summary(state: FormState) -> list[tuple[str, str]]:
         ("Label", label_text),
         ("Overwrite", "yes" if state.overwrite else "no"),
     ]
+    hint = build_time_hint(state)
+    if hint:
+        # Show a compact, scannable form of the hint in the summary
+        # card so the user knows *before* clicking Create that this
+        # build will take longer than usual. The full multi-line
+        # explanation is reserved for the spinner / status bar where
+        # there's room.
+        rows.append(("Build time", "slow — see status bar"))
+    return rows

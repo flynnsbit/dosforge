@@ -1243,10 +1243,27 @@ class DosForgeApp(App[None]):
         btn.disabled = True
         media_type = MediaType(cast(str, self.query_one("#media-type", Select).value))
         kind = "VHD" if media_type is MediaType.VHD else "IMG"
-        self._start_spinner(
+        # Surface a known-slow-build warning (FreeDOS' 1388-file FDOS
+        # tree dominates wall-clock on Windows) so the user knows the
+        # spinner is going to be on-screen for several minutes vs. the
+        # usual 30-90 s. Reuses the GUI/CLI's shared formlogic helper
+        # so the message stays in sync across surfaces.
+        from .formlogic import build_time_hint_for_boot_mode
+        slow_hint = build_time_hint_for_boot_mode(request.boot_mode)
+        spinner_msg = (
             f"Creating + formatting {kind} {request.path.name}… "
             f"(this can take a minute or two for VHDs with a boot install)"
         )
+        if slow_hint:
+            spinner_msg = (
+                f"Creating + formatting {kind} {request.path.name}… "
+                "(FreeDOS: ~3-5 minutes on Windows, see status log)"
+            )
+            # Also print the full hint once via the status bar so the
+            # user can scroll the explanation; the spinner itself stays
+            # compact for the elapsed-time readout.
+            print(f"  [build] {slow_hint}", flush=True)
+        self._start_spinner(spinner_msg)
         # Kick the actual blocking work onto a thread worker so the UI
         # event loop keeps spinning and the spinner animates instead of
         # the whole TUI freezing while qemu-img/parted/mkfs.fat/qemu run.

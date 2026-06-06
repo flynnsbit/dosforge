@@ -892,6 +892,14 @@ def _run_manager_subcommand(args, parser) -> int:
                 bios_drive_type=bios_drive_type,
                 host_boot_mode=BootMode(args.host_boot_mode) if args.host_boot_mode else None,
             )
+            # Surface a "this build is slow" hint up-front for boot
+            # modes whose staging is dominated by file count (FreeDOS'
+            # ~1388 NLS files etc.). Without this, the CLI offers no
+            # signal that a multi-minute wait is expected vs. a hang.
+            from .formlogic import build_time_hint_for_boot_mode
+            slow_hint = build_time_hint_for_boot_mode(request.boot_mode)
+            if slow_hint:
+                print(f"  [build] {slow_hint}")
             manager.create_and_prepare(request)
             print(f"Created and prepared {request.path.expanduser().resolve()}")
             return 0

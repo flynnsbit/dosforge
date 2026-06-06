@@ -351,6 +351,13 @@ class CreateView(ttk.Frame):
 
     def _on_boot_change(self) -> None:
         self._coerce(fl.coerce_on_boot_change)
+        # When the user picks a boot mode whose build is known-slow
+        # (FreeDOS' ~1388-file FDOS tree), surface the warning in the
+        # status bar immediately so they know what to expect before
+        # they click Create.
+        hint = fl.build_time_hint(self._read_state())
+        if hint:
+            self.app.status.set_status(hint)
 
     def _on_format_change(self) -> None:
         self._coerce(fl.coerce_on_format_change)
@@ -508,10 +515,19 @@ class CreateView(ttk.Frame):
 
     def _create(self) -> None:
         try:
-            request = fl.build_create_request(self._read_state())
+            state = self._read_state()
+            request = fl.build_create_request(state)
         except DosForgeError as exc:
             self.app.status.set_status(str(exc), error=True)
             return
+
+        # Surface a "this build is slow" hint up-front for boot modes
+        # whose staging is dominated by file count (FreeDOS' ~1388 NLS
+        # files etc.). Without this, the spinner gives no signal that a
+        # multi-minute wait is expected vs. a hang.
+        slow_hint = fl.build_time_hint(state)
+        if slow_hint:
+            print(f"  [build] {slow_hint}", flush=True)
 
         def work():
             self.app.manager.create_and_prepare(request)
@@ -520,11 +536,15 @@ class CreateView(ttk.Frame):
         def done(path: Path):
             self.app.set_selected_image(path)
 
+        busy_msg = f"Creating {request.path}..."
+        if slow_hint:
+            busy_msg = f"Creating {request.path} (FreeDOS: slow on Windows, expect 3-5 minutes)..."
+
         self.app.run_operation(
             "create",
             work,
             done,
-            busy_msg=f"Creating {request.path}...",
+            busy_msg=busy_msg,
             success_msg=f"Created and prepared: {request.path}",
         )
 

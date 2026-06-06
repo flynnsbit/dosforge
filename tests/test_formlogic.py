@@ -240,6 +240,90 @@ def test_martypc_at_uses_format_table_size():
     assert req.size_bytes == lookup_martypc_at_format(slug).size_bytes
 
 
+# ── Build-time hint (slow-mode warning) ────────────────────────────────────
+
+
+def test_build_time_hint_freedos_vhd_warns_about_file_count():
+    """FreeDOS' 1388-file FDOS tree is the dominant wall-clock cost on Windows."""
+    hint = f.build_time_hint(_state(boot_mode=BootMode.FREEDOS.value))
+    assert hint is not None
+    assert "FreeDOS" in hint
+    # The exact wording is allowed to evolve; the asserts pin the
+    # contract that matters: a file-count callout + a wall-clock figure
+    # so the user knows what to expect.
+    assert "1388" in hint or "userspace files" in hint
+    assert "Windows" in hint
+
+
+def test_build_time_hint_freedos_img_system_format_warns():
+    """IMG with --img-system-format still stages the full FDOS tree."""
+    hint = f.build_time_hint(
+        _state(
+            media_type=MediaType.IMG.value,
+            floppy_type=FloppyType.F1440K.value,
+            boot_mode=BootMode.FREEDOS.value,
+            img_system_format=True,
+        )
+    )
+    assert hint is not None
+    assert "FreeDOS" in hint
+
+
+def test_build_time_hint_freedos_img_no_system_format_is_silent():
+    """Plain (non-bootable) FreeDOS IMG doesn't stage any DOS payload."""
+    hint = f.build_time_hint(
+        _state(
+            media_type=MediaType.IMG.value,
+            floppy_type=FloppyType.F1440K.value,
+            boot_mode=BootMode.FREEDOS.value,
+            img_system_format=False,
+        )
+    )
+    assert hint is None
+
+
+def test_build_time_hint_other_modes_silent():
+    """Only FreeDOS earns the slow-build warning today."""
+    for mode in (
+        BootMode.NONE,
+        BootMode.MSDOS33,
+        BootMode.MSDOS5,
+        BootMode.MSDOS622,
+        BootMode.MSDOS71,
+        BootMode.PCDOS,
+        BootMode.PCDOS7,
+        BootMode.PCDOS71,
+        BootMode.COMPAQ331,
+        BootMode.IBM8088,
+    ):
+        assert f.build_time_hint(_state(boot_mode=mode.value)) is None, (
+            f"build_time_hint should be None for {mode.value}, "
+            "but a slow-build warning was returned"
+        )
+
+
+def test_build_time_hint_for_boot_mode_freedos():
+    """Low-level helper used by the TUI/CLI matches the FormState wrapper."""
+    hint = f.build_time_hint_for_boot_mode(BootMode.FREEDOS)
+    assert hint is not None
+    assert "FreeDOS" in hint
+
+
+def test_build_summary_appends_slow_row_for_freedos():
+    """The right-side summary card surfaces a 'Build time: slow' line."""
+    rows = f.build_summary(_state(boot_mode=BootMode.FREEDOS.value))
+    keys = [k for k, _ in rows]
+    assert "Build time" in keys
+    value = next(v for k, v in rows if k == "Build time")
+    assert "slow" in value.lower()
+
+
+def test_build_summary_no_slow_row_for_non_freedos():
+    rows = f.build_summary(_state(boot_mode=BootMode.MSDOS622.value))
+    keys = [k for k, _ in rows]
+    assert "Build time" not in keys
+
+
 def test_custom_payload_allows_omitted_size():
     req = f.build_create_request(
         _state(size_text="", custom_payload="~/payload")
