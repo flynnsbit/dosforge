@@ -126,6 +126,7 @@ PROGRESS_STAGES = (
     "extracting_sgtk",
     "locating_dos_files",
     "staging_files",
+    "hydrating_pcdos2000",
     "done",
 )
 
@@ -151,6 +152,10 @@ class FetchResult:
     total_count: int
     missing: tuple[str, ...] = field(default_factory=tuple)
     vfd_filename: str | None = None
+    pcdos2000_added: int = 0
+    pcdos2000_skipped: int = 0
+    pcdos2000_archive: str | None = None
+    pcdos2000_error: str | None = None
 
 
 def default_target_dir() -> Path:
@@ -468,6 +473,52 @@ def fetch_pcdos71_assets(
             # Non-fatal: just means a future run will re-extract.
             pass
 
+    # PC-DOS 2000 utility hydration (FULL profile extra). Looks for a
+    # WinWorldPC ``IBM PC-DOS 2000 (3.5-1.44mb).7z`` next to the
+    # pcdos71 dosassets dir and, when present, merges its DOS utilities
+    # into ``target_dir/DOS/`` (SGTK wins on conflict). Failures are
+    # informational only — the SGTK-only set is always valid on its own.
+    pcdos2000_added = 0
+    pcdos2000_skipped = 0
+    pcdos2000_archive_name: str | None = None
+    pcdos2000_error: str | None = None
+    if progress is not None:
+        progress("hydrating_pcdos2000")
+    try:
+        from . import pcdos2000_extract as _p2k
+
+        pcdos2000_dir = target.parent / "pcdos2000"
+        archive = _p2k.find_pcdos2000_archive(pcdos2000_dir)
+        if archive is None:
+            if progress is not None:
+                progress(
+                    f"  no PC-DOS 2000 archive found in {pcdos2000_dir}; "
+                    "skipping (download IBM PC-DOS 2000 from WinWorldPC and "
+                    "place the 7z there to enable EMM386, POWER, DEFRAG, "
+                    "BACKUP, DOSSHELL, etc.)"
+                )
+        else:
+            if progress is not None:
+                progress(f"  found PC-DOS 2000 archive: {archive.name}")
+            pcdos2000_archive_name = archive.name
+            extracted_dos = _p2k.extract_pcdos2000_utilities(
+                archive,
+                progress=progress,
+            )
+            pcdos2000_added, pcdos2000_skipped = _p2k.merge_pcdos2000_into_pcdos71_dos(
+                extracted_dos,
+                target / "DOS",
+                progress=progress,
+            )
+    except ValidationError as exc:
+        pcdos2000_error = str(exc)
+        if progress is not None:
+            progress(f"  PC-DOS 2000 hydration FAILED: {exc}")
+    except Exception as exc:  # noqa: BLE001 - keep SGTK fetch healthy
+        pcdos2000_error = f"unexpected: {exc!r}"
+        if progress is not None:
+            progress(f"  PC-DOS 2000 hydration FAILED (unexpected): {exc!r}")
+
     if progress:
         progress("done")
 
@@ -477,4 +528,8 @@ def fetch_pcdos71_assets(
         total_count=len(EXPECTED_SHA256),
         missing=tuple(missing),
         vfd_filename=vfd_name,
+        pcdos2000_added=pcdos2000_added,
+        pcdos2000_skipped=pcdos2000_skipped,
+        pcdos2000_archive=pcdos2000_archive_name,
+        pcdos2000_error=pcdos2000_error,
     )

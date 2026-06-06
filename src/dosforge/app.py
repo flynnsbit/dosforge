@@ -1449,10 +1449,18 @@ class DosForgeApp(App[None]):
             return
 
         self.query_one("#boot-assets", Input).value = str(result.target_dir)
+        extra = ""
+        if result.pcdos2000_archive and result.pcdos2000_added > 0:
+            extra = (
+                f", plus {result.pcdos2000_added} extra utilities from "
+                f"{result.pcdos2000_archive} ({result.pcdos2000_skipped} kept SGTK)"
+            )
+        elif result.pcdos2000_error:
+            extra = f"; PC-DOS 2000 hydration skipped: {result.pcdos2000_error}"
         self._set_status(
             f"PC-DOS 7.1 assets ready at {result.target_dir} "
             f"({result.staged_count}/{result.total_count} DOS files + "
-            f"{result.vfd_filename})."
+            f"{result.vfd_filename}){extra}."
         )
 
     def _handle_privilege_diagnostics(self) -> None:
