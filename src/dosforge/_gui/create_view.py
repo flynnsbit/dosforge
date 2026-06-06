@@ -163,10 +163,20 @@ class CreateView(ttk.Frame):
             ),
             row=2,
         )
+        self._add_field(
+            bb, fl.FIELD_FETCH_PCDOS71, "",
+            lambda p: ttk.Button(
+                p,
+                text="Fetch PC-DOS 7.1 (SGTK) assets",
+                command=self._fetch_pcdos71,
+                takefocus=False,
+            ),
+            row=3,
+        )
         self._add_field(bb, fl.FIELD_DOS_PROFILE, "DOS install profile",
-                        self.combo_profile.build, row=3)
+                        self.combo_profile.build, row=4)
         self._add_field(bb, fl.FIELD_IBM_DOS_VERSION, "IBM DOS version",
-                        self.combo_ibm.build, row=4)
+                        self.combo_ibm.build, row=5)
 
         # ── Card: Media & geometry ─────────────────────────────────────
         media_card = Card(body, theme, title="Media & geometry")
@@ -427,6 +437,73 @@ class CreateView(ttk.Frame):
             done,
             busy_msg="Downloading FreeDOS assets...",
             success_msg="FreeDOS assets ready.",
+        )
+
+    def _fetch_pcdos71(self) -> None:
+        """Fetch IBM SGTK + (optionally) hydrate PC-DOS 2000 utilities.
+
+        Mirrors the TUI's _handle_pcdos71_fetch.  The work runs on the
+        worker thread; stage labels stream into the GUI's log panel via
+        stdout (the worker installs a redirect for each operation).
+        """
+        from ..pcdos71_fetch import fetch_pcdos71_assets
+
+        # Human-readable labels for the pre-fetcher's PROGRESS_STAGES.
+        # Kept in lockstep with app.py:_handle_pcdos71_fetch.
+        stage_labels = {
+            "preflight": "Checking dependencies…",
+            "locating_sevenzip": "Locating 7-Zip…",
+            "downloading_sgtk": "Downloading IBM SGTK from archive.org…",
+            "extracting_sgtk": "Extracting SGTK with 7-Zip…",
+            "locating_dos_files": "Locating PC-DOS 7.1 system files in extract…",
+            "staging_files": "Verifying SHA-256s and staging files…",
+            "hydrating_pcdos2000": "Hydrating C:\\DOS\\ with PC-DOS 2000 utilities…",
+            "done": "Done.",
+        }
+
+        def progress(stage: str) -> None:
+            # Stage names that have a friendly label get printed; anything
+            # else (e.g. file-by-file extraction lines, mtools chatter)
+            # flows through unmodified.
+            label = stage_labels.get(stage)
+            print(f"  [pcdos71] {label or stage}", flush=True)
+
+        def work():
+            return fetch_pcdos71_assets(progress=progress)
+
+        def done(result):
+            if result.vfd_filename is None:
+                self.app.status.set_status(
+                    f"PC-DOS 7.1 fetch staged {result.staged_count}/"
+                    f"{result.total_count} DOS files at {result.target_dir}, "
+                    "but the SGTK didn't ship a bootable VFD — pcdos71_profile "
+                    "won't accept this directory until you produce one.",
+                    error=True,
+                )
+                return
+            self.var_boot_assets.set(str(result.target_dir))
+            self._sync()
+            extra = ""
+            if result.pcdos2000_archive and result.pcdos2000_added > 0:
+                extra = (
+                    f", plus {result.pcdos2000_added} extra utilities from "
+                    f"{result.pcdos2000_archive} "
+                    f"({result.pcdos2000_skipped} kept SGTK)"
+                )
+            elif result.pcdos2000_error:
+                extra = f"; PC-DOS 2000 hydration skipped: {result.pcdos2000_error}"
+            self.app.status.set_status(
+                f"PC-DOS 7.1 assets ready at {result.target_dir} "
+                f"({result.staged_count}/{result.total_count} DOS files + "
+                f"{result.vfd_filename}){extra}."
+            )
+
+        self.app.run_operation(
+            "fetch-pcdos71",
+            work,
+            done,
+            busy_msg="Fetching IBM SGTK / PC-DOS 7.1 assets…",
+            success_msg="PC-DOS 7.1 assets ready.",
         )
 
     def _create(self) -> None:

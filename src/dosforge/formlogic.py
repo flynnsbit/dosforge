@@ -51,6 +51,7 @@ FIELD_IMG_SYSTEM_FORMAT = "img-system-format"
 FIELD_BOOT_MODE = "boot-mode"
 FIELD_FREEDOS_SOURCE = "freedos-source"
 FIELD_FETCH_FREEDOS = "fetch-freedos-btn"
+FIELD_FETCH_PCDOS71 = "fetch-pcdos71-btn"
 FIELD_DOS_PROFILE = "dos-profile"
 FIELD_IBM_DOS_VERSION = "ibm-dos-version"
 FIELD_BOOT_ASSETS = "boot-assets"
@@ -216,6 +217,12 @@ def visible_fields(state: FormState) -> set[str]:
     if show_freedos:
         visible.add(FIELD_FREEDOS_SOURCE)
         visible.add(FIELD_FETCH_FREEDOS)
+    if show_dos_profile and boot_mode is BootMode.PCDOS71:
+        # PC-DOS 7.1 (SGTK) pre-fetcher: same idea as Download FreeDOS
+        # assets, but pulls the IBM ServerGuide Scripting Toolkit and
+        # optionally hydrates C:\DOS\ with PC-DOS 2000 utilities when a
+        # local pcdos2000 archive is available.
+        visible.add(FIELD_FETCH_PCDOS71)
     if show_dos_profile:
         visible.add(FIELD_DOS_PROFILE)
     if show_ibm_dos_version:

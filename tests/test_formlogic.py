@@ -90,6 +90,19 @@ def test_dos_boot_mode_shows_profile_and_assets():
     vis = f.visible_fields(state)
     assert f.FIELD_DOS_PROFILE in vis
     assert f.FIELD_BOOT_ASSETS in vis
+    # Non-PCDOS71 DOS modes do not surface the SGTK pre-fetcher button.
+    assert f.FIELD_FETCH_PCDOS71 not in vis
+
+
+def test_pcdos71_shows_sgtk_fetch_button():
+    state = _state(boot_mode=BootMode.PCDOS71.value)
+    vis = f.visible_fields(state)
+    assert f.FIELD_DOS_PROFILE in vis
+    assert f.FIELD_BOOT_ASSETS in vis
+    assert f.FIELD_FETCH_PCDOS71 in vis
+    # FreeDOS-specific controls must stay hidden for the IBM SGTK flow.
+    assert f.FIELD_FETCH_FREEDOS not in vis
+    assert f.FIELD_FREEDOS_SOURCE not in vis
 
 
 def test_ibm8088_shows_version_toggle_except_on_xebec():
