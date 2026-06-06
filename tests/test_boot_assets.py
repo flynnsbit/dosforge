@@ -1861,6 +1861,192 @@ def test_export_latest_freedos_assets(tmp_path: Path, monkeypatch: pytest.Monkey
     assert b"\r\n" in (destination / "AUTOEXEC.BAT").read_bytes()
 
 
+# ── FreeDOS minimal-payload filter ─────────────────────────────────────────
+
+
+def _make_freedos_bundle_with_bloat(root: Path) -> None:
+    """Stage a fake WinWorldPC-style FreeDOS bundle with FullCD bloat dirs."""
+    _touch(root / "KERNEL.SYS")
+    _touch(root / "COMMAND.COM")
+    _touch(root / "BOOTSECT_FAT16.BIN", _freedos_fat16_boot_sector_bytes())
+    # CONFIG.SYS with one uncommented DEVICE= line + one commented out.
+    config_sys = (
+        b"SWITCHES=/N\r\n"
+        b"DOS=HIGH\r\n"
+        b";DEVICE=\\FDOS\\HIMEM.EXE /VERBOSE\r\n"     # commented: skip
+        b"DEVICE=\\FDOS\\BIN\\HIMEM.EXE /VERBOSE\r\n"  # uncommented: stage
+        b"INSTALL=\\FDOS\\SHARE.EXE\r\n"               # uncommented: stage
+        b"FILES=20\r\n"
+        b"SHELL=C:\\COMMAND.COM /P\r\n"
+    )
+    _touch(root / "CONFIG.SYS", config_sys)
+    _touch(root / "AUTOEXEC.BAT", b"LH C:\\FDOS\\MOUSE.COM\r\nPATH=C:\\FDOS\\BIN\r\n")
+
+    fdos = root / "FDOS"
+    # The 84-file BIN/ subtree we WANT to keep.
+    _touch(fdos / "BIN" / "XCOPY.EXE")
+    _touch(fdos / "BIN" / "ATTRIB.COM")
+    _touch(fdos / "BIN" / "FREECOM" / "subhelper.exe")  # nested in BIN/
+    # Files referenced by uncommented DEVICE= / INSTALL= / AUTOEXEC.
+    _touch(fdos / "BIN" / "HIMEM.EXE")
+    _touch(fdos / "SHARE.EXE")
+    _touch(fdos / "MOUSE.COM")
+    # Files referenced by COMMENTED-OUT directives (NOT staged).
+    _touch(fdos / "HIMEM.EXE")  # mentioned in commented DEVICE= line
+    # Bloat dirs Setup would never copy.
+    _touch(fdos / "APPINFO" / "BACKUP.LSM")
+    _touch(fdos / "DOC" / "README.TXT")
+    _touch(fdos / "HELP" / "EDIT.HLP")
+    _touch(fdos / "NLS" / "FC.PL")
+    _touch(fdos / "NLS" / "FC.RU")
+    _touch(fdos / "SOUND" / "ADPLAY" / "ADPLAY.EXE")
+    _touch(fdos / "NET" / "CURL.EXE")
+    _touch(fdos / "APPS" / "DN2.EXE")
+
+
+def test_freedos_filter_drops_bloat_subdirs(tmp_path: Path) -> None:
+    """APPINFO/DOC/HELP/NLS/SOUND/NET/APPS don't survive the filter."""
+    assets_dir = tmp_path / "freedos"
+    _make_freedos_bundle_with_bloat(assets_dir)
+
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.FREEDOS,
+        freedos_source=FreeDOSSource.LOCAL,
+        boot_assets_path=assets_dir,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+
+    staged = assets.fdos_payload_dir
+    assert staged is not None, "resolver returned no FDOS payload dir"
+    # Filter must have produced a cached subtree under cache_root,
+    # not pointed straight at the raw FDOS/ dir.
+    assert staged.parent == (tmp_path / "cache").resolve(), (
+        f"expected filtered staging under cache/, got {staged}"
+    )
+    for bloat in ("APPINFO", "APPS", "DOC", "HELP", "NLS", "NET", "SOUND"):
+        assert not (staged / bloat).exists(), f"{bloat}/ leaked into the filtered payload"
+
+
+def test_freedos_filter_keeps_bin_recursively(tmp_path: Path) -> None:
+    """BIN/* (including nested FREECOM/ etc.) survives in full."""
+    assets_dir = tmp_path / "freedos"
+    _make_freedos_bundle_with_bloat(assets_dir)
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.FREEDOS,
+        freedos_source=FreeDOSSource.LOCAL,
+        boot_assets_path=assets_dir,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+    staged = assets.fdos_payload_dir
+    assert staged is not None
+    assert (staged / "BIN" / "XCOPY.EXE").is_file()
+    assert (staged / "BIN" / "ATTRIB.COM").is_file()
+    assert (staged / "BIN" / "FREECOM" / "subhelper.exe").is_file()
+    assert (staged / "BIN" / "HIMEM.EXE").is_file()  # also a CONFIG.SYS ref
+
+
+def test_freedos_filter_picks_up_uncommented_config_refs(tmp_path: Path) -> None:
+    """INSTALL=\\FDOS\\SHARE.EXE stages SHARE.EXE at the FDOS root."""
+    assets_dir = tmp_path / "freedos"
+    _make_freedos_bundle_with_bloat(assets_dir)
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.FREEDOS,
+        freedos_source=FreeDOSSource.LOCAL,
+        boot_assets_path=assets_dir,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+    staged = assets.fdos_payload_dir
+    assert staged is not None
+    assert (staged / "SHARE.EXE").is_file(), "INSTALL=\\FDOS\\SHARE.EXE not honored"
+    # MOUSE.COM is referenced from AUTOEXEC.BAT (`LH C:\FDOS\MOUSE.COM`).
+    assert (staged / "MOUSE.COM").is_file(), "AUTOEXEC \\FDOS\\MOUSE.COM not honored"
+
+
+def test_freedos_filter_ignores_commented_directives(tmp_path: Path) -> None:
+    """A `;DEVICE=\\FDOS\\HIMEM.EXE` line does NOT stage HIMEM.EXE at the FDOS root."""
+    assets_dir = tmp_path / "freedos"
+    _make_freedos_bundle_with_bloat(assets_dir)
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.FREEDOS,
+        freedos_source=FreeDOSSource.LOCAL,
+        boot_assets_path=assets_dir,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+    staged = assets.fdos_payload_dir
+    assert staged is not None
+    # The commented DEVICE= line references \FDOS\HIMEM.EXE (at the
+    # FDOS root, not BIN/). The uncommented one references
+    # \FDOS\BIN\HIMEM.EXE.  Only the latter should be staged.
+    assert not (staged / "HIMEM.EXE").is_file(), (
+        "commented-out FDOS reference leaked into the filtered payload"
+    )
+    assert (staged / "BIN" / "HIMEM.EXE").is_file()
+
+
+def test_freedos_filter_is_noop_for_curated_bin_only_bundle(tmp_path: Path) -> None:
+    """A user who already curated dosassets/freedos/FDOS/ down to BIN/ only
+
+    gets EXACTLY their tree (no filter side effect)."""
+    assets_dir = tmp_path / "freedos"
+    _touch(assets_dir / "KERNEL.SYS")
+    _touch(assets_dir / "COMMAND.COM")
+    _touch(assets_dir / "BOOTSECT_FAT16.BIN", _freedos_fat16_boot_sector_bytes())
+    _touch(assets_dir / "FDOS" / "BIN" / "XCOPY.EXE")
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.FREEDOS,
+        freedos_source=FreeDOSSource.LOCAL,
+        boot_assets_path=assets_dir,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    assets = resolver.resolve(request)
+    # No bloat dirs -> filter is a no-op; payload_dir points straight at
+    # the user's FDOS/ folder.
+    assert assets.fdos_payload_dir == assets_dir / "FDOS"
+
+
+def test_freedos_filter_cache_hits_on_unchanged_source(tmp_path: Path) -> None:
+    """Re-running the resolver with no source changes hits the cache (same path returned)."""
+    assets_dir = tmp_path / "freedos"
+    _make_freedos_bundle_with_bloat(assets_dir)
+    request = CreateRequest(
+        path=tmp_path / "disk.vhd",
+        size_bytes=128 * 1024 * 1024,
+        disk_format=DiskFormat.FAT16,
+        boot_mode=BootMode.FREEDOS,
+        freedos_source=FreeDOSSource.LOCAL,
+        boot_assets_path=assets_dir,
+    )
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    first = resolver.resolve(request).fdos_payload_dir
+    second = resolver.resolve(request).fdos_payload_dir
+    assert first == second
+    # Cache hit means the staging dir is reused; marker lives
+    # alongside the staging dir (NOT inside it, so it doesn't get
+    # copied to the user's VHD) and pins source mtime.
+    assert first is not None
+    marker = first.parent / f"{first.name}.marker"
+    assert marker.is_file(), f"missing cache marker: {marker}"
+
+
 def test_export_latest_freedos_assets_can_include_fdos_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cache_root = tmp_path / "cache"
     resolver = BootAssetResolver(CommandRunner(), cache_root=cache_root)

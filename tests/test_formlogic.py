@@ -243,30 +243,15 @@ def test_martypc_at_uses_format_table_size():
 # ── Build-time hint (slow-mode warning) ────────────────────────────────────
 
 
-def test_build_time_hint_freedos_vhd_warns_about_file_count():
-    """FreeDOS' 1388-file FDOS tree is the dominant wall-clock cost on Windows."""
-    hint = f.build_time_hint(_state(boot_mode=BootMode.FREEDOS.value))
-    assert hint is not None
-    assert "FreeDOS" in hint
-    # The exact wording is allowed to evolve; the asserts pin the
-    # contract that matters: a file-count callout + a wall-clock figure
-    # so the user knows what to expect.
-    assert "1388" in hint or "userspace files" in hint
-    assert "Windows" in hint
+def test_build_time_hint_returns_none_for_freedos_vhd_after_filter():
+    """In v0.6.15 the FreeDOS payload filter cut staged file count from
 
-
-def test_build_time_hint_freedos_img_system_format_warns():
-    """IMG with --img-system-format still stages the full FDOS tree."""
-    hint = f.build_time_hint(
-        _state(
-            media_type=MediaType.IMG.value,
-            floppy_type=FloppyType.F1440K.value,
-            boot_mode=BootMode.FREEDOS.value,
-            img_system_format=True,
-        )
-    )
-    assert hint is not None
-    assert "FreeDOS" in hint
+    1388 to ~85, so FreeDOS no longer earns the slow-build warning
+    that lived here in v0.6.14. The hint helper now returns None for
+    every boot mode; the wiring is preserved so future slow-build
+    modes can be added with a one-line edit.
+    """
+    assert f.build_time_hint(_state(boot_mode=BootMode.FREEDOS.value)) is None
 
 
 def test_build_time_hint_freedos_img_no_system_format_is_silent():
@@ -283,9 +268,10 @@ def test_build_time_hint_freedos_img_no_system_format_is_silent():
 
 
 def test_build_time_hint_other_modes_silent():
-    """Only FreeDOS earns the slow-build warning today."""
+    """No boot mode currently earns the slow-build warning."""
     for mode in (
         BootMode.NONE,
+        BootMode.FREEDOS,
         BootMode.MSDOS33,
         BootMode.MSDOS5,
         BootMode.MSDOS622,
@@ -297,31 +283,25 @@ def test_build_time_hint_other_modes_silent():
         BootMode.IBM8088,
     ):
         assert f.build_time_hint(_state(boot_mode=mode.value)) is None, (
-            f"build_time_hint should be None for {mode.value}, "
-            "but a slow-build warning was returned"
+            f"build_time_hint should be None for {mode.value} "
+            "(no boot mode is slow enough to warn after v0.6.15 filter)"
         )
 
 
-def test_build_time_hint_for_boot_mode_freedos():
-    """Low-level helper used by the TUI/CLI matches the FormState wrapper."""
-    hint = f.build_time_hint_for_boot_mode(BootMode.FREEDOS)
-    assert hint is not None
-    assert "FreeDOS" in hint
+def test_build_time_hint_for_boot_mode_returns_none():
+    """Low-level helper is also silent in v0.6.15."""
+    for mode in (BootMode.FREEDOS, BootMode.MSDOS622, BootMode.PCDOS71):
+        assert f.build_time_hint_for_boot_mode(mode) is None
 
 
-def test_build_summary_appends_slow_row_for_freedos():
-    """The right-side summary card surfaces a 'Build time: slow' line."""
-    rows = f.build_summary(_state(boot_mode=BootMode.FREEDOS.value))
-    keys = [k for k, _ in rows]
-    assert "Build time" in keys
-    value = next(v for k, v in rows if k == "Build time")
-    assert "slow" in value.lower()
-
-
-def test_build_summary_no_slow_row_for_non_freedos():
-    rows = f.build_summary(_state(boot_mode=BootMode.MSDOS622.value))
-    keys = [k for k, _ in rows]
-    assert "Build time" not in keys
+def test_build_summary_no_slow_row_for_any_mode():
+    """Summary card no longer surfaces a 'Build time: slow' row."""
+    for mode in (BootMode.FREEDOS, BootMode.MSDOS622, BootMode.PCDOS71):
+        rows = f.build_summary(_state(boot_mode=mode.value))
+        keys = [k for k, _ in rows]
+        assert "Build time" not in keys, (
+            f"build_summary should not emit a 'Build time' row for {mode.value}"
+        )
 
 
 def test_custom_payload_allows_omitted_size():

@@ -179,6 +179,26 @@ def cleanup_legacy_cache_files(directory: "Path", filenames: tuple[str, ...]) ->
         removed.append(candidate)
     return removed
 
+
+def _iter_case_insensitive_matches(directory: Path, name: str):
+    """Yield every file in ``directory`` (non-recursive) matching ``name`` case-insensitively.
+
+    Used by the FreeDOS payload filter to read every flavor of the
+    startup files (e.g. both CONFIG.SYS and config.sys if for some
+    reason both exist on a Unix-like host).  Returns an iterator so
+    callers can break early on the first hit when they want one.
+    """
+    if not directory.is_dir():
+        return
+    target = name.upper()
+    try:
+        for entry in directory.iterdir():
+            if entry.is_file() and entry.name.upper() == target:
+                yield entry
+    except OSError:
+        return
+
+
 _MSDOS71_ROOT_FILES_EXCLUDED_FROM_DOS_DIR = {
     "IO.SYS",
     "MSDOS.SYS",
@@ -708,10 +728,25 @@ class BootAssetResolver:
         payload_dir = directory / "FDOS"
         self._prefer_freedos_core_system_files(files, payload_dir)
         mbr_template = self._resolve_mbr_boot_template(directory) if disk_format is DiskFormat.FAT16 else None
+        # Filter the FullCD bundle down to what FreeDOS Setup would
+        # actually install (root system files already handled
+        # separately; we filter the FDOS/ subtree to BIN/* + anything
+        # referenced from CONFIG.SYS / AUTOEXEC.BAT). Falls back to the
+        # raw payload_dir if the filter sees nothing worth filtering
+        # (e.g. the user already curated it down to BIN-only).
+        effective_payload_dir: Path | None = None
+        if payload_dir.is_dir():
+            if self._freedos_payload_needs_filtering(payload_dir):
+                effective_payload_dir = self._select_minimal_freedos_payload(
+                    source_payload_dir=payload_dir,
+                    partition_root_dir=directory,
+                )
+            else:
+                effective_payload_dir = payload_dir
         return BootAssets(
             system_files=files,
             boot_sector_template=template,
-            fdos_payload_dir=payload_dir if payload_dir.is_dir() else None,
+            fdos_payload_dir=effective_payload_dir,
             mbr_boot_code_template=mbr_template,
         )
 
@@ -744,10 +779,21 @@ class BootAssetResolver:
                 raise ValidationError(f"FreeDOS image is too small to contain a boot sector: {image_path}")
             template.write_bytes(boot_sector)
 
+        # Same filter as the directory-source path: even auto-fetched
+        # FreeDOS payloads can over-stage when bundled with optional
+        # packages.  Treats extraction_root as the partition root for
+        # CONFIG.SYS reference scanning.
+        effective_payload_dir = payload_dir
+        if payload_dir.is_dir() and self._freedos_payload_needs_filtering(payload_dir):
+            effective_payload_dir = self._select_minimal_freedos_payload(
+                source_payload_dir=payload_dir,
+                partition_root_dir=extraction_root,
+            )
+
         return BootAssets(
             system_files=files,
             boot_sector_template=template,
-            fdos_payload_dir=payload_dir,
+            fdos_payload_dir=effective_payload_dir,
             mbr_boot_code_template=None,
         )
 
@@ -3216,6 +3262,241 @@ class BootAssetResolver:
         if found is None:
             raise ValidationError(f"Required boot file not found in {directory}: {file_name}")
         return found
+
+    # ---- FreeDOS payload filter --------------------------------------
+
+    # FreeDOS Setup never xcopy's the entire FullCD bundle to C:\.  A
+    # default install lays down KERNEL.SYS + COMMAND.COM at the root,
+    # C:\FDOS\BIN\* (the active PATH=C:\FDOS\BIN target), and only
+    # whichever drivers / package binaries the user explicitly selected
+    # or referenced from CONFIG.SYS / AUTOEXEC.BAT. The WinWorldPC
+    # ``IBM-and-FreeDOS-1.3-FullCD-extracted-to-dosassets`` source ships
+    # APPINFO/, DOC/, HELP/, NLS/ (258 locale files for 20+ languages),
+    # SOUND/ (361 sound-card drivers), and several other package trees
+    # — none of which Setup copies for a default install.  Without the
+    # filter below dosforge would stage 1388 files (~29 MB), which both
+    # bloats the resulting VHD and dominates wall-clock at build time
+    # (one mtools mcopy invocation per file).
+    _FREEDOS_BLOAT_SUBDIRS = frozenset(
+        {"APPINFO", "APPS", "DEVEL", "DOC", "HELP", "LINKS", "NET", "NLS", "SOUND"}
+    )
+
+    def _freedos_payload_needs_filtering(self, payload_dir: Path) -> bool:
+        """True if ``payload_dir`` looks like a FullCD dump rather than a curated BIN-only tree.
+
+        A user who pre-curated their dosassets/freedos/FDOS/ down to
+        just BIN/* should get exactly that tree on disk (no filter
+        side-effect).  A user who dropped the full WinWorldPC bundle
+        with NLS/SOUND/HELP etc. should get the minimal authentic
+        install (filter runs).  We detect this by checking for any of
+        the known FullCD-only subdirs.
+        """
+        try:
+            for entry in payload_dir.iterdir():
+                if entry.is_dir() and entry.name.upper() in self._FREEDOS_BLOAT_SUBDIRS:
+                    return True
+        except OSError:
+            return False
+        return False
+
+    def _select_minimal_freedos_payload(
+        self,
+        source_payload_dir: Path,
+        partition_root_dir: Path,
+    ) -> Path:
+        """Return a cached, minimal-authentic copy of ``source_payload_dir``.
+
+        Mirrors what FreeDOS Setup would put under ``C:\\FDOS\\`` for a
+        default install:
+
+        * Everything under ``BIN/`` (the active PATH= target — ~66 files
+          on FreeDOS 1.3 including ASSIGN, ATTRIB, CHOICE, COMP, DEBUG,
+          DEVLOAD, DISPLAY, EDIT, EDLIN, FC, FDXMS, FIND, FORMAT, LABEL,
+          MEM, MODE, MOUSE, NANSI, SHARE, SORT, SWSUBST, TREE, XCOPY,
+          plus a few helpers).
+        * Any file referenced by an uncommented ``DEVICE=`` /
+          ``DEVICEHIGH=`` / ``INSTALL=`` / ``SHELL=`` line in the
+          partition root's CONFIG.SYS / FDCONFIG.SYS.
+        * Any file referenced by an explicit ``\\FDOS\\...`` /
+          ``C:\\FDOS\\...`` path in the partition root's AUTOEXEC.BAT
+          / FDAUTO.BAT (covers ``LH C:\\FDOS\\MOUSE.COM`` and similar).
+
+        Result is cached under ``cache_root/freedos-min-<hash>/`` keyed
+        on (source_payload_dir, max-mtime of any source file). The
+        cache hits unless the source tree changes, so repeat builds
+        re-use the staging dir without re-walking the FullCD tree.
+
+        Returns the cached staging path; layout matches the input so
+        the caller can pass it straight to ``_copy_payload_via_mtools``.
+        """
+        source = source_payload_dir.resolve()
+        partition = partition_root_dir.resolve()
+        digest = self._hash_value(f"{source}|{partition}")
+        staged = self.cache_root / f"freedos-min-{digest}"
+        # Marker lives alongside the staging dir (not inside it) so it
+        # doesn't get copied onto the user's VHD when the caller does
+        # a recursive payload walk.  Cache hit when both staged/ and
+        # marker file exist AND the marker still matches the source
+        # tree's max mtime.
+        marker = self.cache_root / f"freedos-min-{digest}.marker"
+
+        latest_mtime = self._max_mtime(source)
+        for name in ("CONFIG.SYS", "FDCONFIG.SYS", "AUTOEXEC.BAT", "FDAUTO.BAT"):
+            startup = self._find_file_case_insensitive(partition, name)
+            if startup is not None:
+                latest_mtime = max(latest_mtime, startup.stat().st_mtime)
+        expected = f"{source}\n{partition}\n{latest_mtime}\n"
+        if marker.exists() and staged.is_dir():
+            try:
+                if marker.read_text(encoding="ascii") == expected:
+                    return staged
+            except OSError:
+                pass
+        if staged.exists():
+            shutil.rmtree(staged)
+        if marker.exists():
+            try:
+                marker.unlink()
+            except OSError:
+                pass
+        staged.mkdir(parents=True)
+
+        # 1. Copy BIN/ verbatim if present (case-insensitive).
+        for entry in source.iterdir():
+            if entry.is_dir() and entry.name.upper() == "BIN":
+                shutil.copytree(entry, staged / "BIN")
+                break
+
+        # 2. Parse the partition's CONFIG.SYS / FDCONFIG.SYS /
+        #    AUTOEXEC.BAT / FDAUTO.BAT for referenced files. Anything
+        #    that resolves to a path under the source payload tree
+        #    gets staged in its original relative location.  Files
+        #    not referenced (and not under BIN/) are skipped — a real
+        #    FreeDOS Setup install only writes things you'd actually
+        #    invoke from your startup scripts.
+        extra_refs = self._extract_freedos_payload_references(partition)
+        for ref in extra_refs:
+            ref_rel = self._normalize_payload_relative(ref)
+            if ref_rel is None:
+                continue
+            src_path = self._find_relative_case_insensitive(source, ref_rel)
+            if src_path is None:
+                continue
+            dst_rel = src_path.relative_to(source)
+            dst_path = staged / dst_rel
+            if dst_path.exists():
+                continue
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, dst_path)
+
+        marker.write_text(expected, encoding="ascii")
+        return staged
+
+    @staticmethod
+    def _max_mtime(directory: Path) -> float:
+        """Largest mtime of any file under ``directory`` (recursive)."""
+        latest = 0.0
+        try:
+            for entry in directory.rglob("*"):
+                try:
+                    if entry.is_file():
+                        latest = max(latest, entry.stat().st_mtime)
+                except OSError:
+                    continue
+        except OSError:
+            return latest
+        return latest
+
+    @staticmethod
+    def _extract_freedos_payload_references(partition_root: Path) -> set[str]:
+        """Scan FreeDOS startup files for explicit ``\\FDOS\\...`` paths.
+
+        Reads CONFIG.SYS / FDCONFIG.SYS for uncommented ``DEVICE=`` /
+        ``DEVICEHIGH=`` / ``INSTALL=`` / ``SHELL=`` lines, AUTOEXEC.BAT
+        / FDAUTO.BAT for any explicit ``\\FDOS\\...`` or
+        ``C:\\FDOS\\...`` substring (with or without leading drive).
+        Comments (``;``, ``;?``, ``REM``) are stripped before parsing.
+        Returns the union of all referenced paths, normalized to
+        upper-case with forward slashes.
+        """
+        refs: set[str] = set()
+        config_names = ("CONFIG.SYS", "FDCONFIG.SYS")
+        autoexec_names = ("AUTOEXEC.BAT", "FDAUTO.BAT")
+
+        def _read(path: Path) -> str:
+            try:
+                return path.read_text(encoding="cp437", errors="replace")
+            except OSError:
+                return ""
+
+        config_directives = re.compile(
+            r"^\s*(?:DEVICE|DEVICEHIGH|INSTALL|SHELL|INSTALLHIGH)\s*=\s*([^\s/]+)",
+            re.IGNORECASE,
+        )
+        # FreeDOS specifically: \FDOS\... or C:\FDOS\... anywhere in any line
+        explicit_fdos = re.compile(r"(?:[A-Za-z]:)?\\FDOS\\[\w.\-\\]+", re.IGNORECASE)
+
+        for name in config_names:
+            for path in _iter_case_insensitive_matches(partition_root, name):
+                for line in _read(path).splitlines():
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith((";", "#")) or stripped.upper().startswith("REM "):
+                        continue
+                    m = config_directives.match(stripped)
+                    if m:
+                        refs.add(m.group(1))
+                    for ref in explicit_fdos.findall(stripped):
+                        refs.add(ref)
+
+        for name in autoexec_names:
+            for path in _iter_case_insensitive_matches(partition_root, name):
+                for line in _read(path).splitlines():
+                    stripped = line.strip()
+                    if not stripped or stripped.upper().startswith("REM ") or stripped.startswith(("@REM ", ":")):
+                        continue
+                    for ref in explicit_fdos.findall(stripped):
+                        refs.add(ref)
+        return refs
+
+    @staticmethod
+    def _normalize_payload_relative(reference: str) -> str | None:
+        """Convert a CONFIG.SYS-style FDOS reference into a relative POSIX path.
+
+        Strips drive letter, leading slashes / backslashes, and the
+        leading ``FDOS`` component (we're already operating inside the
+        FDOS payload tree). Returns ``None`` for references that don't
+        target the FDOS subtree (those are user payloads, not ours to
+        stage).
+        """
+        ref = reference.strip().strip('"').strip("'")
+        ref = ref.replace("\\", "/").upper()
+        if len(ref) >= 2 and ref[1] == ":":
+            ref = ref[2:]
+        ref = ref.lstrip("/")
+        prefix = "FDOS/"
+        if not ref.startswith(prefix):
+            return None
+        return ref[len(prefix):]
+
+    @staticmethod
+    def _find_relative_case_insensitive(root: Path, rel: str) -> Path | None:
+        """Walk ``rel`` under ``root`` matching each path component case-insensitively."""
+        current = root
+        for part in rel.split("/"):
+            if not part:
+                continue
+            try:
+                entries = list(current.iterdir())
+            except OSError:
+                return None
+            target_upper = part.upper()
+            match = next((e for e in entries if e.name.upper() == target_upper), None)
+            if match is None:
+                return None
+            current = match
+        if not current.is_file():
+            return None
+        return current
 
     def _hash_value(self, value: str) -> str:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]

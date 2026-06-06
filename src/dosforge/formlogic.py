@@ -553,18 +553,15 @@ def validate_media_step(state: FormState) -> str | None:
 def build_time_hint(state: FormState) -> str | None:
     """Return a user-facing 'expect a slow build' hint for some boot modes.
 
-    Some DOS modes (notably FreeDOS, which ships ~1388 files in its
-    userspace tree) take significantly longer to build than the
-    typical 30-90s VHD build because every file is copied via a
-    separate mtools ``mcopy`` invocation on Windows, where each
-    subprocess spawn costs ~50-200 ms. Without a hint, the GUI's
-    "Creating + formatting…" spinner offers no signal that a
-    3-5 minute wait is expected versus the run being stuck.
+    Reserved for boot modes whose build is dominated by file count or
+    QEMU runtime in ways the user can't avoid. Currently returns
+    ``None`` for every mode — the FreeDOS slow-build warning that
+    lived here in v0.6.14 was removed in v0.6.15 once the FreeDOS
+    payload filter cut staged file count from 1388 to ~85 (so the
+    build is no longer noticeably slow).
 
-    Returns a single-line message suitable for appending to a status
-    bar / spinner / CLI log, or ``None`` when no special warning is
-    needed for the current configuration. Pure function: only reads
-    ``state``, no I/O.
+    Pure function: only reads ``state``, no I/O. Returns a
+    single-line message or ``None``.
     """
     try:
         boot_mode = BootMode(state.boot_mode)
@@ -583,14 +580,11 @@ def build_time_hint_for_boot_mode(boot_mode: BootMode) -> str | None:
     subcommand. The :func:`build_time_hint` wrapper is preferred when
     a FormState is in hand because it also short-circuits on IMG
     floppies that aren't system-formatted (no DOS payload to stage).
+
+    Returns ``None`` for every boot mode today; left in place so the
+    GUI / TUI / CLI surfaces stay wired up and future slow-build
+    modes can be added with a one-line edit.
     """
-    if boot_mode is BootMode.FREEDOS:
-        return (
-            "FreeDOS stages ~1388 userspace files (FDOS/ tree including "
-            "NLS locales) one at a time via mtools — expect 3-5 minutes "
-            "on Windows, ~1 minute on Linux. Other DOS modes finish in "
-            "30-90 seconds."
-        )
     return None
 
 
