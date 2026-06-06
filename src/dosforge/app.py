@@ -477,6 +477,10 @@ class DosForgeApp(App[None]):
                                             BootMode.PCDOS7.value,
                                         ),
                                         (
+                                            "IBM PC-DOS 2000 bootable (6-floppy set)",
+                                            BootMode.PCDOS2000.value,
+                                        ),
+                                        (
                                             "PC-DOS 7.1 bootable (FAT32)",
                                             BootMode.PCDOS71.value,
                                         ),
@@ -1007,6 +1011,7 @@ class DosForgeApp(App[None]):
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS7,
+            BootMode.PCDOS2000,
             BootMode.PCDOS71,
             BootMode.COMPAQ331,
         }

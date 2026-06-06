@@ -71,6 +71,7 @@ _DOS_PROFILE_BOOT_MODES = frozenset(
         BootMode.MSDOS622,
         BootMode.PCDOS,
         BootMode.PCDOS7,
+        BootMode.PCDOS2000,
         BootMode.PCDOS71,
         BootMode.COMPAQ331,
     }
@@ -323,6 +324,10 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
         allowed_formats=frozenset({DiskFormat.FAT12, DiskFormat.FAT16}),
     ),
     BootMode.PCDOS7: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT12, DiskFormat.FAT16}),
+    ),
+    # IBM PC-DOS 2000 = PC-DOS 7.0 rebrand; same FAT support as PCDOS7.
+    BootMode.PCDOS2000: _BootMediaRule(
         allowed_formats=frozenset({DiskFormat.FAT12, DiskFormat.FAT16}),
     ),
 }

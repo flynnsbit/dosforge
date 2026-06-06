@@ -34,6 +34,7 @@ from .legacy_dos_install import (
     msdos622_profile,
     msdos71_profile,
     pcdos7_profile,
+    pcdos2000_profile,
     pcdos71_fat16_profile,
     pcdos71_profile,
 )
@@ -232,6 +233,30 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
         system_file_marker="IBMBIO.COM",
         profile_builder=pcdos7_profile,
     ),
+    # IBM PC-DOS 2000 (= PC-DOS 7.00 rebrand for the Y2K cycle).
+    # Distributed by IBM as a 6-floppy set on a Software Selections CD;
+    # WinWorldPC archives this as ``IBM PC-DOS 2000 (3.5-1.44mb).7z``
+    # containing six raw 1.44 MB IMGs (``disk01.img`` is the bootable
+    # install floppy with IBMBIO/IBMDOS/COMMAND/SYS.COM/FORMAT.COM at
+    # its root).  Unlike PCDOS7 (which ships LOADDSKF-compressed
+    # ``144US1.DSK``), no DOSBox-X decompression step is needed —
+    # ``disk01.img`` is directly usable as the install_image.  The
+    # FORMAT C: /S pipeline is the same one PCDOS7 uses, so the
+    # resulting VHD is byte-equivalent to a PCDOS7 VHD aside from
+    # build-time diagnostics.
+    BootMode.PCDOS2000: _LegacyDosInstallDescriptor(
+        label="IBM PC-DOS 2000",
+        asset_fallback_dirs=("pcdos2000",),
+        preferred_image_names=(
+            "disk01.img",
+            "DISK01.IMG",
+            "disk01.ima",
+            "DISK01.IMA",
+            "DISK1.IMG",
+        ),
+        system_file_marker="IBMBIO.COM",
+        profile_builder=pcdos2000_profile,
+    ),
 }
 
 
@@ -314,6 +339,7 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
         BootMode.MSDOS71,
         BootMode.PCDOS,
         BootMode.PCDOS7,
+        BootMode.PCDOS2000,
         BootMode.PCDOS71,
     ):
         return True
@@ -1203,6 +1229,7 @@ class DiskManager:
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS7,
+            BootMode.PCDOS2000,
             BootMode.COMPAQ331,
         }
         if request.boot_mode in legacy_fat16_modes and request.disk_format is not DiskFormat.FAT16:
@@ -1280,6 +1307,7 @@ class DiskManager:
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS7,
+            BootMode.PCDOS2000,
             BootMode.PCDOS71,
             BootMode.COMPAQ331,
         }
@@ -1929,13 +1957,14 @@ class DiskManager:
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS7,
+            BootMode.PCDOS2000,
             BootMode.PCDOS71,
         ):
             raise ValidationError(
                 "This boot mode is not yet supported on this platform. "
                 "On Windows, supported VHD boot modes are: none, freedos, "
                 "msdos71, msdos33, msdos331, compaq331, ibm8088 (dos33), "
-                "msdos5, msdos622, pcdos, pcdos7, pcdos71."
+                "msdos5, msdos622, pcdos, pcdos7, pcdos2000, pcdos71."
             )
 
         target_path = request.path
@@ -2063,6 +2092,7 @@ class DiskManager:
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS7,
+            BootMode.PCDOS2000,
         )
         msdos5_layout = (
             request.boot_mode in format_from_scratch_modes
@@ -2170,6 +2200,7 @@ class DiskManager:
                 BootMode.MSDOS71,
                 BootMode.PCDOS,
                 BootMode.PCDOS7,
+                BootMode.PCDOS2000,
                 BootMode.PCDOS71,
                 BootMode.IBM8088,
             ):
@@ -2189,6 +2220,7 @@ class DiskManager:
                             BootMode.MSDOS5,
                             BootMode.MSDOS622,
                             BootMode.PCDOS7,
+                            BootMode.PCDOS2000,
                         )
                         or (
                             request.boot_mode is BootMode.PCDOS71
@@ -2385,6 +2417,7 @@ class DiskManager:
                 BootMode.MSDOS622,
                 BootMode.PCDOS,
                 BootMode.PCDOS7,
+                BootMode.PCDOS2000,
                 BootMode.COMPAQ331,
             }
             self.boot_installer.make_floppy_bootable(

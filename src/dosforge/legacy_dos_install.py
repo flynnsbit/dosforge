@@ -243,6 +243,44 @@ def pcdos7_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
     )
 
 
+def pcdos2000_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    """IBM PC-DOS 2000 install profile.
+
+    IBM PC-DOS 2000 IS IBM PC-DOS 7.0 internally — same VBR, same
+    IBMBIO/IBMDOS dates, same SETUP.COM. IBM rebranded PC-DOS 7.00
+    as "PC-DOS 2000" for the Y2K marketing cycle. The only practical
+    difference is the distribution channel:
+
+    * PCDOS7 ships LOADDSKF-compressed ``144US1.DSK`` (single-floppy
+      install image that needs IBM's LOADDSKF.EXE inside DOSBox-X to
+      decompress at build time).
+    * PCDOS2000 ships the standard 6-floppy WinWorldPC set
+      (``disk01.img``..``disk06.img``) — raw 1.44 MB IMG, no
+      decompression needed. ``disk01`` is the bootable install
+      floppy with IBMBIO.COM + IBMDOS.COM + COMMAND.COM + SYS.COM +
+      FORMAT.COM at its root.
+
+    ``install_image`` is the raw ``disk01.img`` — passed verbatim to
+    the same FORMAT C: /S pipeline PCDOS7 already uses, producing
+    bytes-identical VHDs (the FORMAT.COM and FDISK /MBR output are
+    the same — only the boot label differs in the diagnostics).
+    """
+    _ = boot_assets_dir
+    return LegacyDosInstallProfile(
+        label="IBM PC-DOS 2000",
+        install_image=install_image,
+        required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+        install_method="format",
+        timeout_seconds=300.0,
+        # PC-DOS 2000 = PC-DOS 7.0, FDISK supports /MBR.
+        supports_fdisk_mbr=True,
+        # Same Y/Y/ENTER pattern as msdos5 / pcdos7 — DOS 5+ FORMAT
+        # asks "Proceed with Format?" twice when an existing FAT
+        # differs from spec, then accepts an empty volume label.
+        format_yes_input=b"Y\r\nY\r\n\r\n",
+    )
+
+
 def pcdos71_fat16_profile(
     install_image: Path,
     boot_assets_dir: Path | None = None,
@@ -1225,6 +1263,7 @@ __all__ = [
     "msdos5_profile",
     "msdos622_profile",
     "pcdos7_profile",
+    "pcdos2000_profile",
     "pcdos71_profile",
     "pcdos71_fat16_profile",
     "msdos71_profile",

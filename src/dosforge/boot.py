@@ -4297,6 +4297,7 @@ class BootInstaller:
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS7,
+            BootMode.PCDOS2000,
             BootMode.COMPAQ331,
         }:
             return
@@ -4378,6 +4379,7 @@ class BootInstaller:
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS7,
+            BootMode.PCDOS2000,
             BootMode.COMPAQ331,
         }
         if boot_mode in strict_modes:

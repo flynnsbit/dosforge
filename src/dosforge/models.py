@@ -71,6 +71,14 @@ class BootMode(str, Enum):
     MSDOS622 = "msdos622"
     PCDOS = "pcdos"
     PCDOS7 = "pcdos7"
+    # IBM PC-DOS 2000 = IBM PC-DOS 7.00 rebranded for the Y2K push.
+    # Same VBR + IBMBIO/IBMDOS dates as PCDOS7, but distributed as a
+    # raw 6-floppy WinWorldPC set (disk01.img..disk06.img) rather than
+    # the LOADDSKF-compressed ``144US1.DSK`` PCDOS7 ships with.  We
+    # keep them as separate boot modes so the user picks their own
+    # asset source explicitly; the install pipeline is the same
+    # FORMAT C: /S that PCDOS7 uses.
+    PCDOS2000 = "pcdos2000"
     PCDOS71 = "pcdos71"
     COMPAQ331 = "compaq331"
     # 4DOS shell overlay (planned, requires --host-dos).  Phase 14F

@@ -212,6 +212,7 @@ def test_windows_vhd_pipeline_accepts_every_legacy_dos_mode(tmp_path: Path):
         BootMode.MSDOS622,
         BootMode.PCDOS,
         BootMode.PCDOS7,
+        BootMode.PCDOS2000,
     )
     for mode in legacy_modes:
         request = _basic_request(target, boot_mode=mode)
@@ -279,6 +280,33 @@ def test_windows_vhd_pipeline_accepts_freedos_and_msdos71(tmp_path: Path):
             assert "not yet supported on this platform" not in str(exc), (
                 f"{mode} should not be blocked by the unsupported-mode gate, got: {exc}"
             )
+
+
+def test_windows_vhd_pipeline_accepts_pcdos2000(tmp_path: Path):
+    """IBM PC-DOS 2000 (v0.6.16) goes through the same FORMAT C: /S
+    pipeline as PCDOS7.  The unsupported-mode gate must let it through;
+    failures past that point come from missing install media in
+    dosassets/pcdos2000/, not the gate itself.
+    """
+    target = tmp_path / "pcdos2000.vhd"
+    request = _basic_request(
+        target,
+        boot_mode=BootMode.PCDOS2000,
+        disk_format=DiskFormat.FAT16,
+        size_bytes=32 * 1024 * 1024,
+    )
+    runner = FakeRunner(vhd_size_bytes=request.size_bytes)
+    manager = _manager(tmp_path, runner)
+    try:
+        manager.create_and_prepare(request)
+    except ValidationError as exc:
+        message = str(exc)
+        assert "not yet supported on this platform" not in message, (
+            f"PCDOS2000 should not be blocked by the unsupported-mode gate, got: {message}"
+        )
+        assert "pcdos2000" not in message.lower() or "install" in message.lower(), (
+            f"PCDOS2000 should pass the gate; missing-asset errors are acceptable, got: {message}"
+        )
 
 
 def test_windows_vhd_pipeline_copies_custom_payload(tmp_path: Path):
