@@ -132,31 +132,29 @@ jobs:
           # Variant-specific shape checks
           $hasTextual = Test-Path "$internal\textual\__init__.py"
           $hasQemuSys = Test-Path "$internal\vendor\windows\bin\qemu-system-i386.exe"
+          $hasDosboxX = Test-Path "$internal\vendor\windows\bin\dosbox-x.exe"
           $hasGuiExe = Test-Path "$bundle\dosforge-gui.exe"
           switch ($variant) {
             'full' {
               if (-not $hasTextual) { $failures += "full bundle missing textual (needed for 'dosforge tui')" }
               if (-not $hasGuiExe) { $failures += "full bundle missing dosforge-gui.exe" }
               if (-not $hasQemuSys) { $failures += "full bundle missing qemu-system-i386" }
+              if (-not $hasDosboxX) { $failures += "full bundle missing dosbox-x.exe (PC-DOS 2000 hydration needs it)" }
             }
             'cli' {
               if ($hasTextual) { $failures += "cli bundle leaked textual" }
               if ($hasGuiExe) { $failures += "cli bundle should not ship dosforge-gui.exe" }
               if ($hasQemuSys) { $failures += "cli bundle leaked qemu-system-i386" }
+              if ($hasDosboxX) { $failures += "cli bundle leaked dosbox-x.exe" }
             }
           }
 
-          # qemu-img + mformat + dosbox-x MUST be present in every
-          # variant (dosbox-x powers PC-DOS 7.1 FULL profile hydration
-          # via UNPACK2.EXE against PC-DOS 2000 FTCOMP packs).
+          # qemu-img + mformat MUST be present in every variant.
           if (-not (Test-Path "$internal\vendor\windows\bin\qemu-img.exe")) {
             $failures += "qemu-img.exe missing from vendor/"
           }
           if (-not (Test-Path "$internal\vendor\windows\bin\mformat.exe")) {
             $failures += "mformat.exe missing from vendor/"
-          }
-          if (-not (Test-Path "$internal\vendor\windows\bin\dosbox-x.exe")) {
-            $failures += "dosbox-x.exe missing from vendor/ (PC-DOS 2000 hydration needs it)"
           }
 
           # dosforge.exe --help must work
