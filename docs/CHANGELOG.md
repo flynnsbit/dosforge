@@ -8,6 +8,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-06-05
+
 ### Changed
 
 - **Linux sudo handling — prompt once, keep alive.** Headless CLI
@@ -23,6 +25,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **TUI dropdowns now open on the first click.** Replaced `Select`
+  with a `SingleClickSelect` subclass that opens the overlay on
+  `MouseDown` and calls `event.prevent_default()` from its
+  `SelectCurrent.Toggle` handler to suppress the parent
+  `Select`'s default toggling handler (which would otherwise
+  race-close the menu on the synthesized click that follows
+  mouse-up).
+- **TUI focused buttons no longer flash inverted text.** Dropped
+  `reverse` from `Button.btn-primary:focus` and set
+  `ALLOW_SELECT = False` on `DosForgeApp`, so focused primary
+  buttons stay bold instead of swapping fg/bg and click-drag no
+  longer paints a text-selection marquee across the screen.
 - **Docs/error-message correction.** Removed misleading guidance to
   add `NOPASSWD` sudoers entries. No such entries are required;
   `mformat` and the other mtools have always run as the user

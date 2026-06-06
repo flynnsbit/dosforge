@@ -24,6 +24,8 @@ from textual.widgets import (
     TabPane,
 )
 from textual.widgets._directory_tree import DirEntry
+from textual.widgets._select import SelectCurrent
+from textual import on as _textual_on
 
 from .disk import DiskManager
 from .errors import DosForgeError
@@ -47,6 +49,49 @@ from .models import (
     parse_bios_drive_slug,
 )
 from .size import parse_size
+
+
+class SingleClickSelect(Select):
+    """A :class:`Select` that opens its dropdown on the first mouse click.
+
+    Textual's default ``Select`` requires two clicks: the first only
+    settles focus, the second runs the Toggle. We open the overlay
+    eagerly on ``MouseDown`` so it appears on the first press.
+
+    But that alone isn't enough — the synthesized ``Click`` event
+    that follows on mouse-up still triggers ``SelectCurrent.Toggle``,
+    and Textual's message dispatch walks the full MRO, calling
+    *every* decorated handler. The parent ``Select`` registers its
+    own ``@on(SelectCurrent.Toggle)`` handler that unconditionally
+    does ``self.expanded = not self.expanded`` — so on mouse-up the
+    parent's handler flips us right back to ``expanded=False`` and
+    the menu disappears.
+
+    ``event.stop()`` doesn't help here because it only stops the
+    message bubbling to parent widgets, not sibling handlers on the
+    same widget. The correct lever is
+    ``event.prevent_default()`` — Textual's message pump checks
+    ``message._no_default_action`` at the top of each MRO iteration
+    and breaks the loop, so the parent's Toggle handler never runs.
+
+    Subclass-only: drop-in replacement for ``Select``.
+    """
+
+    def _on_mouse_down(self, event) -> None:
+        if not self.expanded:
+            self.action_show_overlay()
+
+    @_textual_on(SelectCurrent.Toggle)
+    def _single_click_toggle(self, event: SelectCurrent.Toggle) -> None:
+        # MouseDown already opened the overlay. We must call
+        # prevent_default() to short-circuit the parent Select's
+        # toggling handler, otherwise it would race-close the menu
+        # on the synthesized click that follows mouse-up.
+        event.stop()
+        event.prevent_default()
+        if not self.expanded:
+            self.action_show_overlay()
+
 
 _DOS_INSTALL_PROFILE_OPTIONS = [
     ("Boot files only", MSDOSInstallProfile.MINIMAL.value),
@@ -101,6 +146,7 @@ _FLOPPY_OPTIONS = [
 class DosForgeApp(App[None]):
     TITLE = "DosForge"
     SUB_TITLE = "Build, browse, and mount DOS-friendly disk images"
+    ALLOW_SELECT = False
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("ctrl+1", "show_tab('tab-new')", "New Disk"),
@@ -117,6 +163,9 @@ class DosForgeApp(App[None]):
     }
     Header {
       background: $primary 30%;
+    }
+    Button:focus {
+      text-style: bold;
     }
     #context-bar {
       height: 1;
@@ -291,7 +340,7 @@ class DosForgeApp(App[None]):
     Button.btn-primary:focus {
       background: $accent;
       color: $text;
-      text-style: bold reverse;
+      text-style: bold;
     }
     Button.btn-secondary {
       background: $boost;
@@ -394,7 +443,7 @@ class DosForgeApp(App[None]):
                                     classes="wizard-step-title",
                                 )
                                 yield Label("Disk type")
-                                yield Select(
+                                yield SingleClickSelect(
                                     options=[
                                         ("VHD (fixed-size hard disk)", MediaType.VHD.value),
                                         ("IMG (floppy)", MediaType.IMG.value),
@@ -403,17 +452,17 @@ class DosForgeApp(App[None]):
                                     id="media-type",
                                 )
                                 yield Label("Machine target", id="machine-target-label")
-                                yield Select(
+                                yield SingleClickSelect(
                                     options=_MACHINE_TARGET_OPTIONS,
                                     value=MachineTarget.GENERIC.value,
                                     id="machine-target",
                                 )
-                                yield Select(
+                                yield SingleClickSelect(
                                     options=_MARTYPC_XEBEC_DRIVE_TYPE_OPTIONS,
                                     value=MartyPCXebecDriveType.TYPE2.value,
                                     id="martypc-xebec-drive-type",
                                 )
-                                yield Select(
+                                yield SingleClickSelect(
                                     options=_MARTYPC_AT_DRIVE_TYPE_OPTIONS,
                                     value=DEFAULT_MARTYPC_AT_FORMAT_SLUG,
                                     id="martypc-at-drive-type",
@@ -432,13 +481,13 @@ class DosForgeApp(App[None]):
                                     id="create-size",
                                 )
                                 yield Label("BIOS preset (locks size to exact CHS)", id="bios-drive-type-label")
-                                yield Select(
+                                yield SingleClickSelect(
                                     options=_BIOS_DRIVE_TYPE_OPTIONS,
                                     value=_BIOS_CUSTOM_VALUE,
                                     id="bios-drive-type",
                                 )
                                 yield Label("Filesystem", id="create-format-label")
-                                yield Select(
+                                yield SingleClickSelect(
                                     options=[
                                         ("FAT12 (MartyPC Xebec Type 1 only)", DiskFormat.FAT12.value),
                                         ("FAT16", DiskFormat.FAT16.value),
@@ -448,7 +497,7 @@ class DosForgeApp(App[None]):
                                     id="create-format",
                                 )
                                 yield Label("Floppy size", id="floppy-type-label")
-                                yield Select(
+                                yield SingleClickSelect(
                                     options=_FLOPPY_OPTIONS,
                                     value=FloppyType.F1440K.value,
                                     id="floppy-type",
@@ -465,7 +514,7 @@ class DosForgeApp(App[None]):
                                     classes="wizard-step-title",
                                 )
                                 yield Label("Boot mode", id="boot-mode-label")
-                                yield Select(
+                                yield SingleClickSelect(
                                     options=[
                                         ("None (data disk only)", BootMode.NONE.value),
                                         ("FreeDOS bootable", BootMode.FREEDOS.value),
@@ -493,7 +542,7 @@ class DosForgeApp(App[None]):
                                     id="boot-mode",
                                 )
                                 yield Label("FreeDOS source", id="freedos-source-label")
-                                yield Select(
+                                yield SingleClickSelect(
                                     options=[
                                         ("Local FreeDOS assets", FreeDOSSource.LOCAL.value),
                                         (
@@ -505,13 +554,13 @@ class DosForgeApp(App[None]):
                                     id="freedos-source",
                                 )
                                 yield Label("DOS install profile", id="dos-profile-label")
-                                yield Select(
+                                yield SingleClickSelect(
                                     options=_DOS_INSTALL_PROFILE_OPTIONS,
                                     value=MSDOSInstallProfile.MINIMAL.value,
                                     id="dos-profile",
                                 )
                                 yield Label("IBM DOS version", id="ibm-dos-version-label")
-                                yield Select(
+                                yield SingleClickSelect(
                                     options=_IBM_DOS_VERSION_OPTIONS,
                                     value=IBMDOSVersion.DOS33.value,
                                     id="ibm-dos-version",
