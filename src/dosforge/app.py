@@ -436,10 +436,69 @@ class DosForgeApp(App[None]):
                         with VerticalScroll(id="wizard-scroll"):
                             yield Label("Create disk image", id="create-title")
 
-                            # Step 1: Media
+                            # Step 1: Boot OS (drives downstream media constraints)
                             with Container(id="step-1", classes="wizard-step"):
                                 yield Label(
-                                    "Step 1 — Media",
+                                    "Step 1 — Boot OS",
+                                    classes="wizard-step-title",
+                                )
+                                yield Label("Boot mode", id="boot-mode-label")
+                                yield SingleClickSelect(
+                                    options=[
+                                        ("None (data disk only)", BootMode.NONE.value),
+                                        ("FreeDOS bootable", BootMode.FREEDOS.value),
+                                        ("MS-DOS 7.1 bootable", BootMode.MSDOS71.value),
+                                        (
+                                            "IBM PC 8088/V20 (DOS 3.3 / 5.0)",
+                                            BootMode.IBM8088.value,
+                                        ),
+                                        ("MS-DOS 3.3 bootable", BootMode.MSDOS33.value),
+                                        ("MS-DOS 3.31 bootable", BootMode.MSDOS331.value),
+                                        ("MS-DOS 5.0 bootable", BootMode.MSDOS5.value),
+                                        ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
+                                        ("PC-DOS bootable", BootMode.PCDOS.value),
+                                        (
+                                            "PC-DOS 7.0 bootable (XDF media)",
+                                            BootMode.PCDOS7.value,
+                                        ),
+                                        (
+                                            "PC-DOS 7.1 bootable (FAT32)",
+                                            BootMode.PCDOS71.value,
+                                        ),
+                                        ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
+                                    ],
+                                    value=BootMode.NONE.value,
+                                    id="boot-mode",
+                                )
+                                yield Label("FreeDOS source", id="freedos-source-label")
+                                yield SingleClickSelect(
+                                    options=[
+                                        ("Local FreeDOS assets", FreeDOSSource.LOCAL.value),
+                                        (
+                                            "Auto-download FreeDOS image",
+                                            FreeDOSSource.AUTO.value,
+                                        ),
+                                    ],
+                                    value=FreeDOSSource.AUTO.value,
+                                    id="freedos-source",
+                                )
+                                yield Label("DOS install profile", id="dos-profile-label")
+                                yield SingleClickSelect(
+                                    options=_DOS_INSTALL_PROFILE_OPTIONS,
+                                    value=MSDOSInstallProfile.MINIMAL.value,
+                                    id="dos-profile",
+                                )
+                                yield Label("IBM DOS version", id="ibm-dos-version-label")
+                                yield SingleClickSelect(
+                                    options=_IBM_DOS_VERSION_OPTIONS,
+                                    value=IBMDOSVersion.DOS33.value,
+                                    id="ibm-dos-version",
+                                )
+
+                            # Step 2: Media (constraints inherited from Step 1)
+                            with Container(id="step-2", classes="wizard-step"):
+                                yield Label(
+                                    "Step 2 — Media",
                                     classes="wizard-step-title",
                                 )
                                 yield Label("Disk type")
@@ -505,65 +564,6 @@ class DosForgeApp(App[None]):
                                 yield Checkbox(
                                     "System format (bootable DOS IMG)",
                                     id="img-system-format",
-                                )
-
-                            # Step 2: Boot
-                            with Container(id="step-2", classes="wizard-step"):
-                                yield Label(
-                                    "Step 2 — Boot OS",
-                                    classes="wizard-step-title",
-                                )
-                                yield Label("Boot mode", id="boot-mode-label")
-                                yield SingleClickSelect(
-                                    options=[
-                                        ("None (data disk only)", BootMode.NONE.value),
-                                        ("FreeDOS bootable", BootMode.FREEDOS.value),
-                                        ("MS-DOS 7.1 bootable", BootMode.MSDOS71.value),
-                                        (
-                                            "IBM PC 8088/V20 (DOS 3.3 / 5.0)",
-                                            BootMode.IBM8088.value,
-                                        ),
-                                        ("MS-DOS 3.3 bootable", BootMode.MSDOS33.value),
-                                        ("MS-DOS 3.31 bootable", BootMode.MSDOS331.value),
-                                        ("MS-DOS 5.0 bootable", BootMode.MSDOS5.value),
-                                        ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
-                                        ("PC-DOS bootable", BootMode.PCDOS.value),
-                                        (
-                                            "PC-DOS 7.0 bootable (XDF media)",
-                                            BootMode.PCDOS7.value,
-                                        ),
-                                        (
-                                            "PC-DOS 7.1 bootable (FAT32)",
-                                            BootMode.PCDOS71.value,
-                                        ),
-                                        ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
-                                    ],
-                                    value=BootMode.NONE.value,
-                                    id="boot-mode",
-                                )
-                                yield Label("FreeDOS source", id="freedos-source-label")
-                                yield SingleClickSelect(
-                                    options=[
-                                        ("Local FreeDOS assets", FreeDOSSource.LOCAL.value),
-                                        (
-                                            "Auto-download FreeDOS image",
-                                            FreeDOSSource.AUTO.value,
-                                        ),
-                                    ],
-                                    value=FreeDOSSource.AUTO.value,
-                                    id="freedos-source",
-                                )
-                                yield Label("DOS install profile", id="dos-profile-label")
-                                yield SingleClickSelect(
-                                    options=_DOS_INSTALL_PROFILE_OPTIONS,
-                                    value=MSDOSInstallProfile.MINIMAL.value,
-                                    id="dos-profile",
-                                )
-                                yield Label("IBM DOS version", id="ibm-dos-version-label")
-                                yield SingleClickSelect(
-                                    options=_IBM_DOS_VERSION_OPTIONS,
-                                    value=IBMDOSVersion.DOS33.value,
-                                    id="ibm-dos-version",
                                 )
 
                             # Step 3: Assets & payload
@@ -640,7 +640,7 @@ class DosForgeApp(App[None]):
                                 classes="btn-secondary",
                             )
                             yield Button(
-                                "Next: Boot >",
+                                "Next: Media >",
                                 id="wizard-next-btn",
                                 classes="btn-primary",
                             )
@@ -1091,7 +1091,7 @@ class DosForgeApp(App[None]):
 
     # ── Wizard state machine ───────────────────────────────────────
 
-    _STEP_LABELS: tuple[str, ...] = ("Media", "Boot", "Payload", "Confirm")
+    _STEP_LABELS: tuple[str, ...] = ("Boot", "Media", "Payload", "Confirm")
 
     def _set_wizard_step(self, step: int) -> None:
         """Show wizard step ``step`` and hide the others. Step is 1..4.

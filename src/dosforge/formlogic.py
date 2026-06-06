@@ -258,6 +258,86 @@ def effective_size_text(state: FormState) -> str:
 # ── Cross-field coercions (mirror app.py event handlers) ───────────────────
 
 
+# Per-boot-mode media constraints. ``valid_formats`` lists the
+# DiskFormat values that boot mode supports; the form coerces the
+# current selection into this set on boot-mode change. ``default_size``
+# (in megabytes, VHD only) is applied when the user previously had a
+# value the boot mode can't load (e.g. 512M for an 8088/DOS 3.3 build
+# that's capped at 32M). ``None`` means "no constraint / leave size
+# alone".
+_BOOT_MODE_MEDIA_RULES: dict[BootMode, tuple[frozenset[DiskFormat], int | None]] = {
+    BootMode.NONE: (frozenset({DiskFormat.FAT12, DiskFormat.FAT16, DiskFormat.FAT32}), None),
+    BootMode.FREEDOS: (frozenset({DiskFormat.FAT12, DiskFormat.FAT16, DiskFormat.FAT32}), None),
+    # MS-DOS 7.1 (Win95 OSR2) supports FAT16 up to 2GB and FAT32 above.
+    BootMode.MSDOS71: (frozenset({DiskFormat.FAT16, DiskFormat.FAT32}), None),
+    # PC-DOS 7.1: FAT32 is the headline feature, but FORMAT.COM still
+    # handles FAT16 fine. Both stay selectable.
+    BootMode.PCDOS71: (frozenset({DiskFormat.FAT16, DiskFormat.FAT32}), None),
+    # 8088/V20 + DOS 3.3 / 5.0 floors: FAT16 only, max 32 MB partition.
+    BootMode.IBM8088: (frozenset({DiskFormat.FAT16}), 32),
+    BootMode.MSDOS33: (frozenset({DiskFormat.FAT16}), 32),
+    BootMode.MSDOS331: (frozenset({DiskFormat.FAT16}), None),
+    BootMode.COMPAQ331: (frozenset({DiskFormat.FAT16}), None),
+    # DOS 5.0 / 6.22 — FAT16 only (no FAT32 support).
+    BootMode.MSDOS5: (frozenset({DiskFormat.FAT16}), None),
+    BootMode.MSDOS622: (frozenset({DiskFormat.FAT16}), None),
+    # PC-DOS pre-7.x — FAT12/FAT16.
+    BootMode.PCDOS: (frozenset({DiskFormat.FAT12, DiskFormat.FAT16}), None),
+    BootMode.PCDOS7: (frozenset({DiskFormat.FAT12, DiskFormat.FAT16}), None),
+}
+
+
+def _snap_format_for_boot_mode(state: FormState) -> FormState:
+    """Snap ``disk_format`` to a valid choice for the current boot mode.
+
+    Does nothing for FAT12 on the MartyPC Xebec Type 1 path (that
+    constraint is enforced by :func:`_apply_xebec_rules`).  Only
+    rewrites the format when the current selection isn't in the boot
+    mode's allowed set — preserving the user's choice when it's
+    compatible.
+    """
+    if _is_martypc_xebec(state):
+        return state
+    boot_mode = BootMode(state.boot_mode)
+    rule = _BOOT_MODE_MEDIA_RULES.get(boot_mode)
+    if rule is None:
+        return state
+    allowed_formats, _ = rule
+    if DiskFormat(state.disk_format) in allowed_formats:
+        return state
+    # Prefer FAT16 when allowed (most common choice); otherwise pick
+    # the lowest-numbered allowed format for determinism.
+    if DiskFormat.FAT16 in allowed_formats:
+        return replace(state, disk_format=DiskFormat.FAT16.value)
+    chosen = sorted(allowed_formats, key=lambda f: f.value)[0]
+    return replace(state, disk_format=chosen.value)
+
+
+def _snap_size_for_boot_mode(state: FormState) -> FormState:
+    """Cap VHD ``size_text`` when the boot mode has a max-size rule.
+
+    Only kicks in for VHD targets and only when the configured size
+    parses to bigger than the rule's cap.  Leaves the user's exact
+    string alone if it fits.
+    """
+    if not _is_vhd(state):
+        return state
+    boot_mode = BootMode(state.boot_mode)
+    rule = _BOOT_MODE_MEDIA_RULES.get(boot_mode)
+    if rule is None:
+        return state
+    _, max_mb = rule
+    if max_mb is None:
+        return state
+    try:
+        size_bytes = parse_size(state.size_text)
+    except DosForgeError:
+        return replace(state, size_text=f"{max_mb}M")
+    if size_bytes <= max_mb * 1024 * 1024:
+        return state
+    return replace(state, size_text=f"{max_mb}M")
+
+
 def coerce_on_media_change(state: FormState) -> FormState:
     """Apply the side effects of changing the media-type select."""
     if MediaType(state.media_type) is MediaType.IMG:
@@ -323,7 +403,12 @@ def apply_ibm_default_size(state: FormState, *, force: bool) -> FormState:
 
 def coerce_on_boot_change(state: FormState) -> FormState:
     if _is_vhd(state) and BootMode(state.boot_mode) is BootMode.IBM8088:
-        return apply_ibm_default_size(state, force=True)
+        state = apply_ibm_default_size(state, force=True)
+    # Boot mode is the upstream constraint for filesystem + size; snap
+    # both to whatever the picked OS supports so the user moves into
+    # the Media step with valid prefills.
+    state = _snap_format_for_boot_mode(state)
+    state = _snap_size_for_boot_mode(state)
     return state
 
 

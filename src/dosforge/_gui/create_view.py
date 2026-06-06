@@ -140,6 +140,34 @@ class CreateView(ttk.Frame):
             row=2,
         )
 
+        # ── Card: Boot ─────────────────────────────────────────────────
+        # Boot mode + DOS profile come BEFORE the Media card so the user
+        # picks an OS first; downstream Media defaults can then be
+        # snapped to a valid combo for that OS via coerce_on_boot_change.
+        boot_card = Card(body, theme, title="Boot")
+        boot_card.grid(row=row, column=0, sticky="ew", pady=(0, 12))
+        row += 1
+        bb = boot_card.body
+        bb.columnconfigure(0, weight=1)
+        self._add_field(bb, fl.FIELD_BOOT_MODE, "Boot mode",
+                        self.combo_boot.build, row=0)
+        self._add_field(bb, fl.FIELD_FREEDOS_SOURCE, "FreeDOS source",
+                        self.combo_freedos.build, row=1)
+        self._add_field(
+            bb, fl.FIELD_FETCH_FREEDOS, "",
+            lambda p: ttk.Button(
+                p,
+                text="Download FreeDOS assets",
+                command=self._fetch_freedos,
+                takefocus=False,
+            ),
+            row=2,
+        )
+        self._add_field(bb, fl.FIELD_DOS_PROFILE, "DOS install profile",
+                        self.combo_profile.build, row=3)
+        self._add_field(bb, fl.FIELD_IBM_DOS_VERSION, "IBM DOS version",
+                        self.combo_ibm.build, row=4)
+
         # ── Card: Media & geometry ─────────────────────────────────────
         media_card = Card(body, theme, title="Media & geometry")
         media_card.grid(row=row, column=0, sticky="ew", pady=(0, 12))
@@ -177,31 +205,6 @@ class CreateView(ttk.Frame):
             ),
             row=8,
         )
-
-        # ── Card: Boot ─────────────────────────────────────────────────
-        boot_card = Card(body, theme, title="Boot")
-        boot_card.grid(row=row, column=0, sticky="ew", pady=(0, 12))
-        row += 1
-        bb = boot_card.body
-        bb.columnconfigure(0, weight=1)
-        self._add_field(bb, fl.FIELD_BOOT_MODE, "Boot mode",
-                        self.combo_boot.build, row=0)
-        self._add_field(bb, fl.FIELD_FREEDOS_SOURCE, "FreeDOS source",
-                        self.combo_freedos.build, row=1)
-        self._add_field(
-            bb, fl.FIELD_FETCH_FREEDOS, "",
-            lambda p: ttk.Button(
-                p,
-                text="Download FreeDOS assets",
-                command=self._fetch_freedos,
-                takefocus=False,
-            ),
-            row=2,
-        )
-        self._add_field(bb, fl.FIELD_DOS_PROFILE, "DOS install profile",
-                        self.combo_profile.build, row=3)
-        self._add_field(bb, fl.FIELD_IBM_DOS_VERSION, "IBM DOS version",
-                        self.combo_ibm.build, row=4)
 
         # ── Card: Assets & payload ─────────────────────────────────────
         assets_card = Card(body, theme, title="Assets & payload")
