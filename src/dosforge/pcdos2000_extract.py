@@ -278,16 +278,33 @@ def _harvest_floppy_contents(
     dest_dir: Path,
     *,
     mcopy_exe: str,
-) -> None:
-    """mcopy every file off each floppy IMG into ``dest_dir`` (flat)."""
+) -> list[str]:
+    """mcopy every file off each floppy IMG into ``dest_dir`` (flat).
+
+    Returns diagnostic lines for any IMG that mcopy couldn't read —
+    useful when nothing harvested (e.g. mtools rejecting the image
+    layout, or path-quoting bugs on Windows).
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
+    diagnostics: list[str] = []
     for img in img_paths:
-        subprocess.run(
-            [mcopy_exe, "-s", "-n", "-m", "-i", str(img), "::", str(dest_dir) + "/"],
+        # mcopy is picky about destination path syntax on Windows when
+        # native Path strings contain backslashes — using cwd= +
+        # POSIX-style "./" sidesteps that entirely.
+        result = subprocess.run(
+            [mcopy_exe, "-s", "-n", "-m", "-i", str(img), "::", "./"],
+            cwd=str(dest_dir),
             check=False,
             capture_output=True,
+            text=True,
             **subprocess_no_window_kwargs(),
         )
+        if result.returncode != 0:
+            stderr_tail = (result.stderr or "")[-400:]
+            diagnostics.append(
+                f"mcopy {img.name} exit={result.returncode} stderr_tail={stderr_tail!r}"
+            )
+    return diagnostics
 
 
 def _run_unpack2_in_dosbox(
@@ -526,9 +543,21 @@ def extract_pcdos2000_utilities(
         # 3. Harvest every file from every floppy into a flat staging dir
         #    (so UNPACK2 sees all the FTCOMP pack files under C:).
         staging = work / "staging"
-        _harvest_floppy_contents(disks, staging, mcopy_exe=str(mcopy_exe))
+        harvest_diagnostics = _harvest_floppy_contents(
+            disks, staging, mcopy_exe=str(mcopy_exe)
+        )
+        harvested = sum(1 for _ in staging.iterdir())
         if progress is not None:
-            progress(f"  harvested {sum(1 for _ in staging.iterdir())} files from floppies")
+            progress(f"  harvested {harvested} files from floppies")
+        if harvested == 0:
+            keep_work_for_postmortem = True
+            diag = "; ".join(harvest_diagnostics) if harvest_diagnostics else "(mcopy reported success but no files copied)"
+            raise ValidationError(
+                f"mcopy harvested 0 files from {len(disks)} PC-DOS 2000 "
+                f"floppy IMGs at {disks[0].parent} — install media "
+                f"layout may differ from the WinWorldPC release. "
+                f"Diagnostics: {diag}"
+            )
 
         # 4. Use DOSBox-X to run UNPACK2 against each pack file.
         if progress is not None:
