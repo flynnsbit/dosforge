@@ -12,7 +12,7 @@ import urllib.request
 import zipfile
 from collections import OrderedDict
 from urllib.error import HTTPError, URLError
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -1127,8 +1127,18 @@ class BootAssetResolver:
         is False because there's no install-image boot sector worth
         extracting — FORMAT32 itself writes a proper FAT32 boot sector
         at install time and we don't overlay anything on top of it.
+
+        For FULL-profile builds we additionally redirect the C:\\DOS\\
+        payload to the staged ``dosassets/pcdos71/DOS/`` directory
+        (populated by ``dosforge fetch-pcdos71-assets`` from the
+        SGTK's ``sgdeploy/sgtk/DOS/`` tree).  The SGTK install floppy
+        (``tk_raid.vfd``) only carries FORMAT32/FDISK32 + a handful of
+        helpers, so the base resolver's install-image extraction path
+        would leave C:\\DOS\\ nearly empty.  The 35-file local DOS\\
+        directory contains the authentic PC-DOS 7.1 toolkit
+        (CHKDSK, MEM, EDIT/E, XCOPY, MOVE, SMARTDRV, etc.).
         """
-        return self._resolve_legacy_dos(
+        assets = self._resolve_legacy_dos(
             request=request,
             profile_label="PC-DOS 7.1",
             version_subdir_name="pcdos71",
@@ -1137,6 +1147,18 @@ class BootAssetResolver:
             default_asset_dirs=("pcdos71",),
             install_profile=request.msdos_install_profile,
         )
+        if request.msdos_install_profile is MSDOSInstallProfile.FULL:
+            directory = self._resolve_legacy_assets_directory(
+                request=request, fallback_dirs=("pcdos71",)
+            )
+            local_dos = self._find_directory_case_insensitive(directory, "DOS")
+            if local_dos is not None and local_dos.is_dir():
+                assets = replace(
+                    assets,
+                    fdos_payload_dir=local_dos,
+                    payload_target_dir="DOS",
+                )
+        return assets
 
     def _resolve_compaq331(self, request: CreateRequest) -> BootAssets:
         return self._resolve_legacy_dos(

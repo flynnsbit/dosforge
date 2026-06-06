@@ -65,6 +65,7 @@ SGTK_SIZE = 15216373
 # https://github.com/Kreeblah/pcdos71-patch (README; community-published).
 # Any extracted file we copy MUST match the corresponding hash here.
 EXPECTED_SHA256: dict[str, str] = {
+    # Boot / install-critical (also used by FORMAT C: /S over QEMU).
     "ATTRIB.EXE": "91710325176330e403be85d935d6ad21d5bb6a77b589afb84ac4739636e466cd",
     "BLDLEVEL.COM": "d25a4e54cddc46070fd5ad7ca26ff566fe344c2ef9fac87d6b2d8956363d9133",
     "COMMAND.COM": "4bb46e6c3228969b06c423dd181df9c6765999094d4c687772efd9ee23881e7a",
@@ -81,6 +82,36 @@ EXPECTED_SHA256: dict[str, str] = {
     "IPSRASPI.SYS": "3b1398944b44b0f9245095bd1f72c1841f36e3967038574c02f86fbc8acc9639",
     "MSCDEX.EXE": "8fd939a93c1153c2a1b2c8e349d438237d3a67f268a78908420447d90c518199",
     "NOINT25.COM": "9ac9a255e9fb2248eef66b18479e19abeef04d82dd16c5aa16696db5dda1c94b",
+    # PC-DOS 7.1 full toolkit shipped alongside the boot files in the
+    # SGTK's ``sgdeploy/sgtk/DOS/`` directory. These get copied verbatim
+    # into ``C:\DOS\`` on every FULL-profile pcdos71 build so the
+    # finished VHD matches a real authentic PC-DOS 7.1 install.
+    "CHKDSK.COM": "8bb3940afec38c879fde5c2f97c31064db0d6d353615f9c9466f22ec0dda5a2a",
+    "COUNTRY.SYS": "f0635909c8cc38374433c5ede680b3c6192f2f02aa4b4c405974bb8d17e1ee1c",
+    "DELTREE.EXE": "f9643b03a3ddd4c55cdefb76943ff135b412700478e296f133adafc8414f932e",
+    "DISPLAY.SYS": "fc4d8e4f895efea472d2f040fd4d53668b58d7f48a71419675bbd652261fa4fc",
+    "DOSKEY.COM": "6a322a1e6bdc2c82a5261f7deffb1745e194ea1f3383cba8fb148c77df6fb24b",
+    # IBM "E" editor — E.EXE is the in-memory build, E.EX is the
+    # swap-file build; ship both so power users can pick.
+    "E.EX": "b8656a8fbd70976521f54bd79e7a534e3955cee4cd8d8cce0498ef3fd9743204",
+    "E.EXE": "01c315f9f0ac9adf9ee0436eba64a4535a3f93d3836896dbcad64a2905d0bb68",
+    "E.INI": "75eaadef0654c95f3052f97eeb3d02acac5b70ecbfbfb4f97357ba444efd2140",
+    "FC.EXE": "4ab2c5b15cc5207bd78a78752fce9c85debd34e907da21e22a7ff2668d5c4271",
+    "FIND.EXE": "6deb36a5f43e817f51dec16c84810cb1d1d8aeb8db8146b179d7048f1e283614",
+    "KEYB.COM": "b8d8ae213a6577a69a26ce1081106e68d104eceb1a4d2b2a72ce488d98eaafce",
+    "KEYBOARD.SYS": "6cf676269baecd0953a19e38d35bdc77bf97274a7f3a5a63ffe5f653f8353ce3",
+    "LABEL.COM": "ca3192ea91b56cde0b246711366d9de32c33e0cd951b06a4ff5d0a527aa5fd89",
+    "MEM.EXE": "09c9f88fef84d7ec6260d7d07feee116cd618299e3dd6898b5f4aa32b0b80dae",
+    "MODE.COM": "129618d3175b6295bb8790b6fe76799ccb18708c6cf9af444defb6109d38506b",
+    "MORE.COM": "4fd1cc81ab276f802124c8a165b86e5ce100396a610852f305aa2618f3fc02aa",
+    "MOUSE.COM": "ebf49d2c025729d9716ed17925cc8db32df2913454410fcff3d85e244a50d4e0",
+    "MOVE.EXE": "6957fb1e90498e134e297fd6f3d4b7852f795a0941635e6b1fe75ea4c2cb7843",
+    "RAMDRIVE.SYS": "42eacd1032370e81ec4d5d606c375828e1fd3a5d31c576c030b2bca64f995184",
+    "SMARTDRV.EXE": "a3a30b24ef1fd1f60446c168eae3e1b2fcba6a805c463e6546e00e88dc09568a",
+    "SUBST.EXE": "e2bfc33c1fe327ef2c15eaf59e099ccbe0627c37a1daa4972217c3c13928215c",
+    "SYS.COM": "79ccf82f01ad54da58c11400ff4def26a0eeb2921606acce3f922ea8d81dab46",
+    "TREE.COM": "4f6a59af3be68477b3d5c8556d48a2327babca62f771bbd3ed22c02f4d4a0284",
+    "XCOPY.EXE": "2a5fdf2bc9c6eb1296c19b213208abdef0b0633ddd887e0db1e6c0d7077ad2b0",
 }
 
 # Bootable install floppy candidates dosforge can use (preferred order).
@@ -146,14 +177,27 @@ def default_cache_dir() -> Path:
 def find_sevenzip() -> Path:
     """Locate a usable 7-Zip executable for SGTK extraction.
 
-    Honors the ``DOSFORGE_SEVENZIP_EXE`` env var first, then walks
-    the standard Windows install locations. Raises
-    :class:`DependencyError` (clean CLI error, no traceback) when
-    nothing matches.
+    Honors the ``DOSFORGE_SEVENZIP_EXE`` env var first, then looks
+    up the standard POSIX binary names (``7z``/``7zz``/``7za``) on
+    ``PATH``, and finally walks the well-known Windows install
+    locations. Raises :class:`DependencyError` (clean CLI error,
+    no traceback) when nothing matches.
+
+    The 7-Zip CLI (``7z x -y -o<dir> <archive>``) is identical
+    across the official Windows build, ``7zz`` (the upstream POSIX
+    binary), and the ``p7zip`` fork ``7z`` / ``7za`` shipped on
+    most Linux distros, so any match works for SGTK extraction.
     """
     env = os.environ.get("DOSFORGE_SEVENZIP_EXE")
     if env and Path(env).is_file():
         return Path(env)
+    # POSIX (Linux/macOS): p7zip ships /usr/bin/7z and /usr/bin/7za;
+    # upstream 7-Zip for POSIX ships /usr/local/bin/7zz.
+    for name in ("7z", "7zz", "7za"):
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    # Windows fallback paths.
     for candidate in (
         r"C:\Program Files\7-Zip\7z.exe",
         r"C:\Program Files (x86)\7-Zip\7z.exe",
@@ -163,8 +207,9 @@ def find_sevenzip() -> Path:
         if p.is_file():
             return p
     raise DependencyError(
-        "7-Zip (7z.exe) not found. Install from https://www.7-zip.org/ "
-        "or set DOSFORGE_SEVENZIP_EXE to the path."
+        "7-Zip not found. Install it (Linux: 'p7zip-full' / 'p7zip'; "
+        "macOS: 'brew install sevenzip'; Windows: https://www.7-zip.org/) "
+        "or set DOSFORGE_SEVENZIP_EXE to the path of the executable."
     )
 
 
