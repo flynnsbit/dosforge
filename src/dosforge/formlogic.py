@@ -14,7 +14,7 @@ the two cannot silently diverge for the cases that matter.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .errors import DosForgeError
@@ -258,43 +258,85 @@ def effective_size_text(state: FormState) -> str:
 # ── Cross-field coercions (mirror app.py event handlers) ───────────────────
 
 
-# Per-boot-mode media constraints. ``valid_formats`` lists the
-# DiskFormat values that boot mode supports; the form coerces the
-# current selection into this set on boot-mode change. ``default_size``
-# (in megabytes, VHD only) is applied when the user previously had a
-# value the boot mode can't load (e.g. 512M for an 8088/DOS 3.3 build
-# that's capped at 32M). ``None`` means "no constraint / leave size
-# alone".
-_BOOT_MODE_MEDIA_RULES: dict[BootMode, tuple[frozenset[DiskFormat], int | None]] = {
-    BootMode.NONE: (frozenset({DiskFormat.FAT12, DiskFormat.FAT16, DiskFormat.FAT32}), None),
-    BootMode.FREEDOS: (frozenset({DiskFormat.FAT12, DiskFormat.FAT16, DiskFormat.FAT32}), None),
+# Per-boot-mode media constraints. ``allowed_formats`` lists the
+# DiskFormat values the boot mode supports; the form coerces the
+# current selection into this set on boot-mode change. ``preferred_format``
+# is what we snap TO when the user picks the boot mode (so PCDOS71
+# defaults to FAT32 even if they were on FAT16 from a prior selection).
+# ``max_mb`` caps VHD size for OSes that can't read above a partition
+# size (32M for 8088/DOS 3.3). ``per_format_min_mb`` is an optional
+# extra floor that applies only when a specific FS is picked (e.g.
+# pcdos71+FAT32 needs ≥1GB even though pcdos71+FAT16 happily runs at
+# 128MB).
+@dataclass(frozen=True, slots=True)
+class _BootMediaRule:
+    allowed_formats: frozenset[DiskFormat]
+    preferred_format: DiskFormat | None = None
+    max_mb: int | None = None
+    per_format_min_mb: dict[DiskFormat, int] = field(default_factory=dict)
+
+
+_BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
+    BootMode.NONE: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT12, DiskFormat.FAT16, DiskFormat.FAT32}),
+    ),
+    BootMode.FREEDOS: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT12, DiskFormat.FAT16, DiskFormat.FAT32}),
+    ),
     # MS-DOS 7.1 (Win95 OSR2) supports FAT16 up to 2GB and FAT32 above.
-    BootMode.MSDOS71: (frozenset({DiskFormat.FAT16, DiskFormat.FAT32}), None),
-    # PC-DOS 7.1: FAT32 is the headline feature, but FORMAT.COM still
-    # handles FAT16 fine. Both stay selectable.
-    BootMode.PCDOS71: (frozenset({DiskFormat.FAT16, DiskFormat.FAT32}), None),
+    BootMode.MSDOS71: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT16, DiskFormat.FAT32}),
+    ),
+    # PC-DOS 7.1: FAT32 is the headline feature (IBM SGTK was designed
+    # for server-class disks). Default to FAT32 + 1 GB minimum on FAT32;
+    # FAT16 stays selectable and uses the generic 32 MB FAT16 floor.
+    BootMode.PCDOS71: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT16, DiskFormat.FAT32}),
+        preferred_format=DiskFormat.FAT32,
+        per_format_min_mb={DiskFormat.FAT32: 1024},
+    ),
     # 8088/V20 + DOS 3.3 / 5.0 floors: FAT16 only, max 32 MB partition.
-    BootMode.IBM8088: (frozenset({DiskFormat.FAT16}), 32),
-    BootMode.MSDOS33: (frozenset({DiskFormat.FAT16}), 32),
-    BootMode.MSDOS331: (frozenset({DiskFormat.FAT16}), None),
-    BootMode.COMPAQ331: (frozenset({DiskFormat.FAT16}), None),
+    BootMode.IBM8088: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT16}), max_mb=32,
+    ),
+    BootMode.MSDOS33: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT16}), max_mb=32,
+    ),
+    BootMode.MSDOS331: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT16}),
+    ),
+    BootMode.COMPAQ331: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT16}),
+    ),
     # DOS 5.0 / 6.22 — FAT16 only (no FAT32 support).
-    BootMode.MSDOS5: (frozenset({DiskFormat.FAT16}), None),
-    BootMode.MSDOS622: (frozenset({DiskFormat.FAT16}), None),
+    BootMode.MSDOS5: _BootMediaRule(allowed_formats=frozenset({DiskFormat.FAT16})),
+    BootMode.MSDOS622: _BootMediaRule(allowed_formats=frozenset({DiskFormat.FAT16})),
     # PC-DOS pre-7.x — FAT12/FAT16.
-    BootMode.PCDOS: (frozenset({DiskFormat.FAT12, DiskFormat.FAT16}), None),
-    BootMode.PCDOS7: (frozenset({DiskFormat.FAT12, DiskFormat.FAT16}), None),
+    BootMode.PCDOS: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT12, DiskFormat.FAT16}),
+    ),
+    BootMode.PCDOS7: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT12, DiskFormat.FAT16}),
+    ),
 }
 
 
-def _snap_format_for_boot_mode(state: FormState) -> FormState:
+def boot_media_rule(boot_mode: BootMode) -> _BootMediaRule | None:
+    """Public lookup for UI code that wants the constraints for a boot mode."""
+    return _BOOT_MODE_MEDIA_RULES.get(boot_mode)
+
+
+def _snap_format_for_boot_mode(state: FormState, *, force_preferred: bool) -> FormState:
     """Snap ``disk_format`` to a valid choice for the current boot mode.
 
     Does nothing for FAT12 on the MartyPC Xebec Type 1 path (that
-    constraint is enforced by :func:`_apply_xebec_rules`).  Only
-    rewrites the format when the current selection isn't in the boot
-    mode's allowed set — preserving the user's choice when it's
-    compatible.
+    constraint is enforced by :func:`_apply_xebec_rules`).
+
+    When ``force_preferred`` is False (the default on a format-only
+    change), only rewrites the format when the current selection isn't
+    in the boot mode's allowed set. When True (used on boot-mode
+    change), also snaps to ``preferred_format`` if one is defined so
+    e.g. picking PCDOS71 yields FAT32 not FAT16.
     """
     if _is_martypc_xebec(state):
         return state
@@ -302,23 +344,31 @@ def _snap_format_for_boot_mode(state: FormState) -> FormState:
     rule = _BOOT_MODE_MEDIA_RULES.get(boot_mode)
     if rule is None:
         return state
-    allowed_formats, _ = rule
-    if DiskFormat(state.disk_format) in allowed_formats:
+    current = DiskFormat(state.disk_format)
+    if force_preferred and rule.preferred_format is not None:
+        if current != rule.preferred_format:
+            return replace(state, disk_format=rule.preferred_format.value)
         return state
-    # Prefer FAT16 when allowed (most common choice); otherwise pick
-    # the lowest-numbered allowed format for determinism.
-    if DiskFormat.FAT16 in allowed_formats:
+    if current in rule.allowed_formats:
+        return state
+    if DiskFormat.FAT16 in rule.allowed_formats:
         return replace(state, disk_format=DiskFormat.FAT16.value)
-    chosen = sorted(allowed_formats, key=lambda f: f.value)[0]
+    chosen = sorted(rule.allowed_formats, key=lambda f: f.value)[0]
     return replace(state, disk_format=chosen.value)
 
 
 def _snap_size_for_boot_mode(state: FormState) -> FormState:
-    """Cap VHD ``size_text`` when the boot mode has a max-size rule.
+    """Cap + floor VHD ``size_text`` for the current boot mode + FS.
 
-    Only kicks in for VHD targets and only when the configured size
-    parses to bigger than the rule's cap.  Leaves the user's exact
-    string alone if it fits.
+    Honors three constraints in order:
+      1. ``rule.max_mb`` — global per-boot-mode cap (e.g. 32 MB for
+         IBM8088 / MS-DOS 3.3). Sizes above get snapped down.
+      2. ``rule.per_format_min_mb[fmt]`` — per-FS minimum (e.g. 1 GB for
+         pcdos71+FAT32). Sizes below get snapped up.
+
+    Only kicks in for VHD targets; IMG floppies use ``floppy_type``
+    rather than the size field. Unparseable size strings fall through
+    to the floor when one applies, otherwise stay untouched.
     """
     if not _is_vhd(state):
         return state
@@ -326,16 +376,29 @@ def _snap_size_for_boot_mode(state: FormState) -> FormState:
     rule = _BOOT_MODE_MEDIA_RULES.get(boot_mode)
     if rule is None:
         return state
-    _, max_mb = rule
-    if max_mb is None:
-        return state
+    fmt = DiskFormat(state.disk_format)
+    min_mb = rule.per_format_min_mb.get(fmt)
+    max_mb = rule.max_mb
     try:
         size_bytes = parse_size(state.size_text)
     except DosForgeError:
-        return replace(state, size_text=f"{max_mb}M")
-    if size_bytes <= max_mb * 1024 * 1024:
+        if min_mb is not None:
+            return replace(state, size_text=f"{_render_mb(min_mb)}")
+        if max_mb is not None:
+            return replace(state, size_text=f"{max_mb}M")
         return state
-    return replace(state, size_text=f"{max_mb}M")
+    if max_mb is not None and size_bytes > max_mb * 1024 * 1024:
+        return replace(state, size_text=f"{max_mb}M")
+    if min_mb is not None and size_bytes < min_mb * 1024 * 1024:
+        return replace(state, size_text=f"{_render_mb(min_mb)}")
+    return state
+
+
+def _render_mb(mb: int) -> str:
+    """Render ``mb`` as the most natural human size string (M or G)."""
+    if mb >= 1024 and mb % 1024 == 0:
+        return f"{mb // 1024}G"
+    return f"{mb}M"
 
 
 def coerce_on_media_change(state: FormState) -> FormState:
@@ -406,10 +469,24 @@ def coerce_on_boot_change(state: FormState) -> FormState:
         state = apply_ibm_default_size(state, force=True)
     # Boot mode is the upstream constraint for filesystem + size; snap
     # both to whatever the picked OS supports so the user moves into
-    # the Media step with valid prefills.
-    state = _snap_format_for_boot_mode(state)
+    # the Media step with valid prefills. ``force_preferred=True`` so
+    # picking PCDOS71 lands on FAT32 (its preferred default) and the
+    # downstream size snap then enforces the 1 GiB FAT32 floor.
+    state = _snap_format_for_boot_mode(state, force_preferred=True)
     state = _snap_size_for_boot_mode(state)
     return state
+
+
+def coerce_on_format_change(state: FormState) -> FormState:
+    """Re-enforce size floors/caps after a Filesystem-dropdown change.
+
+    The size constraints in ``_BOOT_MODE_MEDIA_RULES`` are partly
+    FS-dependent (e.g. PCDOS71+FAT32 needs ≥1 GiB but PCDOS71+FAT16 is
+    fine at 128 MB).  When the user flips Filesystem in Step 2 we
+    re-run the size snap so they can't end up with an invalid size for
+    the new FS.
+    """
+    return _snap_size_for_boot_mode(state)
 
 
 def coerce_on_ibm_version_change(state: FormState) -> FormState:

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 from typing import cast
+from dataclasses import replace as fl_replace
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -29,6 +30,7 @@ from textual import on as _textual_on
 
 from .disk import DiskManager
 from .errors import DosForgeError
+from . import formlogic as fl
 from .models import (
     BootMode,
     CreateRequest,
@@ -933,9 +935,7 @@ class DosForgeApp(App[None]):
             self._sync_create_form_visibility()
             return
         if event.select.id == "boot-mode":
-            media_type = MediaType(cast(str, self.query_one("#media-type", Select).value))
-            if media_type is MediaType.VHD and str(event.value) == BootMode.IBM8088.value:
-                self._apply_ibm_default_size(force=True)
+            self._apply_boot_mode_snap(BootMode(str(event.value)))
             self._sync_create_form_visibility()
             return
         if event.select.id == "freedos-source":
@@ -948,6 +948,10 @@ class DosForgeApp(App[None]):
             media_type = MediaType(cast(str, self.query_one("#media-type", Select).value))
             if media_type is MediaType.VHD:
                 self._apply_ibm_default_size(force=False)
+            self._sync_create_form_visibility()
+            return
+        if event.select.id == "create-format":
+            self._apply_format_snap()
             self._sync_create_form_visibility()
             return
         if event.select.id == "floppy-type":
@@ -1894,6 +1898,58 @@ class DosForgeApp(App[None]):
         size_input = self.query_one("#create-size", Input)
         if force or size_input.value.strip().upper() in {"", "512M"}:
             size_input.value = "32M"
+
+    def _current_form_state(self) -> fl.FormState:
+        """Snapshot the create-form widget values into a :class:`FormState`.
+
+        Used by :meth:`_apply_boot_mode_snap` /
+        :meth:`_apply_format_snap` so we can reuse the pure formlogic
+        coerce functions instead of duplicating the per-boot-mode FS +
+        size rules in two places.  Only the fields the snap functions
+        consume are populated; everything else gets defaults.
+        """
+        media_type = cast(str, self.query_one("#media-type", Select).value)
+        machine_target = cast(str, self.query_one("#machine-target", Select).value)
+        return fl.FormState(
+            media_type=media_type,
+            machine_target=machine_target,
+            martypc_xebec_drive_type=cast(
+                str, self.query_one("#martypc-xebec-drive-type", Select).value
+            ),
+            size_text=self.query_one("#create-size", Input).value,
+            disk_format=cast(str, self.query_one("#create-format", Select).value),
+            boot_mode=cast(str, self.query_one("#boot-mode", Select).value),
+        )
+
+    def _apply_boot_mode_snap(self, new_boot_mode: BootMode) -> None:
+        """Apply per-boot-mode FS + size defaults when the user picks a boot mode.
+
+        Routes through ``formlogic.coerce_on_boot_change`` so the TUI and
+        GUI use the same constraint table (PCDOS71 → FAT32 + 1 GiB
+        minimum, IBM8088 → 32 MB cap, etc.).  Only writes back widgets
+        whose values actually changed so cursor positions / focus on
+        unchanged inputs are preserved.
+        """
+        state = self._current_form_state()
+        state = fl_replace(state, boot_mode=new_boot_mode.value)
+        snapped = fl.coerce_on_boot_change(state)
+        if snapped.disk_format != state.disk_format:
+            self.query_one("#create-format", Select).value = snapped.disk_format
+        if snapped.size_text != state.size_text:
+            self.query_one("#create-size", Input).value = snapped.size_text
+
+    def _apply_format_snap(self) -> None:
+        """Re-enforce size floors after a Filesystem-dropdown change.
+
+        Mirrors :func:`formlogic.coerce_on_format_change` — picking
+        FAT32 on a PCDOS71 build bumps a too-small size up to 1 GiB,
+        the same floor enforced at submit time by
+        :meth:`DiskManager._validate_create_request`.
+        """
+        state = self._current_form_state()
+        snapped = fl.coerce_on_format_change(state)
+        if snapped.size_text != state.size_text:
+            self.query_one("#create-size", Input).value = snapped.size_text
 
     def _format_size_for_input(self, size_bytes: int) -> str:
         if size_bytes % (1024**3) == 0:

@@ -102,7 +102,7 @@ class CreateView(ttk.Frame):
         )
         self.combo_at = _Combo(opt.MARTYPC_AT_DRIVE_TYPE_OPTIONS, self._on_change)
         self.combo_bios = _Combo(opt.BIOS_DRIVE_TYPE_OPTIONS, self._on_change)
-        self.combo_format = _Combo(opt.DISK_FORMAT_OPTIONS, self._on_change)
+        self.combo_format = _Combo(opt.DISK_FORMAT_OPTIONS, self._on_format_change)
         self.combo_floppy = _Combo(opt.FLOPPY_OPTIONS, self._on_change)
         self.combo_boot = _Combo(opt.BOOT_MODE_OPTIONS, self._on_boot_change)
         self.combo_freedos = _Combo(opt.FREEDOS_SOURCE_OPTIONS, self._on_change)
@@ -341,6 +341,9 @@ class CreateView(ttk.Frame):
 
     def _on_boot_change(self) -> None:
         self._coerce(fl.coerce_on_boot_change)
+
+    def _on_format_change(self) -> None:
+        self._coerce(fl.coerce_on_format_change)
 
     def _on_ibm_change(self) -> None:
         self._coerce(fl.coerce_on_ibm_version_change)
