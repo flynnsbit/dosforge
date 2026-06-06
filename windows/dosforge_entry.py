@@ -39,13 +39,22 @@ def _set_bundle_dirs() -> None:
             os.environ.setdefault("DOSFORGE_VENDOR_DIR", str(candidate))
             break
 
-    for candidate in (
-        base / "dosassets",
-        base / "_internal" / "dosassets",
-    ):
-        if candidate.is_dir():
-            os.environ.setdefault("DOSFORGE_DOSASSETS_DIR", str(candidate))
-            break
+    # dosassets/ MUST live at the bundle root so users can quickly drop
+    # install media into dosforge/dosassets/<mode>/ without digging into
+    # the Python runtime folder. PyInstaller's COLLECT step puts datas
+    # under _internal/ by default; the spec's post-build hook moves them
+    # out to the bundle root. We intentionally do NOT fall back to
+    # _internal/dosassets — if it lives there, the build is broken and
+    # we'd rather fail loudly than silently shadow the user-facing dir.
+    user_dosassets = base / "dosassets"
+    if user_dosassets.is_dir():
+        os.environ.setdefault("DOSFORGE_DOSASSETS_DIR", str(user_dosassets))
+    else:
+        try:
+            user_dosassets.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("DOSFORGE_DOSASSETS_DIR", str(user_dosassets))
+        except OSError:
+            pass
 
 
 def _tui_bundled() -> bool:

@@ -277,10 +277,10 @@ Write-Host "`n=== 6. Bootable FreeDOS FAT16 VHD ===" -ForegroundColor Cyan
 $freedosVhdName = 'vhd-freedos-fat16'
 if (-not (Should-Skip $freedosVhdName)) {
     # Use the bundled freedos assets (works for both editable installs
-    # and the bundled exe — _internal/dosassets/freedos/).
+    # and the bundled exe — dosassets/freedos/ at the bundle root).
     $assets = $freedosAssets
     if (-not (Test-Path $assets)) {
-        $bundled = Join-Path (Split-Path $ExePath -Parent) "_internal\dosassets\freedos"
+        $bundled = Join-Path (Split-Path $ExePath -Parent) "dosassets\freedos"
         if (Test-Path $bundled) { $assets = $bundled }
     }
     if (Test-Path $assets) {

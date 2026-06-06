@@ -171,17 +171,25 @@ coll = COLLECT(
 # (and their readme.txt instructions) sit alongside the EXEs. Users can
 # then drop their install media into dosassets/<mode>/ without having
 # to dig into the Python runtime folder.
+#
+# This relocation is REQUIRED, not optional. The Windows launcher only
+# probes <bundle>/dosassets/ (never <bundle>/_internal/dosassets/) so a
+# bundle that ships dosassets under _internal/ is broken.
 import shutil as _shutil
 
 _bundle_root = Path(DISTPATH) / "dosforge"
 _src = _bundle_root / "_internal" / "dosassets"
 _dst = _bundle_root / "dosassets"
 
-if _src.is_dir():
-    if _dst.exists():
-        raise SystemExit(
-            f"Post-build error: destination {_dst} already exists. "
-            "Run with --noconfirm or delete the existing dist/dosforge/ first."
-        )
-    _shutil.move(str(_src), str(_dst))
-    print(f"[dosforge] moved dosassets/ out of _internal/ -> {_dst}")
+if not _src.is_dir():
+    raise SystemExit(
+        f"Post-build error: expected dosassets at {_src} but found nothing. "
+        "PyInstaller did not stage the dosassets datas — check spec datas list."
+    )
+if _dst.exists():
+    raise SystemExit(
+        f"Post-build error: destination {_dst} already exists. "
+        "Run with --noconfirm or delete the existing dist/dosforge/ first."
+    )
+_shutil.move(str(_src), str(_dst))
+print(f"[dosforge] moved dosassets/ out of _internal/ -> {_dst}")
