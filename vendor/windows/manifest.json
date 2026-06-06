@@ -97,11 +97,11 @@
     },
     {
       "name": "dosbox-x",
-      "description": "DOSBox-X (mingw64 portable) — provides dosbox-x.exe used for the PC-DOS 7.1 FULL profile hydration step that runs IBM UNPACK2.EXE against PC-DOS 2000 FTCOMP pack files. Whole mingw/ tree (exe + reference confs + messages/ + glshaders/ + drivez/ + FREECG98.BMP + inpoutx64.dll) is staged into vendor/windows/bin/dosbox-x/ so DOSBox-X finds its resources at startup.",
+      "description": "DOSBox-X (mingw64 portable, STANDARD build with built-in MS-DOS emulation) — provides dosbox-x.exe used for the PC-DOS 7.1 FULL profile hydration step that runs IBM UNPACK2.EXE against PC-DOS 2000 FTCOMP pack files. The 'OS-Free' variant of the same release CANNOT be used here: it has no built-in MS-DOS emulation, so the autoexec MOUNT/UNPACK2 commands silently no-op and the hydration produces zero output (root cause of v0.6.7..v0.6.11 hydration failures on Windows). Whole mingw/ tree (exe + reference confs + languages/ + glshaders/ + drivez/ + FREECG98.BMP + inpoutx64.dll) is staged into vendor/windows/bin/dosbox-x/ so DOSBox-X finds its resources at startup.",
       "version_pin": "2026.06.02",
-      "download_url": "https://github.com/joncampbell123/dosbox-x/releases/download/dosbox-x-v2026.06.02-osfree/dosbox-x-mingw64-dosbox-x-v2026.06.02-osfree-portable.zip",
+      "download_url": "https://github.com/joncampbell123/dosbox-x/releases/download/dosbox-x-v2026.06.02/dosbox-x-mingw64-2026.06.02-portable.zip",
       "archive_format": "zip",
-      "expected_sha256": "1c71c6e580a9b675029d0f40f3646bf86f59a4d47dff964974e8f2f6048b51f6",
+      "expected_sha256": "be4faa5edd5980159ed4dfa8c803269beb29a58f02190b6b3ee1a8f52ae57235",
       "license_id": "GPL-2.0-or-later",
       "license_url": "https://github.com/joncampbell123/dosbox-x/blob/master/COPYING",
       "extracts": [
