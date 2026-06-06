@@ -25,12 +25,20 @@ of which the SGTK ships under sgdeploy/sgtk/DOS/.
 How to populate this folder
 ---------------------------
 
-Run::
+Recommended (from any working directory)::
+
+    dosforge fetch-pcdos71-assets
+
+Or, from the TUI, open the New Disk wizard, set boot-mode=pcdos71,
+and click "Fetch IBM PC-DOS 7.1 assets (SGTK download)" in Step 3.
+Same library function under the hood.
+
+Dev/CI fallback (no dosforge install required)::
 
     python scripts/fetch-pcdos71-assets.py
 
-That script downloads the SGTK installer from the Internet Archive
-mirror, verifies its SHA-1, extracts it with 7-Zip, and copies the
+All three entry points download the SGTK installer from the Internet
+Archive mirror, verify its SHA-1, extract it with 7-Zip, and copy the
 required files into this folder with per-file SHA-256 verification
 against the hashes published by github.com/Kreeblah/pcdos71-patch.
 

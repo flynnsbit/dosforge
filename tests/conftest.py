@@ -80,6 +80,7 @@ _WINDOWS_ALLOWED_TEST_FILES = frozenset(
         "test_formlogic.py",
         "test_fourdos_overlay.py",
         "test_mscompress.py",
+        "test_pcdos71_fetch.py",
         "test_platform_windows.py",
         "test_size.py",
         "test_strict_authenticity.py",

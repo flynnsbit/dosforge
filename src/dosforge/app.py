@@ -605,6 +605,11 @@ class DosForgeApp(App[None]):
                                     id="fetch-freedos-btn",
                                     classes="btn-secondary",
                                 )
+                                yield Button(
+                                    "Fetch IBM PC-DOS 7.1 assets (SGTK download)",
+                                    id="fetch-pcdos71-btn",
+                                    classes="btn-secondary",
+                                )
 
                             # Step 4: Confirm
                             with Container(id="step-4", classes="wizard-step"):
@@ -836,6 +841,8 @@ class DosForgeApp(App[None]):
             self._handle_open()
         elif button_id == "fetch-freedos-btn":
             self._handle_fetch_freedos()
+        elif button_id == "fetch-pcdos71-btn":
+            self._handle_fetch_pcdos71()
         elif button_id == "diag-btn":
             self._handle_privilege_diagnostics()
         elif button_id == "browse-create-path-btn":
@@ -973,6 +980,7 @@ class DosForgeApp(App[None]):
         boot_controls_active = is_vhd or img_system_format
 
         show_freedos = boot_controls_active and boot_mode is BootMode.FREEDOS
+        show_pcdos71 = boot_controls_active and boot_mode is BootMode.PCDOS71
         dos_boot_modes = {
             BootMode.MSDOS71,
             BootMode.IBM8088,
@@ -1062,6 +1070,7 @@ class DosForgeApp(App[None]):
         _toggle("boot-mode", "boot-mode-label", boot_controls_active)
         _toggle("freedos-source", "freedos-source-label", show_freedos)
         self.query_one("#fetch-freedos-btn", Button).display = show_freedos
+        self.query_one("#fetch-pcdos71-btn", Button).display = show_pcdos71
         _toggle("dos-profile", "dos-profile-label", show_dos_profile)
         _toggle("ibm-dos-version", "ibm-dos-version-label", show_ibm_dos_version)
         self.query_one("#boot-assets-row", Horizontal).display = show_boot_assets
@@ -1380,6 +1389,60 @@ class DosForgeApp(App[None]):
         self.query_one("#boot-assets", Input).value = str(target)
         self.query_one("#freedos-source", Select).value = FreeDOSSource.LOCAL.value
         self._set_status(f"Downloaded and extracted FreeDOS assets to {target}")
+
+    def _handle_fetch_pcdos71(self) -> None:
+        """Download + verify + stage IBM PC-DOS 7.1 assets from the SGTK.
+
+        Synchronous (matches the FreeDOS button's UX). ~15 MB download
+        + ~30 s 7-Zip extract on the first run; cached subsequent
+        invocations finish in a couple seconds. Status bar updates at
+        every documented stage in :data:`PROGRESS_STAGES` via the
+        library's progress callback.
+        """
+        from .pcdos71_fetch import fetch_pcdos71_assets
+
+        # Progress is surfaced via the status bar with a friendly
+        # label per stage. Free-form lines from inside _download /
+        # _extract are summarized; only the stage transitions update
+        # the bar to avoid spamming the UI.
+        stage_labels = {
+            "locating_sevenzip": "Locating 7-Zip…",
+            "downloading_sgtk": "Downloading IBM SGTK from archive.org…",
+            "extracting_sgtk": "Extracting SGTK with 7-Zip…",
+            "locating_dos_files": "Locating PC-DOS 7.1 system files in extract…",
+            "staging_files": "Verifying SHA-256s and staging files…",
+            "done": "Done.",
+        }
+
+        def _progress(line: str) -> None:
+            label = stage_labels.get(line)
+            if label:
+                self._set_status(f"PC-DOS 7.1 fetch: {label}")
+
+        self._set_status("PC-DOS 7.1 fetch: starting…")
+        try:
+            result = fetch_pcdos71_assets(progress=_progress)
+        except DosForgeError as exc:
+            self._set_status(str(exc), error=True)
+            return
+
+        if result.vfd_filename is None:
+            self._set_status(
+                f"PC-DOS 7.1 fetch staged {result.staged_count}/{result.total_count} "
+                f"DOS files at {result.target_dir}, but the SGTK didn't ship a "
+                "bootable VFD — pcdos71_profile won't accept this directory "
+                "until you produce one (see scripts/fetch-pcdos71-assets.py "
+                "output for guidance).",
+                error=True,
+            )
+            return
+
+        self.query_one("#boot-assets", Input).value = str(result.target_dir)
+        self._set_status(
+            f"PC-DOS 7.1 assets ready at {result.target_dir} "
+            f"({result.staged_count}/{result.total_count} DOS files + "
+            f"{result.vfd_filename})."
+        )
 
     def _handle_privilege_diagnostics(self) -> None:
         ok, summary = self.manager.privilege_diagnostics_summary()

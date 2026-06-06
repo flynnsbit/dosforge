@@ -263,6 +263,40 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite existing readme.txt files instead of skipping them.",
     )
+    fetch_pcdos71_cmd = subcommands.add_parser(
+        "fetch-pcdos71-assets",
+        help=(
+            "Download and stage IBM PC-DOS 7.1 system files from the IBM "
+            "ServerGuide Scripting Toolkit on archive.org. PC-DOS 7.1 is "
+            "the only FAT32 + LBA-capable IBM DOS and the SGTK is the "
+            "only legitimate distribution channel; this command does the "
+            "download + SHA verification + extraction so you don't have "
+            "to run the standalone script. Required once before "
+            "'--boot-mode pcdos71' works."
+        ),
+    )
+    fetch_pcdos71_cmd.add_argument(
+        "--target",
+        type=Path,
+        default=None,
+        help=(
+            "Override the staging directory. Defaults to the user-scope "
+            "dosassets/pcdos71 location (see 'dosforge where-assets')."
+        ),
+    )
+    fetch_pcdos71_cmd.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-extract even if the archive cache looks fresh.",
+    )
+    fetch_pcdos71_cmd.add_argument(
+        "--keep-extract",
+        action="store_true",
+        help=(
+            "Leave the extracted SGTK tree in the cache directory after "
+            "staging (default: delete to reclaim ~50 MB)."
+        ),
+    )
 
     # ----------------------------------------------------------------
     # Image-content verbs (mtools-based, no mount required). These
@@ -482,6 +516,79 @@ def _init_assets_command(target: Path | None, *, force: bool) -> int:
     )
     print()
     print("Run 'dosforge where-assets' to confirm the location is now discovered.")
+    return 0
+
+
+def _fetch_pcdos71_assets_command(
+    target: Path | None,
+    *,
+    force: bool,
+    keep_extract: bool,
+) -> int:
+    """Download + verify + stage IBM PC-DOS 7.1 assets from the SGTK.
+
+    Thin CLI wrapper around
+    :func:`dosforge.pcdos71_fetch.fetch_pcdos71_assets`. Catches
+    ``DependencyError`` (no 7-Zip), ``OSError`` (cache / target
+    write failures), and ``ValidationError`` (download SHA-1
+    mismatch, missing DOS dir, per-file SHA-256 mismatch) so the
+    CLI exits 1 with a clean error message instead of a traceback.
+    """
+    from .errors import DependencyError, ValidationError as _ValidationError
+    from .pcdos71_fetch import (
+        default_cache_dir,
+        default_target_dir,
+        fetch_pcdos71_assets,
+    )
+
+    resolved_target = target if target is not None else default_target_dir()
+    print(f"Target: {resolved_target}")
+    print(f"Cache:  {default_cache_dir()}")
+
+    try:
+        result = fetch_pcdos71_assets(
+            target_dir=target,
+            force=force,
+            keep_extract=keep_extract,
+            progress=lambda line: print(line),
+        )
+    except DependencyError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except _ValidationError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(
+            f"Error: cannot stage PC-DOS 7.1 assets at {resolved_target}: {exc}\n"
+            "Pick a writable --target path or fix the file-system permissions.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("\n== Summary ==")
+    print(f"  DOS files staged:    {result.staged_count}/{result.total_count}")
+    if result.missing:
+        print("  MISSING (not in SGTK extract):")
+        for name in result.missing:
+            print(f"    - {name}")
+    if result.vfd_filename is None:
+        print(
+            "  NO pre-built bootable VFD found in the SGTK. The toolkit's\n"
+            "  manual notes 'bootable disks are created using the included\n"
+            "  tool scripts.' Either run the SGTK's MAKEDISK script under\n"
+            "  DOSBox-X, or apply the github.com/Kreeblah/pcdos71-patch\n"
+            "  batch to dosassets/pcdos2000/disk01.img and copy the\n"
+            "  resulting disk to the target as install.img.\n"
+            "  pcdos71_profile won't accept the target until a bootable\n"
+            "  VFD is in place."
+        )
+    else:
+        print(f"  Install floppy:      {result.vfd_filename}")
+    print()
+    print("You can now build PC-DOS 7.1 VHDs, e.g.:")
+    print("  dosforge create --media-type vhd --boot-mode pcdos71 \\")
+    print("      --format fat32 --size 1G --path my-pcdos71.vhd")
     return 0
 
 
@@ -893,6 +1000,13 @@ def _run_manager_subcommand(args, parser) -> int:
 
         if args.command == "init-assets":
             return _init_assets_command(args.target, force=args.force)
+
+        if args.command == "fetch-pcdos71-assets":
+            return _fetch_pcdos71_assets_command(
+                args.target,
+                force=args.force,
+                keep_extract=args.keep_extract,
+            )
 
         # --------------------------------------------------------------
         # Image-content verbs (cross-platform, no mount).

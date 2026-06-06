@@ -231,16 +231,31 @@ with the expected filenames.
 PC-DOS 7.1 was only ever distributed inside the IBM ServerGuide
 Scripting Toolkit. ibm.com no longer hosts it but the Internet Archive
 preserves a verified mirror. dosforge ships a fetcher that downloads,
-verifies, and stages the required files:
+verifies, and stages the required files. Three equivalent entry
+points (all call the same library):
 
 ```bash
+# 1. Recommended: dosforge CLI (works from any directory once installed).
+dosforge fetch-pcdos71-assets
+
+# 2. Or from the TUI: open New Disk → Step 3, set boot-mode=pcdos71,
+#    click "Fetch IBM PC-DOS 7.1 assets (SGTK download)".
+
+# 3. Or the standalone script (no dosforge install required — useful in CI).
 python3 scripts/fetch-pcdos71-assets.py
 ```
 
-Downloads the IBM installer (SHA-1 verified) and unpacks the required
-files into `dosassets/pcdos71/` (or wherever
-`DOSFORGE_DOSASSETS_DIR` points) with per-file SHA-256 verification
-against community-published reference hashes.
+All three download the IBM installer (SHA-1 verified) and unpack the
+required files into `~/.local/share/dosforge/dosassets/pcdos71/` (or
+the path `dosforge where-assets` reports first, or wherever
+`DOSFORGE_DOSASSETS_DIR` points if set) with per-file SHA-256
+verification against community-published reference hashes.
+
+Optional flags:
+- `--force` — re-extract even if the SGTK cache looks fresh.
+- `--keep-extract` — leave the extracted SGTK tree in the cache dir
+  (default: clean up to reclaim ~50 MB).
+- `--target DIR` — override the staging directory.
 
 ### Windows
 
