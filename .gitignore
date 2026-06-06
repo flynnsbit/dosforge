@@ -102,3 +102,4 @@ vendor/windows/licenses/
 /dosforge.cmd
 /dosforge-gui.cmd
 
+/session.save
