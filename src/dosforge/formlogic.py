@@ -489,6 +489,60 @@ def coerce_on_format_change(state: FormState) -> FormState:
     return _snap_size_for_boot_mode(state)
 
 
+def validate_media_step(state: FormState) -> str | None:
+    """Return a user-facing error if the Media-step form would fail validation.
+
+    Only checks the per-boot-mode FS + size constraints captured in
+    :data:`_BOOT_MODE_MEDIA_RULES` (e.g. PC-DOS 7.1 FAT32 1 GiB floor,
+    MSDOS33 32 MiB cap).  These mirror the rules `DiskManager._validate_create_request`
+    enforces at submit time so the wizard can surface them earlier without
+    duplicating the full validator.
+
+    Returns ``None`` when the step is valid (or when no rule applies).
+    """
+    if not _is_vhd(state):
+        return None
+    try:
+        boot_mode = BootMode(state.boot_mode)
+    except ValueError:
+        return None
+    rule = _BOOT_MODE_MEDIA_RULES.get(boot_mode)
+    if rule is None:
+        return None
+    try:
+        fmt = DiskFormat(state.disk_format)
+    except ValueError:
+        return None
+    if rule.allowed_formats and fmt not in rule.allowed_formats:
+        return (
+            f"{boot_mode.value} only supports "
+            f"{', '.join(f.value for f in rule.allowed_formats)}."
+        )
+    try:
+        size_bytes = parse_size(state.size_text)
+    except DosForgeError as exc:
+        return str(exc)
+    min_mb = rule.per_format_min_mb.get(fmt)
+    if min_mb is not None and size_bytes < min_mb * 1024 * 1024:
+        if boot_mode is BootMode.PCDOS71 and fmt is DiskFormat.FAT32:
+            return (
+                "PC-DOS 7.1 FAT32 partitions must be at least 1 GiB. "
+                "PC-DOS FORMAT32 rejects smaller partitions with "
+                "'The drive specified is too small to use FAT32.' "
+                f"Increase the size to {_render_mb(min_mb)} or pick FAT16 for smaller drives."
+            )
+        return (
+            f"{boot_mode.value} {fmt.value} partitions must be at least "
+            f"{_render_mb(min_mb)}."
+        )
+    if rule.max_mb is not None and size_bytes > rule.max_mb * 1024 * 1024:
+        return (
+            f"{boot_mode.value} partitions cannot exceed "
+            f"{_render_mb(rule.max_mb)}."
+        )
+    return None
+
+
 def coerce_on_ibm_version_change(state: FormState) -> FormState:
     if _is_vhd(state):
         return apply_ibm_default_size(state, force=False)

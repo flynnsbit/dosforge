@@ -1145,12 +1145,19 @@ class DosForgeApp(App[None]):
             pass
 
     def _handle_wizard_back(self) -> None:
+        self._clear_status()
         self._set_wizard_step(self._wizard_step - 1)
 
     def _handle_wizard_next(self) -> None:
         if self._wizard_step >= 4:
             self._handle_create()
             return
+        if self._wizard_step == 2:
+            error = fl.validate_media_step(self._current_form_state())
+            if error:
+                self._set_status(error, error=True)
+                return
+        self._clear_status()
         self._set_wizard_step(self._wizard_step + 1)
 
     def _handle_quick_create(self) -> None:
@@ -1891,6 +1898,15 @@ class DosForgeApp(App[None]):
         label = "[ERROR] " if error else "[OK] "
         self.query_one("#status", Static).update(f"{label}{message}")
 
+    def _clear_status(self) -> None:
+        """Clear the bottom status banner (used on wizard navigation /
+        when the user mutates form fields so stale errors don't linger).
+        """
+        try:
+            self.query_one("#status", Static).update("")
+        except Exception:
+            pass
+
     def _apply_ibm_default_size(self, *, force: bool) -> None:
         media_type = MediaType(cast(str, self.query_one("#media-type", Select).value))
         if media_type is not MediaType.VHD:
@@ -1937,6 +1953,7 @@ class DosForgeApp(App[None]):
             self.query_one("#create-format", Select).value = snapped.disk_format
         if snapped.size_text != state.size_text:
             self.query_one("#create-size", Input).value = snapped.size_text
+        self._clear_status()
 
     def _apply_format_snap(self) -> None:
         """Re-enforce size floors after a Filesystem-dropdown change.
@@ -1950,6 +1967,7 @@ class DosForgeApp(App[None]):
         snapped = fl.coerce_on_format_change(state)
         if snapped.size_text != state.size_text:
             self.query_one("#create-size", Input).value = snapped.size_text
+        self._clear_status()
 
     def _format_size_for_input(self, size_bytes: int) -> str:
         if size_bytes % (1024**3) == 0:
