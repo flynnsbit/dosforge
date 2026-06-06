@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
+from itertools import cycle
 from pathlib import Path
 from typing import Callable
 from typing import cast
 from dataclasses import replace as fl_replace
 
+from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.timer import Timer
 from textual.widgets import (
     Button,
     Checkbox,
@@ -27,6 +31,8 @@ from textual.widgets import (
 from textual.widgets._directory_tree import DirEntry
 from textual.widgets._select import SelectCurrent
 from textual import on as _textual_on
+
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 from .disk import DiskManager
 from .errors import DosForgeError
@@ -425,6 +431,13 @@ class DosForgeApp(App[None]):
         # against per-widget `.display` continue to read the correct
         # value (since _sync_create_form_visibility still runs).
         self._wizard_step: int = 1
+        # Spinner state for long-running operations (Create + format VHD,
+        # mount, unmount).  Animated via set_interval while a background
+        # worker is in-flight so the user can see progress is happening.
+        self._spinner_timer: Timer | None = None
+        self._spinner_message: str = ""
+        self._spinner_started_at: float = 0.0
+        self._spinner_frames = cycle(_SPINNER_FRAMES)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1223,15 +1236,107 @@ class DosForgeApp(App[None]):
             self._set_status(str(exc), error=True)
             return
 
-        if not self._run_with_sudo_reauth(lambda: self.manager.create_and_prepare(request)):
-            return
+        # Disable the button so the user can't double-fire while the
+        # worker is in flight, and show an immediate visual indicator
+        # that the long-running create+format pipeline has started.
+        btn = self.query_one("#create-btn", Button)
+        btn.disabled = True
+        media_type = MediaType(cast(str, self.query_one("#media-type", Select).value))
+        kind = "VHD" if media_type is MediaType.VHD else "IMG"
+        self._start_spinner(
+            f"Creating + formatting {kind} {request.path.name}… "
+            f"(this can take a minute or two for VHDs with a boot install)"
+        )
+        # Kick the actual blocking work onto a thread worker so the UI
+        # event loop keeps spinning and the spinner animates instead of
+        # the whole TUI freezing while qemu-img/parted/mkfs.fat/qemu run.
+        self._create_worker(request)
 
-        self._set_status(f"Created and prepared: {request.path}")
+    @work(thread=True, exclusive=True, group="create")
+    def _create_worker(self, request: CreateRequest) -> None:
+        try:
+            success = self._run_with_sudo_reauth(
+                lambda: self.manager.create_and_prepare(request)
+            )
+        except Exception as exc:  # noqa: BLE001 — surface any backend crash
+            self.call_from_thread(self._on_create_done, request, False, exc)
+            return
+        self.call_from_thread(self._on_create_done, request, success, None)
+
+    def _on_create_done(
+        self,
+        request: CreateRequest,
+        success: bool,
+        error: Exception | None,
+    ) -> None:
+        elapsed = time.monotonic() - self._spinner_started_at
+        self._stop_spinner()
+        try:
+            self.query_one("#create-btn", Button).disabled = False
+        except Exception:
+            pass
+        if error is not None:
+            self._set_status(f"Create failed after {elapsed:0.1f}s: {error}", error=True)
+            return
+        if not success:
+            # `_run_with_sudo_reauth` already wrote a descriptive error
+            # status before returning False; don't clobber it.
+            return
+        self._set_status(
+            f"✓ Created and prepared in {elapsed:0.1f}s: {request.path}"
+        )
         self.selected_image = request.path.expanduser().resolve()
-        self.query_one("#selected-vhd", Static).update(f"Selected image: {self.selected_image}")
+        self.query_one("#selected-vhd", Static).update(
+            f"Selected image: {self.selected_image}"
+        )
         self._update_context_bar()
         self._refresh_browser_tree()
         self._refresh_mounts()
+
+    def _start_spinner(self, message: str) -> None:
+        """Kick off the animated spinner in the bottom status bar.
+
+        Safe to call from the UI thread; uses ``set_interval`` to tick
+        the spinner frame ~10 times per second.  Callers that launch a
+        background worker should call :meth:`_stop_spinner` (via
+        ``call_from_thread`` if needed) when the worker completes.
+        """
+        self._stop_spinner()
+        self._spinner_message = message
+        self._spinner_started_at = time.monotonic()
+        # Reset the frame iterator so each new operation starts at the
+        # same visual frame for consistency.
+        self._spinner_frames = cycle(_SPINNER_FRAMES)
+        first = next(self._spinner_frames)
+        self._set_status(f"{first} {message}")
+        try:
+            self._spinner_timer = self.set_interval(0.1, self._tick_spinner)
+        except Exception:
+            # In unit-test / no-loop environments set_interval can fail;
+            # the static status line is still informative even without
+            # the animation.
+            self._spinner_timer = None
+
+    def _tick_spinner(self) -> None:
+        if not self._spinner_message:
+            return
+        try:
+            frame = next(self._spinner_frames)
+            elapsed = time.monotonic() - self._spinner_started_at
+            self.query_one("#status", Static).update(
+                f"{frame} {self._spinner_message}  [{elapsed:0.1f}s]"
+            )
+        except Exception:
+            pass
+
+    def _stop_spinner(self) -> None:
+        if self._spinner_timer is not None:
+            try:
+                self._spinner_timer.stop()
+            except Exception:
+                pass
+            self._spinner_timer = None
+        self._spinner_message = ""
 
     def _update_context_bar(self) -> None:
         """Update the always-visible context strip above the tabs."""

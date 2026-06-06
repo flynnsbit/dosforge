@@ -500,10 +500,12 @@ def test_create_refreshes_browser_tree(monkeypatch, tmp_path) -> None:
         app.manager.create_and_prepare = fake_create  # type: ignore[assignment]
         monkeypatch.setattr(app, "_refresh_browser_tree", fake_refresh_browser_tree)
 
-        async with app.run_test():
+        async with app.run_test() as pilot:
             app.query_one("#create-path", Input).value = str(tmp_path / "newdisk.vhd")
             app.query_one("#create-size", Input).value = "512M"
             app._handle_create()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
             assert refresh_calls["count"] == 1
 
     asyncio.run(run())
@@ -537,10 +539,12 @@ def test_create_reauthenticates_and_retries_when_sudo_expires(monkeypatch, tmp_p
         monkeypatch.setattr(app, "_refresh_browser_tree", lambda: None)
         monkeypatch.setattr(app, "_refresh_mounts", lambda: None)
 
-        async with app.run_test():
+        async with app.run_test() as pilot:
             app.query_one("#create-path", Input).value = str(tmp_path / "newdisk.vhd")
             app.query_one("#create-size", Input).value = "64M"
             app._handle_create()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
             assert attempts["count"] == 2
             assert "Created and prepared" in str(app.query_one("#status").render())
 
@@ -570,10 +574,12 @@ def test_create_shows_error_when_sudo_reauth_fails(tmp_path) -> None:
         app.manager.create_and_prepare = fake_create  # type: ignore[assignment]
         app._reauthenticate_sudo = lambda: (False, "Sudo re-authentication failed.")  # type: ignore[assignment]
 
-        async with app.run_test():
+        async with app.run_test() as pilot:
             app.query_one("#create-path", Input).value = str(tmp_path / "newdisk.vhd")
             app.query_one("#create-size", Input).value = "64M"
             app._handle_create()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
             assert attempts["count"] == 1
             assert "Sudo re-authentication failed." == str(app.query_one("#status").render()).strip()
 
