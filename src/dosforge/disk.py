@@ -1933,27 +1933,24 @@ class DiskManager:
         ):
             raise ValidationError(
                 "This boot mode is not yet supported on this platform. "
-                "On Windows, supported VHD boot modes are: none, freedos (FAT16), "
+                "On Windows, supported VHD boot modes are: none, freedos, "
                 "msdos71, msdos33, msdos331, compaq331, ibm8088 (dos33), "
                 "msdos5, msdos622, pcdos, pcdos7, pcdos71."
-            )
-        if (
-            request.boot_mode is BootMode.FREEDOS
-            and request.disk_format is not DiskFormat.FAT16
-        ):
-            raise ValidationError(
-                "FreeDOS VHDs on Windows are currently restricted to FAT16. "
-                "FAT32 support requires an FAT32 MBR boot code template that "
-                "the FreeDOS asset resolver does not yet produce — fix is "
-                "tracked in the next port phase."
             )
 
         target_path = request.path
         footer = core_vhd_footer.read_footer(target_path)
         total_sectors = footer.total_sectors
+        # FAT32 also needs footer-CHS for the VBR geometry patch so AT
+        # BIOSes with >504 MiB drives apply ECHS bit-shift translation
+        # consistently — the FreeDOS FAT32 boot sector
+        # (BOOTSECT_FAT32.BIN, real boot32lb) is already shipped in
+        # dosassets/freedos/ and validated by the BootAssetResolver, so
+        # extending fat_bios_chs to cover FAT32 is the only step that
+        # was missing to unblock freedos+fat32 on Windows.
         fat_bios_chs = (
             self._read_vpc_bios_chs_geometry(target_path)
-            if request.disk_format in (DiskFormat.FAT12, DiskFormat.FAT16)
+            if request.disk_format in (DiskFormat.FAT12, DiskFormat.FAT16, DiskFormat.FAT32)
             else None
         )
 

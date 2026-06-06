@@ -226,8 +226,18 @@ def test_windows_vhd_pipeline_accepts_every_legacy_dos_mode(tmp_path: Path):
             )
 
 
-def test_windows_vhd_pipeline_rejects_freedos_fat32(tmp_path: Path):
-    """FreeDOS FAT32 needs an MBR template that the resolver doesn't yet produce."""
+def test_windows_vhd_pipeline_accepts_freedos_fat32(tmp_path: Path):
+    """FreeDOS FAT32 must not be blocked by the unsupported-mode gate.
+
+    The BOOTSECT_FAT32.BIN template (real boot32lb from FDOS/kernel)
+    has shipped in dosassets/freedos/ since the linux-v0.6.0 boot-sector
+    fix (commit 3af7909), and the BootAssetResolver +
+    make_partition_bootable have always known how to use it.  The
+    Windows-side ``ValidationError`` was a stale placeholder.  The
+    pipeline may still raise later at the boot resolver step if no
+    assets are present on the host, but the gate itself must let
+    freedos+fat32 through.
+    """
     target = tmp_path / "fdos32.vhd"
     request = _basic_request(
         target,
@@ -238,12 +248,20 @@ def test_windows_vhd_pipeline_rejects_freedos_fat32(tmp_path: Path):
     runner = FakeRunner(vhd_size_bytes=request.size_bytes)
     manager = _manager(tmp_path, runner)
 
-    with pytest.raises(ValidationError, match="FreeDOS VHDs on Windows are currently restricted to FAT16"):
+    try:
         manager.create_and_prepare(request)
+    except ValidationError as exc:
+        message = str(exc)
+        assert "not yet supported on this platform" not in message, (
+            f"FreeDOS FAT32 should not be blocked by the unsupported-mode gate, got: {message}"
+        )
+        assert "currently restricted to FAT16" not in message, (
+            f"FreeDOS FAT32 restriction should be lifted, got: {message}"
+        )
 
 
 def test_windows_vhd_pipeline_accepts_freedos_and_msdos71(tmp_path: Path):
-    """FreeDOS and MS-DOS 7.1 don't raise the unsupported-mode ValidationError.
+    """FreeDOS (FAT16 + FAT32) and MS-DOS 7.1 don't raise the unsupported-mode ValidationError.
 
     They may fail later at the boot resolver step if no assets are
     available, but the pipeline gate should let them through.
