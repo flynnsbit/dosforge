@@ -94,6 +94,22 @@
           "to_in_bin": "mmd.exe"
         }
       ]
+    },
+    {
+      "name": "dosbox-x",
+      "description": "DOSBox-X (mingw64 portable) — provides dosbox-x.exe used for the PC-DOS 7.1 FULL profile hydration step that runs IBM UNPACK2.EXE against PC-DOS 2000 FTCOMP pack files.",
+      "version_pin": "2026.06.02",
+      "download_url": "https://github.com/joncampbell123/dosbox-x/releases/download/dosbox-x-v2026.06.02-osfree/dosbox-x-mingw64-dosbox-x-v2026.06.02-osfree-portable.zip",
+      "archive_format": "zip",
+      "expected_sha256": "1c71c6e580a9b675029d0f40f3646bf86f59a4d47dff964974e8f2f6048b51f6",
+      "license_id": "GPL-2.0-or-later",
+      "license_url": "https://github.com/joncampbell123/dosbox-x/blob/master/COPYING",
+      "extracts": [
+        {
+          "from_in_archive": "mingw-build/mingw/dosbox-x.exe",
+          "to_in_bin": "dosbox-x.exe"
+        }
+      ]
     }
   ],
   "$notes": [

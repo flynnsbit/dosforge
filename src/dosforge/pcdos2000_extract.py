@@ -55,6 +55,9 @@ __all__ = [
     "PCDOS2000_BLACKLIST_PATTERNS",
     "extract_pcdos2000_utilities",
     "merge_pcdos2000_into_pcdos71_dos",
+    "find_pcdos2000_archive",
+    "find_pcdos2000_disk_dir",
+    "find_pcdos2000_source",
     "default_cache_dir",
 ]
 
@@ -162,6 +165,30 @@ def _content_stamp(path: Path, length: int = 12) -> str:
     return h.hexdigest()[:length]
 
 
+def _disk_dir_stamp(disks: list[Path], length: int = 12) -> str:
+    """Stable cache stamp for a directory of raw disk*.img files.
+
+    Hashes the sorted (name, size, sha256-of-first-64KB) tuple of every
+    disk so re-running with the same six floppies is a cache hit. Reads
+    only the first 64 KB per disk (boot sector + FAT + root dir start)
+    so it stays well under a second even on slow USB media.
+    """
+    h = hashlib.sha256()
+    for disk in sorted(disks, key=lambda p: p.name.lower()):
+        h.update(disk.name.lower().encode("ascii", "ignore"))
+        try:
+            size = disk.stat().st_size
+        except OSError:
+            size = 0
+        h.update(f"|{size}|".encode("ascii"))
+        try:
+            with disk.open("rb") as f:
+                h.update(f.read(64 * 1024))
+        except OSError:
+            pass
+    return h.hexdigest()[:length]
+
+
 def _is_blacklisted(filename: str) -> bool:
     from fnmatch import fnmatchcase
     name = filename.upper()
@@ -190,6 +217,60 @@ def find_pcdos2000_archive(pcdos2000_dir: Path) -> Path | None:
         if "pc dos 2000" in normalized or "pcdos2000" in normalized:
             return entry
     return None
+
+
+# Filenames that count as a PC-DOS 2000 install floppy. Case-insensitive
+# match; we accept either the WinWorldPC ``diskNN.img`` form or the
+# bare ``NN.img`` form some uploaders use.
+def _is_pcdos2000_disk_image(name: str) -> bool:
+    n = name.lower()
+    if not (n.endswith(".img") or n.endswith(".dsk")):
+        return False
+    stem = n.rsplit(".", 1)[0]
+    if stem.startswith("disk") and stem[4:].isdigit():
+        idx = int(stem[4:])
+        return 1 <= idx <= 8  # WinWorldPC uses disk01..disk06
+    if stem.isdigit() and 1 <= int(stem) <= 8:
+        return True
+    return False
+
+
+def find_pcdos2000_disk_dir(pcdos2000_dir: Path) -> Path | None:
+    """Return ``pcdos2000_dir`` if it contains the raw install floppies.
+
+    Counts files matching :func:`_is_pcdos2000_disk_image`. PC-DOS 2000
+    ships on six 1.44 MB floppies; we accept any directory that holds
+    at least 5 of them (one occasionally goes missing in user-curated
+    bundles). The directory itself is returned so the downstream
+    extractor can mcopy straight off the IMGs without a 7z step.
+    """
+    if not pcdos2000_dir.is_dir():
+        return None
+    disks = [
+        entry for entry in pcdos2000_dir.iterdir()
+        if entry.is_file() and _is_pcdos2000_disk_image(entry.name)
+    ]
+    if len(disks) >= 5:
+        return pcdos2000_dir
+    return None
+
+
+def find_pcdos2000_source(pcdos2000_dir: Path) -> Path | None:
+    """Locate a usable PC-DOS 2000 install source in ``pcdos2000_dir``.
+
+    Returns either a path to a WinWorldPC ``.7z`` / ``.zip`` archive or
+    the directory itself when raw ``disk01.img``..``disk06.img`` files
+    are already present. Returns ``None`` if neither is found.
+
+    Preferring the archive when both are present keeps the cache stamp
+    stable across users who download the same WinWorldPC release, and
+    falls through to the loose IMG layout for users who pre-extracted
+    their copy (or who downloaded individual floppies from elsewhere).
+    """
+    archive = find_pcdos2000_archive(pcdos2000_dir)
+    if archive is not None:
+        return archive
+    return find_pcdos2000_disk_dir(pcdos2000_dir)
 
 
 def _harvest_floppy_contents(
@@ -278,7 +359,7 @@ def _run_unpack2_in_dosbox(
 
 
 def extract_pcdos2000_utilities(
-    pcdos2000_archive: Path,
+    pcdos2000_source: Path,
     *,
     backend=None,
     cache_root: Path | None = None,
@@ -288,12 +369,17 @@ def extract_pcdos2000_utilities(
 ) -> Path:
     """Extract PC-DOS 2000 DOS utilities into a cached ``DOS/`` directory.
 
+    Accepts either the WinWorldPC ``.7z`` / ``.zip`` archive OR a
+    directory containing the pre-extracted six install floppies
+    (``disk01.img``..``disk06.img``). Both flows end at the same
+    ``mcopy`` → ``UNPACK2`` → blacklist-filter pipeline.
+
     Returns the path to the cached ``DOS/`` directory; on a cache hit
     no DOSBox-X / mtools work is performed.
 
     Args:
-        pcdos2000_archive: Path to the WinWorldPC ``IBM PC-DOS 2000
-            (3.5-1.44mb).7z`` (or compatible) file.
+        pcdos2000_source: Either a path to the WinWorldPC archive (file)
+            or to a directory containing the raw floppies.
         backend: Platform backend (auto-detected when None).
         cache_root: Override for the cache dir (default
             :func:`default_cache_dir`).
@@ -303,22 +389,47 @@ def extract_pcdos2000_utilities(
         force: If True, ignore an existing cache and re-extract.
 
     Raises:
-        ValidationError if the archive is missing, unreadable, or the
+        ValidationError if the source is missing/unreadable, or the
         DOSBox-X invocation fails to produce any output files.
     """
-    if not pcdos2000_archive.is_file():
+    if not pcdos2000_source.exists():
         raise ValidationError(
-            f"PC-DOS 2000 archive not found: {pcdos2000_archive}. "
+            f"PC-DOS 2000 source not found: {pcdos2000_source}. "
             "Download IBM PC-DOS 2000 from WinWorldPC and place the "
-            "7z file at dosassets/pcdos2000/ to enable PC-DOS 7.1 "
-            "FULL profile hydration."
+            "7z file (or extracted disk01.img..disk06.img) at "
+            "dosassets/pcdos2000/ to enable PC-DOS 7.1 FULL profile "
+            "hydration."
+        )
+
+    source_is_dir = pcdos2000_source.is_dir()
+    if not source_is_dir and not pcdos2000_source.is_file():
+        raise ValidationError(
+            f"PC-DOS 2000 source is neither a file nor a directory: {pcdos2000_source}"
         )
 
     if cache_root is None:
         cache_root = default_cache_dir()
     cache_root.mkdir(parents=True, exist_ok=True)
 
-    stamp = _content_stamp(pcdos2000_archive)
+    if source_is_dir:
+        preexisting_disks = sorted(
+            entry for entry in pcdos2000_source.iterdir()
+            if entry.is_file() and _is_pcdos2000_disk_image(entry.name)
+        )
+        if not preexisting_disks:
+            raise ValidationError(
+                f"PC-DOS 2000 source dir {pcdos2000_source} has no "
+                "disk01.img..disk06.img install floppies."
+            )
+        stamp = _disk_dir_stamp(preexisting_disks)
+        source_label = (
+            f"raw IMG dir ({len(preexisting_disks)} floppies)"
+        )
+    else:
+        preexisting_disks = []
+        stamp = _content_stamp(pcdos2000_source)
+        source_label = pcdos2000_source.name
+
     cached_dos = cache_root / f"pcdos2000-{stamp}" / _PCDOS2000_DOS_RELDIR
     if not force and cached_dos.is_dir() and any(cached_dos.iterdir()):
         if progress is not None:
@@ -330,16 +441,22 @@ def extract_pcdos2000_utilities(
         backend = get_backend()
 
     # Locate the tools we need up front so we fail loudly before any
-    # disk work if something's missing on PATH.
-    try:
-        seven_zip_exe = backend.tool_path("7z")
-    except DosForgeError:
-        seven_zip_exe = shutil.which("7z") or shutil.which("7zz") or shutil.which("7za")
-        if seven_zip_exe is None:
-            raise ValidationError(
-                "PC-DOS 2000 extraction requires 7-Zip on PATH "
-                "(7z / 7zz / 7za). Install p7zip-full and retry."
-            )
+    # disk work if something's missing on PATH. 7-Zip is ONLY required
+    # for the archive flow; raw-IMG mode skips the extract step.
+    seven_zip_exe: str | None = None
+    if not source_is_dir:
+        try:
+            seven_zip_exe = backend.tool_path("7z")
+        except DosForgeError:
+            seven_zip_exe = shutil.which("7z") or shutil.which("7zz") or shutil.which("7za")
+            if seven_zip_exe is None:
+                raise ValidationError(
+                    "PC-DOS 2000 extraction requires 7-Zip on PATH "
+                    "(7z / 7zz / 7za) to expand the WinWorldPC archive. "
+                    "Install p7zip-full and retry, or pre-extract the "
+                    "archive into dosassets/pcdos2000/ so the raw "
+                    "disk01.img..disk06.img floppies can be used directly."
+                )
     try:
         dosbox_exe = backend.tool_path("dosbox-x")
     except DosForgeError:
@@ -362,31 +479,42 @@ def extract_pcdos2000_utilities(
     work.mkdir()
     keep_work_for_postmortem = False
     try:
-        # 1. Extract the WinWorldPC 7z into a flat scratch.
-        if progress is not None:
-            progress(f"  extracting {pcdos2000_archive.name}…")
-        archive_extract = work / "archive"
-        archive_extract.mkdir()
-        subprocess.run(
-            [str(seven_zip_exe), "x", "-y", f"-o{archive_extract}", str(pcdos2000_archive)],
-            check=True,
-            capture_output=True,
-            **subprocess_no_window_kwargs(),
-        )
-
-        # 2. Locate disk01.img..disk06.img anywhere under the extract.
-        disks: list[Path] = sorted(
-            p for p in archive_extract.rglob("disk0[1-6].img")
-        )
-        if not disks:
-            keep_work_for_postmortem = True
-            raise ValidationError(
-                f"PC-DOS 2000 archive {pcdos2000_archive.name} doesn't "
-                f"contain disk01.img..disk06.img. Expected the WinWorldPC "
-                f"\"IBM PC-DOS 2000 (3.5-1.44mb)\" layout."
+        if source_is_dir:
+            # No 7z step — use the user-provided IMGs directly.
+            if progress is not None:
+                progress(
+                    f"  using {len(preexisting_disks)} pre-extracted floppies"
+                    f" from {pcdos2000_source}"
+                )
+            disks = preexisting_disks
+        else:
+            # 1. Extract the WinWorldPC 7z into a flat scratch.
+            if progress is not None:
+                progress(f"  extracting {pcdos2000_source.name}…")
+            archive_extract = work / "archive"
+            archive_extract.mkdir()
+            assert seven_zip_exe is not None
+            subprocess.run(
+                [str(seven_zip_exe), "x", "-y", f"-o{archive_extract}", str(pcdos2000_source)],
+                check=True,
+                capture_output=True,
+                **subprocess_no_window_kwargs(),
             )
-        if progress is not None:
-            progress(f"  found {len(disks)} install floppies")
+
+            # 2. Locate disk01.img..disk06.img anywhere under the extract.
+            disks = sorted(
+                p for p in archive_extract.rglob("*")
+                if p.is_file() and _is_pcdos2000_disk_image(p.name)
+            )
+            if not disks:
+                keep_work_for_postmortem = True
+                raise ValidationError(
+                    f"PC-DOS 2000 archive {pcdos2000_source.name} doesn't "
+                    f"contain disk01.img..disk06.img. Expected the WinWorldPC "
+                    f"\"IBM PC-DOS 2000 (3.5-1.44mb)\" layout."
+                )
+            if progress is not None:
+                progress(f"  found {len(disks)} install floppies in archive")
 
         # 3. Harvest every file from every floppy into a flat staging dir
         #    (so UNPACK2 sees all the FTCOMP pack files under C:).

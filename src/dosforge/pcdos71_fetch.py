@@ -475,9 +475,11 @@ def fetch_pcdos71_assets(
 
     # PC-DOS 2000 utility hydration (FULL profile extra). Looks for a
     # WinWorldPC ``IBM PC-DOS 2000 (3.5-1.44mb).7z`` next to the
-    # pcdos71 dosassets dir and, when present, merges its DOS utilities
-    # into ``target_dir/DOS/`` (SGTK wins on conflict). Failures are
-    # informational only — the SGTK-only set is always valid on its own.
+    # pcdos71 dosassets dir — OR pre-extracted ``disk01.img``..
+    # ``disk06.img`` install floppies in the same folder — and, when
+    # present, merges its DOS utilities into ``target_dir/DOS/`` (SGTK
+    # wins on conflict). Failures are informational only — the SGTK-only
+    # set is always valid on its own.
     pcdos2000_added = 0
     pcdos2000_skipped = 0
     pcdos2000_archive_name: str | None = None
@@ -488,21 +490,22 @@ def fetch_pcdos71_assets(
         from . import pcdos2000_extract as _p2k
 
         pcdos2000_dir = target.parent / "pcdos2000"
-        archive = _p2k.find_pcdos2000_archive(pcdos2000_dir)
-        if archive is None:
+        source = _p2k.find_pcdos2000_source(pcdos2000_dir)
+        if source is None:
             if progress is not None:
                 progress(
-                    f"  no PC-DOS 2000 archive found in {pcdos2000_dir}; "
+                    f"  no PC-DOS 2000 source found in {pcdos2000_dir}; "
                     "skipping (download IBM PC-DOS 2000 from WinWorldPC and "
-                    "place the 7z there to enable EMM386, POWER, DEFRAG, "
-                    "BACKUP, DOSSHELL, etc.)"
+                    "place the .7z OR extracted disk01.img..disk06.img there "
+                    "to enable EMM386, POWER, DEFRAG, BACKUP, DOSSHELL, etc.)"
                 )
         else:
+            label = source.name if source.is_file() else f"{source.name}/ (raw floppies)"
             if progress is not None:
-                progress(f"  found PC-DOS 2000 archive: {archive.name}")
-            pcdos2000_archive_name = archive.name
+                progress(f"  found PC-DOS 2000 source: {label}")
+            pcdos2000_archive_name = label
             extracted_dos = _p2k.extract_pcdos2000_utilities(
-                archive,
+                source,
                 progress=progress,
             )
             pcdos2000_added, pcdos2000_skipped = _p2k.merge_pcdos2000_into_pcdos71_dos(

@@ -15,7 +15,10 @@ from dosforge.pcdos2000_extract import (
     PCDOS2000_ARCHIVE_NAMES,
     PCDOS2000_BLACKLIST_PATTERNS,
     _is_blacklisted,
+    _is_pcdos2000_disk_image,
     find_pcdos2000_archive,
+    find_pcdos2000_disk_dir,
+    find_pcdos2000_source,
     merge_pcdos2000_into_pcdos71_dos,
 )
 
@@ -75,6 +78,49 @@ def test_find_pcdos2000_archive_missing(tmp_path: Path) -> None:
 
 def test_find_pcdos2000_archive_dir_missing(tmp_path: Path) -> None:
     assert find_pcdos2000_archive(tmp_path / "does-not-exist") is None
+
+
+def test_is_pcdos2000_disk_image_recognizes_winworld_layout() -> None:
+    for name in ("disk01.img", "disk02.img", "DISK06.IMG", "disk6.img", "01.img", "6.IMG", "disk03.dsk"):
+        assert _is_pcdos2000_disk_image(name), f"{name} should be recognized"
+    for name in ("disk00.img", "disk09.img", "disk10.img", "command.com", "ibmbio.com", "readme.txt"):
+        assert not _is_pcdos2000_disk_image(name), f"{name} should NOT be recognized"
+
+
+def test_find_pcdos2000_disk_dir_with_six_imgs(tmp_path: Path) -> None:
+    for i in range(1, 7):
+        (tmp_path / f"disk0{i}.img").write_bytes(b"\x00" * 1024)
+    found = find_pcdos2000_disk_dir(tmp_path)
+    assert found == tmp_path
+
+
+def test_find_pcdos2000_disk_dir_with_only_three_imgs(tmp_path: Path) -> None:
+    # Threshold is >=5; three is not enough.
+    for i in range(1, 4):
+        (tmp_path / f"disk0{i}.img").write_bytes(b"")
+    assert find_pcdos2000_disk_dir(tmp_path) is None
+
+
+def test_find_pcdos2000_source_prefers_archive_over_imgs(tmp_path: Path) -> None:
+    (tmp_path / "IBM PC-DOS 2000 (3.5-1.44mb).7z").write_bytes(b"")
+    for i in range(1, 7):
+        (tmp_path / f"disk0{i}.img").write_bytes(b"")
+    found = find_pcdos2000_source(tmp_path)
+    assert found is not None and found.is_file()
+    assert found.name == "IBM PC-DOS 2000 (3.5-1.44mb).7z"
+
+
+def test_find_pcdos2000_source_falls_through_to_imgs(tmp_path: Path) -> None:
+    # No archive, but full set of floppies.
+    for i in range(1, 7):
+        (tmp_path / f"disk0{i}.img").write_bytes(b"\x00" * 1024)
+    found = find_pcdos2000_source(tmp_path)
+    assert found == tmp_path
+
+
+def test_find_pcdos2000_source_returns_none_when_empty(tmp_path: Path) -> None:
+    (tmp_path / "readme.txt").write_text("notes")
+    assert find_pcdos2000_source(tmp_path) is None
 
 
 def test_merge_sgtk_wins_on_conflict(tmp_path: Path) -> None:

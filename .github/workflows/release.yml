@@ -146,12 +146,17 @@ jobs:
             }
           }
 
-          # qemu-img + mformat MUST be present in every variant
+          # qemu-img + mformat + dosbox-x MUST be present in every
+          # variant (dosbox-x powers PC-DOS 7.1 FULL profile hydration
+          # via UNPACK2.EXE against PC-DOS 2000 FTCOMP packs).
           if (-not (Test-Path "$internal\vendor\windows\bin\qemu-img.exe")) {
             $failures += "qemu-img.exe missing from vendor/"
           }
           if (-not (Test-Path "$internal\vendor\windows\bin\mformat.exe")) {
             $failures += "mformat.exe missing from vendor/"
+          }
+          if (-not (Test-Path "$internal\vendor\windows\bin\dosbox-x.exe")) {
+            $failures += "dosbox-x.exe missing from vendor/ (PC-DOS 2000 hydration needs it)"
           }
 
           # dosforge.exe --help must work
