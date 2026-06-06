@@ -245,7 +245,7 @@ class DosForgeApp(App[None]):
       background: $surface;
     }
     #wizard-nav Button {
-      width: 20;
+      width: 24;
       margin: 0 1 0 0;
     }
     #wizard-nav #quick-create-btn {
