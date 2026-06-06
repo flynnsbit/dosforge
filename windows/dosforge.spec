@@ -41,7 +41,13 @@ vendor_bin = REPO_ROOT / "vendor" / "windows" / "bin"
 if vendor_bin.is_dir():
     for entry in vendor_bin.rglob("*"):
         if entry.is_file():
-            datas.append((str(entry), "vendor/windows/bin"))
+            rel = entry.relative_to(vendor_bin).parent
+            target = (
+                "vendor/windows/bin"
+                if rel == Path(".")
+                else f"vendor/windows/bin/{rel.as_posix()}"
+            )
+            datas.append((str(entry), target))
 else:
     raise SystemExit(
         f"vendor/windows/bin/ is empty or missing at {vendor_bin}. "
