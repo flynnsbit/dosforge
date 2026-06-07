@@ -59,50 +59,63 @@ class SingleClickSelect(Select):
     """A :class:`Select` that opens its dropdown on the first mouse click.
 
     Textual's default ``Select`` requires two clicks: the first only
-    settles focus, the second runs the Toggle. We open the overlay
+    settles focus, the second runs the Toggle.  We open the overlay
     eagerly on ``MouseDown`` so it appears on the first press.
 
-    But that alone isn't enough — the synthesized ``Click`` event
-    that follows on mouse-up still triggers ``SelectCurrent.Toggle``,
-    and Textual's message dispatch walks the full MRO, calling
-    *every* decorated handler. The parent ``Select`` registers its
-    own ``@on(SelectCurrent.Toggle)`` handler that unconditionally
-    does ``self.expanded = not self.expanded`` — so on mouse-up the
-    parent's handler would flip us right back to ``expanded=False``
-    and the menu would disappear.
+    But raw single-click-open creates two race conditions with the
+    parent :class:`Select`'s built-in behavior:
 
-    Solution: track whether the *current* Toggle was caused by us
-    just opening on MouseDown.  If so, suppress the parent's handler
-    so the dropdown stays open.  Otherwise (a second click on an
-    already-open dropdown, or a programmatic toggle), let the parent
-    run so the dropdown closes normally.
+    1. **Open race.**  ``MouseDown`` opens the overlay, then the
+       synthesized ``Click`` posts ``SelectCurrent.Toggle``, then the
+       parent's ``@on(Toggle)`` handler does
+       ``self.expanded = not self.expanded`` — which flips us back
+       to ``expanded=False`` and the menu disappears.
+
+    2. **Close race.**  When the user clicks the chevron of an
+       *already-expanded* dropdown, the overlay loses focus first
+       (``SelectOverlay.Dismiss(lost_focus=True)`` → parent sets
+       ``expanded=False``), then ``SelectCurrent.Toggle`` fires; the
+       parent's flip then does ``not False = True`` and the dropdown
+       **stays open**.  This was the v0.7.5 dropdown-toggle bug.
+
+    Both races resolve cleanly if we *always* short-circuit the
+    parent's Toggle handler via ``event.prevent_default()`` and
+    manage ``expanded`` ourselves:
+
+    * MouseDown is the only thing that opens the overlay.
+    * The overlay-blur-dismiss is the only thing that closes it on a
+      second click (the blur happens naturally when the user clicks
+      anywhere outside the overlay, including on our own chevron).
+    * Our Toggle handler does nothing visible — it just suppresses
+      the parent's flip.
 
     Subclass-only: drop-in replacement for ``Select``.
     """
 
-    # Set to True by ``_on_mouse_down`` when we just opened the
-    # overlay; cleared by the Toggle handler after it suppresses the
-    # parent.  Without this flag every second click would also be
-    # suppressed and the menu could never be closed by clicking the
-    # dropdown again.
+    # True between MouseDown opening the overlay and the synthesized
+    # Click event being processed.  Used only as a defensive
+    # invariant check; the actual logic is always "prevent_default,
+    # don't touch expanded".
     _just_opened_on_mouse_down: bool = False
 
     def _on_mouse_down(self, event) -> None:
+        # Only ever opens.  Closing is handled by Textual's overlay
+        # blur (which fires when the user clicks anywhere outside
+        # the overlay, including on our own chevron when expanded).
         if not self.expanded:
             self.action_show_overlay()
             self._just_opened_on_mouse_down = True
 
     @_textual_on(SelectCurrent.Toggle)
     def _single_click_toggle(self, event: SelectCurrent.Toggle) -> None:
-        if self._just_opened_on_mouse_down:
-            # MouseDown already opened the overlay; suppress the
-            # parent's Toggle so it doesn't immediately close.
-            self._just_opened_on_mouse_down = False
-            event.stop()
-            event.prevent_default()
-            return
-        # Already-open dropdown getting clicked again -- let the
-        # parent's Toggle handler run so it closes normally.
+        # Always block the parent's ``expanded = not expanded`` flip.
+        # See the class docstring for the open + close race
+        # explanations.  MouseDown + overlay-blur-dismiss together
+        # already drive the expanded state correctly; the parent's
+        # flip only causes races.
+        event.stop()
+        event.prevent_default()
+        self._just_opened_on_mouse_down = False
 
 
 _DOS_INSTALL_PROFILE_OPTIONS = [
