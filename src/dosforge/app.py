@@ -452,6 +452,10 @@ class DosForgeApp(App[None]):
                                         ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
                                         ("PC-DOS bootable", BootMode.PCDOS.value),
                                         (
+                                            "IBM PC-DOS 3.00 bootable (1984, 360k MFM)",
+                                            BootMode.PCDOS3.value,
+                                        ),
+                                        (
                                             "PC-DOS 7.0 bootable (XDF media)",
                                             BootMode.PCDOS7.value,
                                         ),
@@ -921,6 +925,7 @@ class DosForgeApp(App[None]):
             BootMode.MSDOS5,
             BootMode.MSDOS622,
             BootMode.PCDOS,
+            BootMode.PCDOS3,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.PCDOS71,

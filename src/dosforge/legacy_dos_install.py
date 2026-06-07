@@ -163,6 +163,48 @@ def msdos33_profile(install_image: Path, boot_assets_dir: Path | None = None) ->
     )
 
 
+def pcdos3_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    """IBM PC-DOS 3.00 install profile.
+
+    ``install_image`` is ``Disk01.img`` from the WinWorldPC
+    ``IBM PC-DOS 3.00 (5.25)`` archive — a 360 KB 5.25" DSDD floppy
+    dated 1984-08-14.  The floppy ships IBMBIO.COM + IBMDOS.COM
+    (hidden+system) + COMMAND.COM + FORMAT.COM + SYS.COM + FDISK.COM
+    at its root.
+
+    PC-DOS 3.00 was IBM's first hard-disk-aware DOS — released August
+    1984 alongside the IBM PC AT.  Unlike compaq2 (MS-DOS 2.11), it
+    has the BPB.hidden_sectors field added in DOS 3.0, so HDD boot
+    works on any standard MFM/IDE BIOS without Compaq-specific
+    extensions.
+
+    Constraints vs the MSDOS33 profile:
+
+    * FAT12 ONLY — FAT16 wasn't added until PC-DOS 3.10.  Validation
+      caps the partition at 16 MiB (the FAT12 sweet spot for DOS 3.0).
+    * Uses IBM-style naming (IBMBIO.COM / IBMDOS.COM) — matches the
+      compaq2/compaq331/pcdos7 family.
+    * FORMAT C: /S prompts twice on DOS 3.0 (same as compaq2): once
+      for "Press any key" and once for the destructive-confirm Y/N.
+    * No FDISK /MBR option (added in DOS 5.0); dosforge writes its
+      own era-appropriate generic MBR.
+    """
+    _ = boot_assets_dir
+    return LegacyDosInstallProfile(
+        label="IBM PC-DOS 3.00",
+        install_image=install_image,
+        required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+        install_method="format",
+        timeout_seconds=300.0,
+        # PC-DOS 3.00's FORMAT.COM (1984-08-14) prompts twice for a
+        # fixed disk like Compaq DOS 2.11's: (1) "Press any key to
+        # begin formatting" and (2) "Warning! ... Do you want to
+        # continue (Y/N)? [N]".  Both need explicit Y.
+        format_yes_input=b"YYY\r\n\r\n\r\n",
+        supports_fdisk_mbr=False,  # /MBR didn't exist until DOS 5.0
+    )
+
+
 def compaq2_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
     """Compaq OEM MS-DOS 2.11 install profile.
 
@@ -1311,6 +1353,7 @@ __all__ = [
     "compaq331_profile",
     "compaq2_profile",
     "msdos33_profile",
+    "pcdos3_profile",
     "msdos5_profile",
     "msdos622_profile",
     "pcdos7_profile",

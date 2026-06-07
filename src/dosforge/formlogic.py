@@ -51,6 +51,7 @@ _DOS_PROFILE_BOOT_MODES = frozenset(
         BootMode.MSDOS5,
         BootMode.MSDOS622,
         BootMode.PCDOS,
+        BootMode.PCDOS3,
         BootMode.PCDOS7,
         BootMode.PCDOS2000,
         BootMode.PCDOS71,
@@ -198,6 +199,10 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
     BootMode.PCDOS7: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16})),
     BootMode.PCDOS2000: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16})),
     BootMode.COMPAQ2: _BootMediaRule(frozenset({DiskFormat.FAT12}), max_mb=16),
+    # IBM PC-DOS 3.00 (1984): FAT12 only (FAT16 was added in PC-DOS 3.10),
+    # max ~16 MiB partition.  Works on both MFM and IDE controllers but
+    # defaults to MFM for 1984-authentic hardware.
+    BootMode.PCDOS3: _BootMediaRule(frozenset({DiskFormat.FAT12}), max_mb=16),
 }
 
 
@@ -266,6 +271,17 @@ def apply_ibm_default_size(state: FormState, *, force: bool) -> FormState:
 def coerce_on_boot_change(state: FormState) -> FormState:
     boot_mode = BootMode(state.boot_mode)
     if boot_mode is BootMode.COMPAQ2:
+        return replace(
+            state,
+            media_type=MediaType.VHD.value,
+            disk_controller=DiskController.MFM.value,
+            disk_format=DiskFormat.FAT12.value,
+            size_text="10M",
+            bios_drive_type="phoenix:1",
+            img_system_format=False,
+            ibm_dos_version=IBMDOSVersion.DOS33.value,
+        )
+    if boot_mode is BootMode.PCDOS3:
         return replace(
             state,
             media_type=MediaType.VHD.value,

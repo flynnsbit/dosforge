@@ -1,22 +1,28 @@
 name: Release Linux bundle
 
-# Triggered when a ``linux-v*`` tag is pushed (or manually via
-# workflow_dispatch). Builds a pip-installable wheel + sdist + a
-# self-contained source tarball with install instructions, and
-# uploads them to a GitHub release named after the tag.
+# Triggered when a unified ``v<X.Y.Z>`` tag is pushed (one release
+# per version, hosting both Linux and Windows assets under the
+# same release).  Was previously ``linux-v*`` (separate Linux
+# release); changed in v0.7.2 per user request to consolidate
+# assets under one release.
 #
-# Linux users get qemu / mtools / 7z / innoextract from their distro
-# (the tarball's INSTALL.md lists the apt/dnf/pacman one-liners). The
-# wheel pulls textual / sv-ttk / py7zr from PyPI.
+# This workflow:
+#   1. Idempotently ensures the v<X.Y.Z> GitHub release exists.
+#   2. Builds a pip-installable wheel + sdist + a self-contained
+#      source tarball with install instructions.
+#   3. Uploads the Linux artifacts to that release with --clobber.
+#
+# The Windows workflow (release.yml) listens on the same tag and
+# uploads its bundles to the same release in parallel.
 
 on:
   push:
     tags:
-      - 'linux-v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to (re)build the release for (e.g. linux-v0.5.0)'
+        description: 'Tag to (re)build the release for (e.g. v0.7.2)'
         required: true
         type: string
 
@@ -38,8 +44,8 @@ jobs:
         id: vars
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          # linux-v0.5.0 -> 0.5.0  (matches the pyproject.toml version)
-          version="${tag#linux-v}"
+          # v0.7.2 -> 0.7.2  (matches pyproject.toml version)
+          version="${tag#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag"          >> "$GITHUB_OUTPUT"
 
@@ -189,24 +195,31 @@ jobs:
           sha256sum "${stage}.tar.gz" dist/*.whl dist/*.tar.gz
           echo "stage_tarball=${stage}.tar.gz" >> "$GITHUB_ENV"
 
-      - name: Create (or recreate) the GitHub release
+      - name: Ensure GitHub release exists (idempotent)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag='${{ steps.vars.outputs.tag }}'
           ver='${{ steps.vars.outputs.version }}'
           notes="releases/${tag}-release-notes.md"
-          title="dosforge ${ver} (Linux)"
+          title="dosforge ${ver}"
 
-          # Re-runnable: delete any pre-existing release for this tag.
-          gh release delete "$tag" --yes --cleanup-tag=false 2>/dev/null || true
-
-          if [ -f "$notes" ]; then
-            gh release create "$tag" --title "$title" --notes-file "$notes"
+          # Single-release model (v0.7.2+): Linux + Windows assets
+          # both upload to the same v<X.Y.Z> release.  Whichever
+          # workflow gets here first creates it; subsequent attempts
+          # see "release already exists" and skip.
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; will upload Linux artifacts to it."
           else
-            gh release create "$tag" --title "$title" --generate-notes
+            if [ -f "$notes" ]; then
+              gh release create "$tag" --title "$title" --notes-file "$notes" \
+                || echo "Release was created concurrently by another workflow."
+            else
+              gh release create "$tag" --title "$title" --generate-notes \
+                || echo "Release was created concurrently by another workflow."
+            fi
+            echo "Release stamped at https://github.com/${{ github.repository }}/releases/tag/$tag"
           fi
-          echo "Release stamped at https://github.com/${{ github.repository }}/releases/tag/$tag"
 
       - name: Upload Linux artifacts to release
         env:

@@ -31,6 +31,7 @@ from .legacy_dos_install import (
     compaq2_profile,
     compaq331_profile,
     msdos33_profile,
+    pcdos3_profile,
     msdos5_profile,
     msdos622_profile,
     msdos71_profile,
@@ -154,6 +155,23 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
         preferred_image_names=("DISK01.IMG", "DISK01.IMA", "DISK1.IMG", "DISK1.IMA"),
         system_file_marker="IO.SYS",
         profile_builder=msdos33_profile,
+    ),
+    # IBM PC-DOS 3.00 (August 1984) — IBM-branded sibling of MS-DOS 3.0,
+    # first hard-disk-aware DOS.  Sources from either a pre-extracted
+    # ``Disk01.img`` in dosassets/pcdos3/ or the WinWorldPC
+    # ``IBM PC-DOS 3.00 (5.25).7z`` archive (auto-extracted via
+    # ``_legacy_dos_archive.extract_legacy_dos_install_archive``).
+    # Marker is IBMBIO.COM (IBM-style system file names).  FAT12 only,
+    # max 16 MiB partition.
+    BootMode.PCDOS3: _LegacyDosInstallDescriptor(
+        label="IBM PC-DOS 3.00",
+        asset_fallback_dirs=("pcdos3",),
+        preferred_image_names=(
+            "Disk01.img", "Disk1.img", "DISK01.IMG", "DISK1.IMG",
+            "disk01.img", "disk1.img",
+        ),
+        system_file_marker="IBMBIO.COM",
+        profile_builder=pcdos3_profile,
     ),
     BootMode.PCDOS71: _LegacyDosInstallDescriptor(
         label="PC-DOS 7.1",
@@ -358,6 +376,7 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
         BootMode.MSDOS622,
         BootMode.MSDOS71,
         BootMode.PCDOS,
+        BootMode.PCDOS3,
         BootMode.PCDOS7,
         BootMode.PCDOS2000,
         BootMode.PCDOS71,
@@ -411,7 +430,7 @@ def _uses_msdos33_filesystem_layout(request: CreateRequest) -> bool:
       0x01 (FAT12, DOS 2.x), and
     - skip mformat (FORMAT C: /S writes its own BPB from scratch).
     """
-    if request.boot_mode in (BootMode.MSDOS33, BootMode.COMPAQ2):
+    if request.boot_mode in (BootMode.MSDOS33, BootMode.COMPAQ2, BootMode.PCDOS3):
         return True
     if (
         request.boot_mode is BootMode.IBM8088
@@ -1235,7 +1254,7 @@ class DiskManager:
             if not _uses_msdos33_filesystem_layout(request):
                 raise ValidationError(
                     "FAT12 on VHD requires boot-mode=msdos33, ibm8088 + --ibm-dos-version dos33, "
-                    "or boot-mode=compaq2 (DOS's own FORMAT C: /S writes the FAT12 BPB)."
+                    "boot-mode=compaq2, or boot-mode=pcdos3 (DOS's own FORMAT C: /S writes the FAT12 BPB)."
                 )
         if request.boot_mode is BootMode.IBM8088:
             if request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12):
@@ -1302,6 +1321,25 @@ class DiskManager:
         ):
             raise ValidationError(
                 "Compaq DOS 2.11 (compaq2) requires FAT12 (DOS 2.x predates FAT16)."
+            )
+        # IBM PC-DOS 3.00 is FAT12-only (FAT16 was added in PC-DOS 3.10)
+        # and caps practical partitions at ~16 MiB.  Larger partitions
+        # need msdos33 (FAT12/16 up to 32 MiB) or msdos331 / compaq331.
+        if (
+            request.boot_mode is BootMode.PCDOS3
+            and request.size_bytes > 16 * 1024 * 1024
+        ):
+            raise ValidationError(
+                "IBM PC-DOS 3.00 (pcdos3) only supports FAT12 partitions up to "
+                "16 MiB. Use msdos33 (FAT12/FAT16<=32MiB) or msdos331 / compaq331 "
+                "for larger partitions."
+            )
+        if (
+            request.boot_mode is BootMode.PCDOS3
+            and request.disk_format is not DiskFormat.FAT12
+        ):
+            raise ValidationError(
+                "IBM PC-DOS 3.00 (pcdos3) requires FAT12 (FAT16 was added in PC-DOS 3.10)."
             )
         legacy_fat16_modes = {
             BootMode.MSDOS331,
@@ -1386,6 +1424,7 @@ class DiskManager:
             BootMode.MSDOS5,
             BootMode.MSDOS622,
             BootMode.PCDOS,
+            BootMode.PCDOS3,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.PCDOS71,
@@ -1917,6 +1956,7 @@ class DiskManager:
             BootMode.MSDOS5,
             BootMode.MSDOS622,
             BootMode.PCDOS,
+            BootMode.PCDOS3,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.PCDOS71,
@@ -1925,7 +1965,7 @@ class DiskManager:
                 "This boot mode is not yet supported on this platform. "
                 "On Windows, supported VHD boot modes are: none, freedos, "
                 "msdos71, msdos33, msdos331, compaq2, compaq331, "
-                "ibm8088 (dos33), msdos5, msdos622, pcdos, pcdos7, "
+                "ibm8088 (dos33), msdos5, msdos622, pcdos, pcdos3, pcdos7, "
                 "pcdos2000, pcdos71."
             )
 
@@ -2162,6 +2202,7 @@ class DiskManager:
                 BootMode.MSDOS622,
                 BootMode.MSDOS71,
                 BootMode.PCDOS,
+                BootMode.PCDOS3,
                 BootMode.PCDOS7,
                 BootMode.PCDOS2000,
                 BootMode.PCDOS71,
@@ -2364,23 +2405,25 @@ class DiskManager:
 
         request.path = target_path
 
-        # Compaq DOS 2.11 special case: the bootable disk01.img sourced
-        # from the WinWorldPC archive is *already* an authentic 1984
-        # Compaq DOS 2.11 360 KB DSDD floppy.  The most authentic IMG
-        # output we can produce is a verbatim copy.  Going through
-        # mformat + custom boot-sector install would produce a less
-        # authentic clone (our boot sector vs Compaq's 1984 boot
-        # sector), and -- as we proved with v0.6.17 -- writing those
-        # bytes onto a hard disk doesn't boot in any modern emulator
-        # because DOS 2.x's HDD boot path depends on Compaq's 1984
-        # BIOS extensions.  Stick to floppy.
-        if request.boot_mode is BootMode.COMPAQ2:
-            if request.floppy_type is not FloppyType.F360K:
+        # Verbatim-copy path for boot modes whose authentic install media
+        # is already a single bootable floppy: just clone the disk01.img
+        # rather than re-FORMAT through the QEMU pipeline.
+        #
+        # * COMPAQ2 — 1984 Compaq MS-DOS 2.11, 360 KB DSDD
+        # * PCDOS3  — 1984 IBM PC-DOS 3.00, 360 KB DSDD
+        verbatim_floppy_modes = {
+            BootMode.COMPAQ2: ("Compaq DOS 2.11 (compaq2)", FloppyType.F360K),
+            BootMode.PCDOS3: ("IBM PC-DOS 3.00 (pcdos3)", FloppyType.F360K),
+        }
+        if request.boot_mode in verbatim_floppy_modes:
+            label, expected_floppy = verbatim_floppy_modes[request.boot_mode]
+            if request.floppy_type is not expected_floppy:
                 raise ValidationError(
-                    "Compaq DOS 2.11 (compaq2) IMG output requires --floppy-type 360k. "
-                    "Other floppy sizes would need a non-authentic re-format."
+                    f"{label} IMG output requires --floppy-type "
+                    f"{expected_floppy.value}.  Other floppy sizes would need a "
+                    "non-authentic re-format."
                 )
-            descriptor = _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.COMPAQ2]
+            descriptor = _LEGACY_DOS_INSTALL_DESCRIPTORS[request.boot_mode]
             assets_dir = self._resolve_legacy_dos_assets_dir(
                 request=request,
                 fallback_dirs=descriptor.asset_fallback_dirs,
@@ -2421,6 +2464,7 @@ class DiskManager:
                 BootMode.MSDOS5,
                 BootMode.MSDOS622,
                 BootMode.PCDOS,
+                BootMode.PCDOS3,
                 BootMode.PCDOS7,
                 BootMode.PCDOS2000,
                 BootMode.COMPAQ331,
@@ -2503,13 +2547,12 @@ class DiskManager:
                 )
             if install_image is None:
                 install_image = extract_pcdos7_install_floppy(boot_assets_dir)
-        elif request.boot_mode is BootMode.COMPAQ2:
-            # COMPAQ2 ships as a single .7z archive containing a 360 KB
-            # disk01.img (the user did a "direct download" of the
-            # WinWorldPC archive rather than pre-extracting).  Auto-
-            # extract via py7zr, cache the result, and use the
-            # bundled disk01.img as the install_image.  Short-circuits
-            # to a raw IMG if the user has already extracted.
+        elif request.boot_mode in (BootMode.COMPAQ2, BootMode.PCDOS3):
+            # COMPAQ2 and PCDOS3 ship as single .7z archives containing
+            # a small (360 KB DSDD) Disk01.img.  Auto-extract via py7zr,
+            # cache the result, and use the bundled IMG as install_image.
+            # Short-circuits to a raw IMG if the user has already
+            # extracted.
             from ._legacy_dos_archive import extract_legacy_dos_install_archive
 
             install_image = extract_legacy_dos_install_archive(boot_assets_dir)
@@ -3426,6 +3469,7 @@ class DiskManager:
             BootMode.MSDOS5,
             BootMode.MSDOS622,
             BootMode.PCDOS,
+            BootMode.PCDOS3,
             BootMode.COMPAQ331,
         }:
             return

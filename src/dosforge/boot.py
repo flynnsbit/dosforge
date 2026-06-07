@@ -417,6 +417,7 @@ def _use_pre_dos5_config_sys(request: "CreateRequest") -> bool:
         BootMode.COMPAQ2,
         BootMode.COMPAQ331,
         BootMode.PCDOS,  # legacy PC-DOS family (pre-PC-DOS 7).
+        BootMode.PCDOS3,
     ):
         return True
     if (
@@ -4297,6 +4298,7 @@ class BootInstaller:
             BootMode.MSDOS5,
             BootMode.MSDOS622,
             BootMode.PCDOS,
+            BootMode.PCDOS3,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.COMPAQ2,
@@ -4380,6 +4382,7 @@ class BootInstaller:
             BootMode.MSDOS5,
             BootMode.MSDOS622,
             BootMode.PCDOS,
+            BootMode.PCDOS3,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.COMPAQ2,

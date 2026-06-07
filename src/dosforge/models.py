@@ -100,6 +100,16 @@ class BootMode(str, Enum):
     # — the descriptor auto-extracts the .7z if no raw IMG is found
     # in dosassets/compaq2/.
     COMPAQ2 = "compaq2"
+    # IBM PC-DOS 3.00 (1984-08-14) — IBM's first hard-disk-aware DOS.
+    # FAT12 only (FAT16 was added in PC-DOS 3.10), max ~16 MiB partition.
+    # Has BPB.hidden_sectors field so HDD boot works on any standard
+    # MFM/IDE BIOS (unlike compaq2 which depends on Compaq 1984 BIOS
+    # extensions).  Sources install media from
+    # ``dosassets/pcdos3/IBM PC-DOS 3.00 (5.25).7z`` (auto-extracted via
+    # py7zr) or pre-extracted ``Disk01.img`` (360 KB DSDD).  Boots on
+    # both IDE and MFM controllers; defaults to MFM since that's the
+    # 1984-authentic hardware target.
+    PCDOS3 = "pcdos3"
     # 4DOS shell overlay (planned, requires --host-dos).  Phase 14F
     # implementation is pending until 4DOS install media is provided.
     # When set, dosforge raises a clear "not yet implemented" message
@@ -583,6 +593,8 @@ class CreateRequest:
         if self.boot_mode is BootMode.MSDOS33:
             return DiskController.MFM
         if self.boot_mode is BootMode.PCDOS:
+            return DiskController.MFM
+        if self.boot_mode is BootMode.PCDOS3:
             return DiskController.MFM
         if (
             self.boot_mode is BootMode.IBM8088

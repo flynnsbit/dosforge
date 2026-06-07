@@ -1,21 +1,27 @@
 name: Release Windows bundle
 
-# Triggered automatically when a tag matching ``windows-v*`` is pushed
-# (mirrors the ``linux-v*`` convention used by release-linux.yml).
-# Two build jobs (full, cli) run in parallel after a tiny
-# create-release job stamps out an empty GitHub release. Each build
-# job uploads its zip to that release with ``gh release upload
-# --clobber``. Total wall-clock time is ~3-4 minutes instead of the
-# 9-minute serial pipeline used previously.
+# Triggered when a unified ``v<X.Y.Z>`` tag is pushed (one release
+# per version, hosting both Linux and Windows assets under the same
+# release).  Was previously ``windows-v*`` (separate Windows
+# release); changed in v0.7.2 per user request to consolidate
+# assets under one release.
+#
+# This workflow:
+#   1. Idempotently ensures the v<X.Y.Z> GitHub release exists.
+#   2. Builds full + cli PyInstaller bundles in parallel (matrix).
+#   3. Uploads both zips to the same release with --clobber.
+#
+# The Linux workflow (release-linux.yml) listens on the same tag
+# and uploads its tarball to the same release in parallel.
 
 on:
   push:
     tags:
-      - 'windows-v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to (re)build the release for (e.g. windows-v0.6.0)'
+        description: 'Tag to (re)build the release for (e.g. v0.7.2)'
         required: true
         type: string
 
@@ -24,8 +30,11 @@ permissions:
 
 jobs:
   # ------------------------------------------------------------------
-  # Stamp out an empty GitHub release so all three build jobs can
-  # upload to it in parallel.  Uses tag-specific notes if present.
+  # Idempotently stamp out the v<X.Y.Z> GitHub release so all build
+  # jobs (Windows full, Windows cli, Linux from release-linux.yml)
+  # can upload to it in parallel.  Whichever workflow runs this step
+  # first creates the release; subsequent attempts see it exists and
+  # no-op.
   # ------------------------------------------------------------------
   create-release:
     runs-on: ubuntu-latest
@@ -44,16 +53,12 @@ jobs:
         id: vars
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          # Strip the ``windows-v`` prefix (e.g. windows-v0.6.0 -> 0.6.0)
-          # so artifact filenames stay aligned with pyproject.toml's
-          # version. Fall back to stripping the bare ``v`` for any
-          # legacy v* tags that might be force-pushed via dispatch.
-          version="${tag#windows-v}"
-          version="${version#v}"
+          # v0.7.2 -> 0.7.2 (matches pyproject.toml)
+          version="${tag#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag"          >> "$GITHUB_OUTPUT"
 
-      - name: Create (or recreate) the GitHub release
+      - name: Ensure GitHub release exists (idempotent)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -61,16 +66,170 @@ jobs:
           notes="releases/${tag}-release-notes.md"
           title="dosforge ${{ steps.vars.outputs.version }}"
 
-          # Make the workflow re-runnable: delete any pre-existing
-          # release for this tag (the tag itself is kept).
-          gh release delete "$tag" --yes --cleanup-tag=false 2>/dev/null || true
-
-          if [ -f "$notes" ]; then
-            gh release create "$tag" --title "$title" --notes-file "$notes"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; Windows jobs will upload to it."
           else
-            gh release create "$tag" --title "$title" --generate-notes
+            if [ -f "$notes" ]; then
+              gh release create "$tag" --title "$title" --notes-file "$notes" \
+                || echo "Release was created concurrently by another workflow."
+            else
+              gh release create "$tag" --title "$title" --generate-notes \
+                || echo "Release was created concurrently by another workflow."
+            fi
+            echo "Release stamped at https://github.com/${{ github.repository }}/releases/tag/$tag"
           fi
-          echo "Release stamped at https://github.com/${{ github.repository }}/releases/tag/$tag"
+
+  # ------------------------------------------------------------------
+  # Two Windows builds in PARALLEL (matrix), each uploads its zip
+  # to the release created above.
+  # ------------------------------------------------------------------
+  build-windows:
+    runs-on: windows-latest
+    needs: create-release
+
+    strategy:
+      fail-fast: false  # one variant failing should not abort the others
+      matrix:
+        variant:
+          - { name: full, spec: 'windows/dosforge.spec',     suffix: '' }
+          - { name: cli,  spec: 'windows/dosforge-cli.spec', suffix: '-cli' }
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 1  # we don't need full history for the build
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+          python -m pip install pyinstaller py7zr zstandard
+
+      - name: Verify dosassets folder skeleton (every mode has a readme.txt)
+        run: python scripts/check-dosassets-readmes.py
+
+      - name: Fetch bundled Windows vendor binaries (QEMU, mtools)
+        run: python scripts/fetch-windows-vendor.py
+
+      - name: Build PyInstaller bundle (${{ matrix.variant.name }})
+        run: python -m PyInstaller ${{ matrix.variant.spec }} --noconfirm
+
+      - name: Smoke test the bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $variant = '${{ matrix.variant.name }}'
+          $bundle = "dist\dosforge"
+          $internal = "$bundle\_internal"
+          $failures = @()
+
+          # Common: bundle must contain dosforge.exe
+          if (-not (Test-Path "$bundle\dosforge.exe")) {
+            $failures += "dosforge.exe missing from bundle"
+          }
+
+          # Variant-specific shape checks
+          $hasTextual = Test-Path "$internal\textual\__init__.py"
+          $hasQemuSys = Test-Path "$internal\vendor\windows\bin\qemu-system-i386.exe"
+          $hasDosboxX = Test-Path "$internal\vendor\windows\bin\dosbox-x\dosbox-x.exe"
+          $hasGuiExe = Test-Path "$bundle\dosforge-gui.exe"
+          switch ($variant) {
+            'full' {
+              if (-not $hasTextual) { $failures += "full bundle missing textual (needed for 'dosforge tui')" }
+              if (-not $hasGuiExe) { $failures += "full bundle missing dosforge-gui.exe" }
+              if (-not $hasQemuSys) { $failures += "full bundle missing qemu-system-i386" }
+              if (-not $hasDosboxX) {
+                $failures += "full bundle missing dosbox-x\dosbox-x.exe (PC-DOS 2000 hydration needs the whole dosbox-x/ subdir)"
+              } else {
+                # Sanity-check that the DOSBox-X support files we need
+                # came across too — without these the EXE will exit on
+                # startup with no useful error in silent mode.
+                $dbxDir = "$internal\vendor\windows\bin\dosbox-x"
+                foreach ($need in @("dosbox-x.reference.conf", "languages")) {
+                  if (-not (Test-Path (Join-Path $dbxDir $need))) {
+                    $failures += "full bundle missing dosbox-x\$need (DOSBox-X won't start without it)"
+                  }
+                }
+              }
+            }
+            'cli' {
+              if ($hasTextual) { $failures += "cli bundle leaked textual" }
+              if ($hasGuiExe) { $failures += "cli bundle should not ship dosforge-gui.exe" }
+              if ($hasQemuSys) { $failures += "cli bundle leaked qemu-system-i386" }
+              if ($hasDosboxX) { $failures += "cli bundle leaked dosbox-x/" }
+            }
+          }
+
+          # qemu-img + mformat MUST be present in every variant.
+          if (-not (Test-Path "$internal\vendor\windows\bin\qemu-img.exe")) {
+            $failures += "qemu-img.exe missing from vendor/"
+          }
+          if (-not (Test-Path "$internal\vendor\windows\bin\mformat.exe")) {
+            $failures += "mformat.exe missing from vendor/"
+          }
+
+          # dosforge.exe --help must work
+          $help = (& $bundle\dosforge.exe --help 2>&1 | Out-String)
+          $helpExit = $LASTEXITCODE
+          if ($helpExit -ne 0 -or -not ($help -match "create")) {
+            $failures += "dosforge.exe --help failed (exit=$helpExit). Output: $help"
+          }
+
+          # dosassets/ folder skeleton must sit next to the EXE so users
+          # can drop install media in without digging into _internal/.
+          # Every mode folder must contain a readme.txt.
+          $dosassetsTop = "$bundle\dosassets"
+          if (-not (Test-Path $dosassetsTop)) {
+            $failures += "$variant bundle missing top-level dosassets/ folder"
+          } else {
+            $modeDirs = Get-ChildItem -LiteralPath $dosassetsTop -Directory -ErrorAction SilentlyContinue
+            if ($modeDirs.Count -lt 25) {
+              $failures += "$variant bundle dosassets/ has only $($modeDirs.Count) mode folders (expected ~29)"
+            }
+            foreach ($d in $modeDirs) {
+              if (-not (Test-Path (Join-Path $d.FullName 'readme.txt'))) {
+                $failures += "$variant bundle dosassets/$($d.Name)/ is missing readme.txt"
+              }
+            }
+          }
+
+          $totalMB = [math]::Round((Get-ChildItem $bundle -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
+          Write-Host "$variant bundle: $totalMB MB"
+
+          if ($failures.Count -gt 0) {
+            Write-Host ""
+            Write-Host "=== SMOKE TEST FAILED ($($failures.Count)) ==="
+            foreach ($f in $failures) { Write-Host "  - $f" }
+            exit 1
+          }
+          exit 0
+
+      - name: Zip the bundle
+        shell: pwsh
+        run: |
+          $artifact = "dosforge-${{ needs.create-release.outputs.version }}${{ matrix.variant.suffix }}-windows-x64.zip"
+          Compress-Archive -Path dist\dosforge\* -DestinationPath $artifact -CompressionLevel Optimal
+          $hash = (Get-FileHash $artifact -Algorithm SHA256).Hash
+          Write-Host "Artifact: $artifact"
+          Write-Host "SHA256:   $hash"
+          "artifact=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload artifact to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = '${{ needs.create-release.outputs.tag }}'
+          gh release upload $tag $env:artifact --clobber
+          Write-Host "Uploaded $env:artifact to $tag"
 
   # ------------------------------------------------------------------
   # Three Windows builds in PARALLEL (matrix), each uploads its zip
