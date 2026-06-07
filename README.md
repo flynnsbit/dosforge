@@ -182,14 +182,14 @@ sdist, and a complete `dosassets/` skeleton.  Download from the latest
 ```bash
 # 1. Grab and extract the latest bundle
 curl -L -o dosforge-linux.tar.gz \
-    https://github.com/flynnsbit/dosforge/releases/download/linux-v0.7.0/dosforge-0.7.0-linux.tar.gz
+    https://github.com/flynnsbit/dosforge/releases/download/linux-v0.7.1/dosforge-0.7.1-linux.tar.gz
 tar xzf dosforge-linux.tar.gz
-cd dosforge-0.7.0-linux
+cd dosforge-0.7.1-linux
 
 # 2. Install the Python package into a venv
 python3 -m venv .venv
 . .venv/bin/activate
-pip install ./dosforge-0.7.0-py3-none-any.whl
+pip install ./dosforge-0.7.1-py3-none-any.whl
 
 # 3. Install the system tools dosforge shells out to
 sudo apt install qemu-system-x86 qemu-utils nbd-client \
@@ -702,8 +702,8 @@ Manual dry-run check:
 
 ## Version
 
-Current: **v0.7.0** (controller-first VHD organization — see
-[release notes](releases/windows-v0.7.0-release-notes.md) for the
+Current: **v0.7.1** (controller-first VHD organization — see
+[release notes](releases/windows-v0.7.1-release-notes.md) for the
 v0.6.x → v0.7.0 migration table).
 
 Release tags follow `linux-v<X.Y.Z>` / `windows-v<X.Y.Z>` naming.
