@@ -1,8 +1,10 @@
 # dosforge
 
-`dosforge` is a DOS-focused image utility that runs on **Linux** (with a
-full Textual TUI + kernel-mount workflow) and **Windows** (CLI-first,
-no admin, no sudo, no kernel modules — single portable `dosforge.exe`).
+`dosforge` is a DOS-focused image utility that runs on **Linux**
+(with a full Textual TUI + kernel-mount workflow) and **Windows**
+(CLI + a Windows 11-styled **tkinter GUI with a wizard-like flow** —
+no admin, no sudo, no kernel modules; single portable
+`dosforge.exe` / `dosforge-gui.exe` bundle).
 
 It can create, browse, and modify:
 
