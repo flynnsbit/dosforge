@@ -1182,30 +1182,36 @@ class DiskManager:
         if request.bios_drive_type is not None:
             self._validate_bios_drive_type_request(request)
 
-        validate_size_for_format(request.size_bytes, request.disk_format)
-        # Compaq DOS 2.11 fundamentally cannot boot from a hard disk in
-        # modern emulators: its 1984 MBR/VBR rely on Compaq-specific
-        # BIOS extensions that 86Box, DOSBox-X, PCem, etc. don't
-        # emulate -- even an authentic Compaq FDISK + FORMAT C: /S
-        # install (verified in 86Box) hangs at a blinking cursor.
-        # Restrict to floppy IMG output (which is also the
-        # 1984-authentic medium for Compaq DOS 2.11 on a Compaq Plus
-        # / DeskPro).  Check this BEFORE the generic FAT12-on-VHD
-        # check so the user sees the actionable compaq2-specific
-        # error message instead of the generic MartyPC suggestion.
+        # Compaq DOS 2.11 fundamentally cannot boot from a hard disk
+        # in IDE/AT-class emulators: its 1984 MBR/VBR rely on
+        # Compaq-specific BIOS extensions that 86Box / DOSBox-X /
+        # PCem don't emulate.  The ONE working VHD path is the
+        # MartyPC Xebec Type 1 (10 MiB MFM) target, which uses an
+        # XT-class WD1002A-style controller + ST-225-style CHS
+        # geometry + track-aligned partition (start LBA = spt)
+        # exactly like a real 1984 Compaq Plus / DeskPro install.
+        # Anything else is rejected with an actionable error.  Check
+        # FIRST -- before validate_size_for_format -- so the user
+        # picking MartyPC AT/xtide gets the actionable compaq2-specific
+        # message instead of a generic FAT12 size cap error.
         if (
             request.boot_mode is BootMode.COMPAQ2
             and request.media_type is MediaType.VHD
+            and not (
+                request.machine_target is MachineTarget.MARTYPC_XEBEC
+                and request.martypc_xebec_drive_type is MartyPCXebecDriveType.TYPE1
+            )
         ):
             raise ValidationError(
-                "Compaq DOS 2.11 (compaq2) cannot boot from a VHD on any modern "
-                "emulator -- its 1984 boot code depends on Compaq BIOS extensions "
-                "that 86Box / DOSBox-X / PCem don't provide.  Use --media-type img "
-                "--floppy-type 360k to produce a bootable 360 KiB DSDD floppy "
-                "(the authentic 1984 Compaq DOS 2.11 medium).  For a hard-disk-"
-                "compatible DOS, use compaq331 (Compaq DOS 3.31, FAT16B, up to "
-                "504 MiB) or msdos5 / msdos622."
+                "Compaq DOS 2.11 (compaq2) on VHD requires --machine-target "
+                "martypc-xebec --martypc-xebec-drive-type type1 (10 MiB MFM, the "
+                "1984-authentic Compaq HDD target).  For IDE/AT-class machines, "
+                "DOS 2.11's boot code depends on Compaq BIOS extensions no modern "
+                "emulator provides -- use --media-type img --floppy-type 360k "
+                "instead, or pick compaq331 / msdos5 / msdos622 for a "
+                "hard-disk-compatible DOS."
             )
+        validate_size_for_format(request.size_bytes, request.disk_format)
         if request.disk_format is DiskFormat.FAT12:
             # FAT12 on VHD is a narrow capability: only the MartyPC
             # Xebec Type 1 (10 MiB MFM) preset is supported today, with
@@ -1223,8 +1229,8 @@ class DiskManager:
                 )
             if not _uses_msdos33_filesystem_layout(request):
                 raise ValidationError(
-                    "FAT12 on VHD requires boot-mode=msdos33 or ibm8088 + --ibm-dos-version dos33 "
-                    "(DOS's own FORMAT C: /S writes the FAT12 BPB)."
+                    "FAT12 on VHD requires boot-mode=msdos33, ibm8088 + --ibm-dos-version dos33, "
+                    "or boot-mode=compaq2 (DOS's own FORMAT C: /S writes the FAT12 BPB)."
                 )
         if request.boot_mode is BootMode.IBM8088:
             if request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12):

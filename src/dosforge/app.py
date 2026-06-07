@@ -485,7 +485,7 @@ class DosForgeApp(App[None]):
                                             BootMode.PCDOS71.value,
                                         ),
                                         (
-                                            "Compaq DOS 2.11 floppy (5.25-360k, IMG only)",
+                                            "Compaq DOS 2.11 (360k floppy or MartyPC Xebec Type 1 MFM)",
                                             BootMode.COMPAQ2.value,
                                         ),
                                         ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),

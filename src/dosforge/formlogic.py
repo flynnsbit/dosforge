@@ -487,10 +487,22 @@ def apply_ibm_default_size(state: FormState, *, force: bool) -> FormState:
 
 
 def coerce_on_boot_change(state: FormState) -> FormState:
-    # Compaq DOS 2.11 only ships as a 360 KB DSDD floppy IMG -- its
-    # 1984 HDD boot code depends on Compaq BIOS extensions that no
-    # modern emulator provides.  Snap to IMG + FAT12 + 360k floppy.
+    # Compaq DOS 2.11 has two valid paths:
+    #   * MartyPC Xebec Type 1 (10 MiB MFM): VHD + FAT12 + XT-class MBR
+    #     -- the only HDD path that works because it uses an authentic
+    #     1984-era MFM controller emulation.
+    #   * Floppy IMG (360 KB DSDD): the 1984-authentic medium.  Default
+    #     when no MartyPC Xebec target is selected.
     if BootMode(state.boot_mode) is BootMode.COMPAQ2:
+        if MachineTarget(state.machine_target) is MachineTarget.MARTYPC_XEBEC:
+            state = replace(
+                state,
+                media_type=MediaType.VHD.value,
+                disk_format=DiskFormat.FAT12.value,
+                martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE1.value,
+                img_system_format=False,
+            )
+            return state
         state = replace(
             state,
             media_type=MediaType.IMG.value,

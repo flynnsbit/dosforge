@@ -3,22 +3,32 @@ Compaq DOS 2.x install media
 
 dosassets/compaq2/
 
-dosforge's --boot-mode=compaq2 produces an **authentic 1984 Compaq
-DOS 2.11 360 KiB DSDD bootable floppy IMG** — a verbatim copy of
-the original WinWorldPC ``disk01.img`` from the Microsoft MS-DOS
-2.11 [Compaq OEM] release.
+dosforge's --boot-mode=compaq2 produces a bootable Compaq DOS 2.11
+disk in one of two layouts:
 
-**IMG only — VHD output is intentionally unsupported.**  Compaq
-DOS 2.11's 1984 MBR / VBR boot path depends on Compaq-specific
-BIOS extensions that no modern emulator (86Box, DOSBox-X, PCem)
-provides.  Even an authentic Compaq FDISK + FORMAT C: /S install
-performed inside 86Box hangs at a blinking cursor after sector-0
-chainload.  This was verified against real Compaq DOS 2.11 FDISK
-output (slot-4 partition entry, firstLBA=1, OEM='CCC  2.1' VBR).
-For a hard-disk-compatible DOS, use ``--boot-mode=compaq331``
-(Compaq DOS 3.31, FAT16B, up to 504 MiB) or ``msdos5`` / ``msdos622``.
+1. **Floppy IMG (default)** -- an authentic 1984 Compaq DOS 2.11
+   360 KiB DSDD bootable floppy, verbatim copy of the original
+   WinWorldPC ``disk01.img``.  Boots in any 86Box / DOSBox-X
+   machine with a 5.25" 360k or 1.2M drive.
 
-Example build command:
+2. **MartyPC Xebec Type 1 VHD** -- a 10 MiB MFM/Xebec hard-disk
+   image with an XT-class MBR + track-aligned FAT12 partition,
+   matching how a real 1984 Compaq Plus or DeskPro presented its
+   HDD.  Boots in **MartyPC** with the Xebec Type 1 (10 MiB)
+   preset.  Other emulators (86Box AT-class IDE, DOSBox-X) cannot
+   boot Compaq DOS 2.11 from HDD because they lack the
+   Compaq-specific 1984 BIOS extensions.
+
+   Build command:
+
+     dosforge create \\
+         --media-type vhd --boot-mode compaq2 \\
+         --format fat12 \\
+         --machine-target martypc-xebec \\
+         --martypc-xebec-drive-type type1 \\
+         --path C:\\my-vhds\\compaq2-xebec.vhd
+
+Floppy IMG build command:
 
   dosforge create \\
       --media-type img --boot-mode compaq2 \\

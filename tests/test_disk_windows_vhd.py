@@ -309,11 +309,11 @@ def test_windows_vhd_pipeline_accepts_pcdos2000(tmp_path: Path):
         )
 
 
-def test_windows_vhd_pipeline_rejects_compaq2(tmp_path: Path):
-    """Compaq DOS 2.11 (v0.6.18) is IMG-only.  The unsupported-mode
-    gate now explicitly rejects VHD output with a clear error pointing
-    at ``--media-type img --floppy-type 360k`` — its 1984 boot code
-    depends on Compaq BIOS extensions no modern emulator provides.
+def test_windows_vhd_pipeline_rejects_compaq2_on_at_class(tmp_path: Path):
+    """Compaq DOS 2.11 (v0.6.19) on plain VHD (IDE/AT) is still rejected
+    with an actionable error pointing at the new MartyPC Xebec Type 1
+    path or the floppy IMG fallback.  Its 1984 boot code depends on
+    Compaq BIOS extensions only the Xebec MFM controller path matches.
     """
     target = tmp_path / "compaq2.vhd"
     request = _basic_request(
@@ -328,8 +328,8 @@ def test_windows_vhd_pipeline_rejects_compaq2(tmp_path: Path):
         manager.create_and_prepare(request)
     message = str(excinfo.value)
     assert "compaq2" in message.lower()
-    assert "img" in message.lower()
-    assert "360" in message
+    assert "martypc-xebec" in message.lower()
+    assert "type1" in message.lower()
 
 
 def test_windows_vhd_pipeline_copies_custom_payload(tmp_path: Path):
