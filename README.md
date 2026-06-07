@@ -172,42 +172,58 @@ Windows: all tools are bundled inside the PyInstaller distribution
 
 ### Linux
 
-#### Option A — Release bundle (recommended)
-
-Each Linux release ships a self-contained tarball with the wheel, the
-sdist, and a complete `dosassets/` skeleton.  Download from the latest
-`linux-v*` release on
-[GitHub Releases](https://github.com/flynnsbit/dosforge/releases).
+#### Option A — One-line installer (recommended)
 
 ```bash
-# 1. Grab and extract the latest bundle
-curl -L -o dosforge-linux.tar.gz \
-    https://github.com/flynnsbit/dosforge/releases/download/linux-v0.7.1/dosforge-0.7.1-linux.tar.gz
-tar xzf dosforge-linux.tar.gz
-cd dosforge-0.7.1-linux
+curl -fsSL https://raw.githubusercontent.com/flynnsbit/dosforge/main/scripts/install.sh | bash
+```
 
-# 2. Install the Python package into a venv
-python3 -m venv .venv
-. .venv/bin/activate
-pip install ./dosforge-0.7.1-py3-none-any.whl
+That's it.  The installer:
 
-# 3. Install the system tools dosforge shells out to
-sudo apt install qemu-system-x86 qemu-utils nbd-client \
-    mtools p7zip-full innoextract python3-tk          # Debian / Ubuntu
-# or
-sudo dnf install qemu-system-x86 qemu-img nbd mtools \
-    p7zip p7zip-plugins innoextract python3-tkinter   # Fedora / RHEL
-# or
-sudo pacman -S qemu-base qemu-img nbd mtools p7zip \
-    innoextract tk                                    # Arch
+1. Detects your distro (Debian/Ubuntu/Mint/Pop/Fedora/RHEL/Arch/openSUSE)
+   and installs the system tools dosforge shells out to
+   (`qemu-system-x86`, `mtools`, `p7zip`, `innoextract`, etc.) via your
+   native package manager.  Will prompt for sudo.
+2. Downloads the **latest** dosforge release tarball from
+   [GitHub Releases](https://github.com/flynnsbit/dosforge/releases/latest)
+   — no version pin, always grabs whatever's current.
+3. Creates an isolated venv under
+   `~/.local/share/dosforge/<version>/venv` (multiple versions can
+   coexist; `~/.local/share/dosforge/current` is a symlink to the
+   most recently installed).
+4. Symlinks `~/.local/bin/dosforge` so it's on your `PATH` after the
+   first install (if `~/.local/bin` isn't on your `PATH` already,
+   the installer warns you and shows what to add to your shell rc).
+5. Hydrates the `~/.local/share/dosforge/dosassets/` folder
+   skeleton (one folder + `readme.txt` per supported DOS mode).
+6. Smoke-tests `dosforge --help` before finishing.
 
-# 4. Materialize the dosassets/ folder skeleton (one folder + readme.txt
-#    per supported DOS mode). Defaults to ~/.local/share/dosforge/dosassets/.
-dosforge init-assets
+Want to review the script before running it?
 
-# 5. Verify
-dosforge where-assets   # prints the dosassets resolution order
-dosforge --help
+```bash
+curl -fsSL https://raw.githubusercontent.com/flynnsbit/dosforge/main/scripts/install.sh -o install-dosforge.sh
+less install-dosforge.sh   # review
+bash install-dosforge.sh
+```
+
+Useful flags (pass after `bash install-dosforge.sh`):
+
+| Flag | Effect |
+|---|---|
+| `--no-system-deps` | Skip the `apt`/`dnf`/`pacman` step (use if you've already got qemu/mtools/etc. installed) |
+| `--no-init-assets` | Skip the `dosforge init-assets` step |
+| `--no-symlink` | Skip the `~/.local/bin/dosforge` symlink |
+| `--prefix DIR` | Use DIR as the install root (default: `~/.local/share/dosforge`) |
+| `--tag v0.7.2` | Install a specific tag instead of the latest |
+| `--keep-tarball` | Keep the downloaded `.tar.gz` after install |
+
+After install:
+
+```bash
+dosforge --help              # full reference
+dosforge create --help       # create command reference
+dosforge where-assets        # show dosassets resolution order
+dosforge fetch-pcdos71-assets   # download IBM PC-DOS 7.1 from archive.org
 ```
 
 #### Option B — From source (developers)
@@ -219,7 +235,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .[dev]
 
-# System tools (same one-liner as Option A, step 3)
+# System tools (same packages the installer above would pull in)
 sudo apt install qemu-system-x86 qemu-utils nbd-client \
     mtools p7zip-full innoextract python3-tk
 ```
@@ -702,9 +718,16 @@ Manual dry-run check:
 
 ## Version
 
-Current: **v0.7.1** (controller-first VHD organization — see
-[release notes](releases/windows-v0.7.1-release-notes.md) for the
-v0.6.x → v0.7.0 migration table).
+dosforge tags follow `v<X.Y.Z>` (single combined tag — was
+`linux-v<X.Y.Z>` + `windows-v<X.Y.Z>` before v0.7.2).  Every release
+produces one GitHub release with all platforms' assets attached:
 
-Release tags follow `linux-v<X.Y.Z>` / `windows-v<X.Y.Z>` naming.
-The Linux + Windows releases are version-locked (same major/minor/patch).
+- `dosforge-<X.Y.Z>-linux.tar.gz` — Linux bundle (wheel + sdist + installer)
+- `dosforge-<X.Y.Z>-py3-none-any.whl` — Linux pip wheel
+- `dosforge-<X.Y.Z>-windows-x64.zip` — Windows full bundle (CLI + GUI + DOSBox-X + QEMU)
+- `dosforge-<X.Y.Z>-cli-windows-x64.zip` — Windows CLI-only bundle
+
+Browse the latest release at
+[github.com/flynnsbit/dosforge/releases/latest](https://github.com/flynnsbit/dosforge/releases/latest)
+or grab specific release notes from
+[`releases/v<X.Y.Z>-release-notes.md`](releases/).

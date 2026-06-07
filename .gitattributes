@@ -1,0 +1,6 @@
+# Force LF line endings on shell scripts and YAML so they work after
+# Windows checkouts without surprising bash/Actions parsers.
+*.sh text eol=lf
+*.bash text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
