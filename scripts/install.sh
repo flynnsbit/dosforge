@@ -302,6 +302,38 @@ main() {
             warn "Add this to your shell rc (~/.bashrc, ~/.zshrc, etc.):"
             warn "    export PATH=\"\$HOME/.local/bin:\$PATH\""
         fi
+
+        # Sanity check: confirm `dosforge` on PATH resolves to OUR
+        # symlink.  If another `dosforge` from a previous pipx /
+        # global pip / asdf / mise install is taking priority, the
+        # user will run a stale binary and wonder why new features
+        # like ``--version`` are missing.  Print a clear diagnostic.
+        local active_dosforge
+        active_dosforge="$(command -v dosforge 2>/dev/null || true)"
+        if [[ -n "$active_dosforge" ]]; then
+            # Resolve the symlink chain so we can compare absolute paths.
+            local active_resolved
+            active_resolved="$(readlink -f "$active_dosforge" 2>/dev/null || echo "$active_dosforge")"
+            local installed_resolved
+            installed_resolved="$(readlink -f "${venv}/bin/dosforge" 2>/dev/null || echo "${venv}/bin/dosforge")"
+            if [[ "$active_resolved" != "$installed_resolved" ]]; then
+                warn "Another 'dosforge' is taking priority on your PATH:"
+                warn "    $(command -v dosforge) -> $active_resolved"
+                warn "    (this install: $installed_resolved)"
+                warn ""
+                warn "Common culprits:"
+                warn "  - pipx install dosforge from before this installer existed"
+                warn "    -> fix:  pipx uninstall dosforge"
+                warn "  - global 'pip install --user dosforge' on a different Python"
+                warn "    -> fix:  pip uninstall dosforge  (run with the offending Python)"
+                warn "  - mise/asdf-managed shim ahead of ~/.local/bin on PATH"
+                warn "    -> fix:  move 'export PATH=\"\$HOME/.local/bin:\$PATH\"' AFTER"
+                warn "             the mise/asdf shim line in your shell rc"
+                warn ""
+                warn "Until that's fixed, run the installed version directly:"
+                warn "    ${venv}/bin/dosforge --version"
+            fi
+        fi
     fi
 
     if (( DO_INIT_ASSETS )); then
