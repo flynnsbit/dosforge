@@ -29,7 +29,7 @@ from textual.widgets import (
     TabPane,
 )
 from textual.widgets._directory_tree import DirEntry
-from textual.widgets._select import SelectCurrent
+from textual.widgets._select import SelectCurrent, SelectOverlay
 from textual import on as _textual_on
 
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -63,71 +63,76 @@ class SingleClickSelect(Select):
     settles focus, the second runs the Toggle.  We open the overlay
     eagerly on ``MouseDown`` so it appears on the first press.
 
-    Three race conditions with the parent ``Select``'s built-in
-    behavior all needed handling:
+    **Root cause of the v0.7.5–v0.7.8 close-the-open-dropdown bug:**
+    the previous patches all assumed the event order on the *second*
+    click was ``MouseDown → Toggle``.  Empirical tracing with
+    ``Pilot.click`` shows the real order is::
 
-    1. **Open race (v0.7.5 patch attempted).**  ``MouseDown`` opens
-       the overlay, then synthesized ``Click`` posts
-       ``SelectCurrent.Toggle``, then the parent's flip handler does
-       ``expanded = not expanded`` — collapsing the menu we just
-       opened.
+        SelectOverlay loses focus
+        → SelectOverlay.Dismiss(lost_focus=True) handled by parent
+        → self.expanded = False (and ``_watch_expanded(False)`` fires)
+        → MouseDown delivered to us, sees ``expanded == False``
+        → our handler "helpfully" calls ``action_show_overlay()`` →
+          reopens the dropdown that the user just clicked closed
+        → SelectCurrent.Toggle arrives, our handler sees the
+          "just opened on MouseDown" flag and leaves expanded True
+        → dropdown stays open forever.
 
-    2. **Close-via-blur race (v0.7.7 patch attempted).**  When the
-       Select had to gain focus from elsewhere, clicking the chevron
-       caused the overlay to lose focus first
-       (``SelectOverlay.Dismiss(lost_focus=True)`` → parent's dismiss
-       handler sets ``expanded=False``), then ``SelectCurrent.Toggle``
-       fired, then the parent's flip then did ``not False = True``
-       and re-opened the dropdown.
-
-    3. **Close-without-blur race (v0.7.8 actual fix).**  When the
-       Select widget *already* had focus (because user previously
-       interacted with it), clicking the chevron does NOT shift
-       focus, so the overlay's blur-dismiss never fires.  In that
-       case the v0.7.7 "always prevent_default + don't touch state"
-       approach left ``expanded=True`` after the click — dropdown
-       stayed open.
-
-    The fix uses an explicit "MouseDown just opened me" flag so the
-    Toggle handler can distinguish the open-on-first-click case
-    (keep open) from the click-already-open case (force close):
-
-    * ``_on_mouse_down`` only opens when ``not self.expanded`` and
-      sets the flag.  Closing is never done here.
-    * The Toggle handler always blocks the parent's flip; if the
-      flag is set it just resets the flag (MouseDown did the open
-      work).  Otherwise it explicitly closes the overlay — which
-      handles both the focused-and-clicked-chevron case (no blur
-      dismiss to do it for us) and the blur-dismiss-already-fired
-      case (idempotent: just sets ``expanded=False`` again).
+    Fix: record the timestamp of every blur-driven Dismiss; if a
+    ``MouseDown`` lands on us within a few milliseconds of one, the
+    user is clicking us to close the already-open dropdown (the blur
+    dismiss closed it for us) so we must *not* re-open in
+    ``MouseDown``.
 
     Subclass-only: drop-in replacement for ``Select``.
     """
 
     _just_opened_on_mouse_down: bool = False
+    _last_blur_dismiss_monotonic: float = 0.0
+    _BLUR_DISMISS_GRACE_SECONDS: float = 0.15
+
+    @_textual_on(SelectOverlay.Dismiss)
+    def _track_blur_dismiss(self, event: SelectOverlay.Dismiss) -> None:
+        # Record the time of every blur-driven dismiss.  The parent
+        # class's own ``@on(SelectOverlay.Dismiss)`` handler still
+        # runs after this one and sets ``expanded = False`` — we do
+        # NOT call ``event.prevent_default()`` here.  We only need
+        # the timestamp so the next ``MouseDown`` can recognize that
+        # the click landing on us caused the blur-dismiss and avoid
+        # the otherwise-immediate re-open.
+        if getattr(event, "lost_focus", False):
+            self._last_blur_dismiss_monotonic = time.monotonic()
 
     def _on_mouse_down(self, event) -> None:
-        # Only opens; never closes.
+        # A blur-driven dismiss that fired in the last few ms was
+        # almost certainly caused by this same click landing on us
+        # (focus shifted off the overlay before MouseDown reached
+        # us).  In that case the user clicked to close the dropdown
+        # — the parent's dismiss handler did the close for us, so
+        # don't re-open here.
+        if (
+            time.monotonic() - self._last_blur_dismiss_monotonic
+            < self._BLUR_DISMISS_GRACE_SECONDS
+        ):
+            self._last_blur_dismiss_monotonic = 0.0
+            return
+        # Otherwise: open on the first MouseDown.
         if not self.expanded:
             self.action_show_overlay()
             self._just_opened_on_mouse_down = True
 
     @_textual_on(SelectCurrent.Toggle)
     def _single_click_toggle(self, event: SelectCurrent.Toggle) -> None:
-        # Always block the parent's ``expanded = not expanded`` flip
-        # to avoid the open-race and blur-close races (see docstring).
+        # Always block the parent's ``expanded = not expanded`` flip.
+        # MouseDown above already put us in the right state.
         event.stop()
         event.prevent_default()
         if self._just_opened_on_mouse_down:
-            # MouseDown just opened the overlay.  Keep it open.
             self._just_opened_on_mouse_down = False
             return
-        # MouseDown was a no-op (dropdown was already expanded).  The
-        # user is explicitly toggling closed -- force-close here.
-        # This also handles the focused-and-clicked-chevron case
-        # where overlay-blur-dismiss never fires (no focus shift),
-        # and is idempotent if it did fire (expanded already False).
-        self.expanded = False
+        # MouseDown was a no-op (because a blur-dismiss had already
+        # closed the overlay before we got the MouseDown).
+        # ``expanded`` is already False at this point — nothing to do.
 
 
 _DOS_INSTALL_PROFILE_OPTIONS = [
