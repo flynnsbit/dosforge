@@ -1183,31 +1183,49 @@ class DiskManager:
             self._validate_bios_drive_type_request(request)
 
         validate_size_for_format(request.size_bytes, request.disk_format)
+        # Compaq DOS 2.11 fundamentally cannot boot from a hard disk in
+        # modern emulators: its 1984 MBR/VBR rely on Compaq-specific
+        # BIOS extensions that 86Box, DOSBox-X, PCem, etc. don't
+        # emulate -- even an authentic Compaq FDISK + FORMAT C: /S
+        # install (verified in 86Box) hangs at a blinking cursor.
+        # Restrict to floppy IMG output (which is also the
+        # 1984-authentic medium for Compaq DOS 2.11 on a Compaq Plus
+        # / DeskPro).  Check this BEFORE the generic FAT12-on-VHD
+        # check so the user sees the actionable compaq2-specific
+        # error message instead of the generic MartyPC suggestion.
+        if (
+            request.boot_mode is BootMode.COMPAQ2
+            and request.media_type is MediaType.VHD
+        ):
+            raise ValidationError(
+                "Compaq DOS 2.11 (compaq2) cannot boot from a VHD on any modern "
+                "emulator -- its 1984 boot code depends on Compaq BIOS extensions "
+                "that 86Box / DOSBox-X / PCem don't provide.  Use --media-type img "
+                "--floppy-type 360k to produce a bootable 360 KiB DSDD floppy "
+                "(the authentic 1984 Compaq DOS 2.11 medium).  For a hard-disk-"
+                "compatible DOS, use compaq331 (Compaq DOS 3.31, FAT16B, up to "
+                "504 MiB) or msdos5 / msdos622."
+            )
         if request.disk_format is DiskFormat.FAT12:
-            # FAT12 on VHD is a narrow capability:
-            #   * MartyPC Xebec Type 1 (10 MiB MFM) preset with MS-DOS 3.30
-            #     (msdos33) or IBM 8088 + DOS33 install, OR
-            #   * Compaq DOS 2.11 (compaq2) — DOS 2.x predates FAT16
-            #     entirely so FAT12 is its only option (capped at 16 MiB
-            #     elsewhere in this validator).
+            # FAT12 on VHD is a narrow capability: only the MartyPC
+            # Xebec Type 1 (10 MiB MFM) preset is supported today, with
+            # an MS-DOS 3.30 (msdos33) or IBM 8088 + DOS33 install.
             # Anywhere else we'd need a hard-disk-aware FAT12 boot
             # sector / SYS workflow we don't currently produce.
-            if request.boot_mode is not BootMode.COMPAQ2:
-                if request.machine_target is not MachineTarget.MARTYPC_XEBEC:
-                    raise ValidationError(
-                        "FAT12 on VHD is only supported with the MartyPC Xebec Type 1 (10 MiB) preset "
-                        "or boot-mode=compaq2 (Compaq DOS 2.11)."
-                    )
-                if request.martypc_xebec_drive_type is not MartyPCXebecDriveType.TYPE1:
-                    raise ValidationError(
-                        "FAT12 on VHD is only supported with MartyPC Xebec Type 1 (10 MiB) "
-                        "or boot-mode=compaq2. Pick FAT16 for Xebec Type 2 / 13 / 16."
-                    )
-                if not _uses_msdos33_filesystem_layout(request):
-                    raise ValidationError(
-                        "FAT12 on VHD requires boot-mode=msdos33, ibm8088 + --ibm-dos-version dos33, "
-                        "or boot-mode=compaq2 (DOS's own FORMAT C: /S writes the FAT12 BPB)."
-                    )
+            if request.machine_target is not MachineTarget.MARTYPC_XEBEC:
+                raise ValidationError(
+                    "FAT12 on VHD is only supported with the MartyPC Xebec Type 1 (10 MiB) preset."
+                )
+            if request.martypc_xebec_drive_type is not MartyPCXebecDriveType.TYPE1:
+                raise ValidationError(
+                    "FAT12 on VHD is only supported with MartyPC Xebec Type 1 (10 MiB). "
+                    "Pick FAT16 for Xebec Type 2 / 13 / 16."
+                )
+            if not _uses_msdos33_filesystem_layout(request):
+                raise ValidationError(
+                    "FAT12 on VHD requires boot-mode=msdos33 or ibm8088 + --ibm-dos-version dos33 "
+                    "(DOS's own FORMAT C: /S writes the FAT12 BPB)."
+                )
         if request.boot_mode is BootMode.IBM8088:
             if request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12):
                 raise ValidationError(
@@ -1255,7 +1273,9 @@ class DiskManager:
                 "for larger partitions."
             )
         # Compaq DOS 2.11 (and DOS 2.x in general) predate FAT16 entirely
-        # and address at most ~16 MiB via FAT12. Cap accordingly.
+        # and address at most ~16 MiB via FAT12.  Cap accordingly.  (This
+        # check is now mostly moot since VHD is blocked above, but keep
+        # it for any future IMG-on-hard-disk experiments.)
         if (
             request.boot_mode is BootMode.COMPAQ2
             and request.size_bytes > 16 * 1024 * 1024
@@ -2465,6 +2485,48 @@ class DiskManager:
                 raise ValidationError(f"IMG already exists: {target_path}")
 
         request.path = target_path
+
+        # Compaq DOS 2.11 special case: the bootable disk01.img sourced
+        # from the WinWorldPC archive is *already* an authentic 1984
+        # Compaq DOS 2.11 360 KB DSDD floppy.  The most authentic IMG
+        # output we can produce is a verbatim copy.  Going through
+        # mformat + custom boot-sector install would produce a less
+        # authentic clone (our boot sector vs Compaq's 1984 boot
+        # sector), and -- as we proved with v0.6.17 -- writing those
+        # bytes onto a hard disk doesn't boot in any modern emulator
+        # because DOS 2.x's HDD boot path depends on Compaq's 1984
+        # BIOS extensions.  Stick to floppy.
+        if request.boot_mode is BootMode.COMPAQ2:
+            if request.floppy_type is not FloppyType.F360K:
+                raise ValidationError(
+                    "Compaq DOS 2.11 (compaq2) IMG output requires --floppy-type 360k. "
+                    "Other floppy sizes would need a non-authentic re-format."
+                )
+            descriptor = _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.COMPAQ2]
+            assets_dir = self._resolve_legacy_dos_assets_dir(
+                request=request,
+                fallback_dirs=descriptor.asset_fallback_dirs,
+                label=descriptor.label,
+            )
+            from ._legacy_dos_archive import extract_legacy_dos_install_archive
+            disk01 = extract_legacy_dos_install_archive(assets_dir)
+            shutil.copyfile(disk01, target_path)
+            custom_payload = self._resolve_custom_payload_path(request)
+            if custom_payload is not None:
+                if self.backend.supports_kernel_mount:
+                    self._copy_custom_payload_to_filesystem(
+                        partition_device=str(target_path),
+                        source_dir=custom_payload,
+                        boot_mode=request.boot_mode,
+                    )
+                else:
+                    self._copy_custom_payload_to_img_via_mtools(
+                        image_path=target_path,
+                        source_dir=custom_payload,
+                        boot_mode=request.boot_mode,
+                    )
+            return
+
         assets = None
         if request.img_system_format and request.boot_mode is not BootMode.NONE:
             assets = self.boot_resolver.resolve(request)

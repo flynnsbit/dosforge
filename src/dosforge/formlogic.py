@@ -332,8 +332,11 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
     BootMode.PCDOS2000: _BootMediaRule(
         allowed_formats=frozenset({DiskFormat.FAT12, DiskFormat.FAT16}),
     ),
-    # Microsoft MS-DOS 2.11 (Compaq OEM): FAT12 only, 16 MiB partition cap
-    # (DOS 2.x predates FAT16 entirely).
+    # Microsoft MS-DOS 2.11 (Compaq OEM): IMG-only (360 KB DSDD
+    # floppy).  HDD boot impossible on modern emulators -- see
+    # _validate_create_request for the diagnostic + recommendation.
+    # FAT12 listed here so the form's media-type tabs surface a sane
+    # default; the VHD path is blocked at validation time.
     BootMode.COMPAQ2: _BootMediaRule(
         allowed_formats=frozenset({DiskFormat.FAT12}), max_mb=16,
     ),
@@ -484,6 +487,18 @@ def apply_ibm_default_size(state: FormState, *, force: bool) -> FormState:
 
 
 def coerce_on_boot_change(state: FormState) -> FormState:
+    # Compaq DOS 2.11 only ships as a 360 KB DSDD floppy IMG -- its
+    # 1984 HDD boot code depends on Compaq BIOS extensions that no
+    # modern emulator provides.  Snap to IMG + FAT12 + 360k floppy.
+    if BootMode(state.boot_mode) is BootMode.COMPAQ2:
+        state = replace(
+            state,
+            media_type=MediaType.IMG.value,
+            disk_format=DiskFormat.FAT12.value,
+            floppy_type=FloppyType.F360K.value,
+            img_system_format=True,
+        )
+        return state
     if _is_vhd(state) and BootMode(state.boot_mode) is BootMode.IBM8088:
         state = apply_ibm_default_size(state, force=True)
     # Boot mode is the upstream constraint for filesystem + size; snap

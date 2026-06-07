@@ -309,11 +309,11 @@ def test_windows_vhd_pipeline_accepts_pcdos2000(tmp_path: Path):
         )
 
 
-def test_windows_vhd_pipeline_accepts_compaq2(tmp_path: Path):
-    """Compaq DOS 2.11 (v0.6.17) is FAT12-only, capped at 16 MiB, and
-    sources its install media from a .7z auto-extract.  The
-    unsupported-mode gate must let it through; failures past that point
-    come from missing install media in dosassets/compaq2/, not the gate.
+def test_windows_vhd_pipeline_rejects_compaq2(tmp_path: Path):
+    """Compaq DOS 2.11 (v0.6.18) is IMG-only.  The unsupported-mode
+    gate now explicitly rejects VHD output with a clear error pointing
+    at ``--media-type img --floppy-type 360k`` — its 1984 boot code
+    depends on Compaq BIOS extensions no modern emulator provides.
     """
     target = tmp_path / "compaq2.vhd"
     request = _basic_request(
@@ -324,13 +324,12 @@ def test_windows_vhd_pipeline_accepts_compaq2(tmp_path: Path):
     )
     runner = FakeRunner(vhd_size_bytes=request.size_bytes)
     manager = _manager(tmp_path, runner)
-    try:
+    with pytest.raises(ValidationError) as excinfo:
         manager.create_and_prepare(request)
-    except ValidationError as exc:
-        message = str(exc)
-        assert "not yet supported on this platform" not in message, (
-            f"COMPAQ2 should not be blocked by the unsupported-mode gate, got: {message}"
-        )
+    message = str(excinfo.value)
+    assert "compaq2" in message.lower()
+    assert "img" in message.lower()
+    assert "360" in message
 
 
 def test_windows_vhd_pipeline_copies_custom_payload(tmp_path: Path):
