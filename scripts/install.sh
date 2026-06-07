@@ -198,6 +198,16 @@ migrate_legacy_layout() {
         rm -f "${PREFIX}/current"
         say "Removed legacy 'current' symlink."
     fi
+    # v0.7.5 initially shipped a duplicate dosassets/ at bundle/dosassets/
+    # (from the tarball's "extract and cd" skeleton).  Clean it up so
+    # users who re-run the installer don't see two dosassets folders.
+    # (This is also done after the fresh extract; the explicit check
+    # here covers the case where the user re-runs without a fresh
+    # extract for whatever reason.)
+    if [[ -d "${PREFIX}/bundle/dosassets" ]]; then
+        rm -rf "${PREFIX}/bundle/dosassets"
+        say "Removed duplicate bundle/dosassets/ from previous install."
+    fi
     if (( legacy_count > 0 )); then
         say "Cleaned up ${legacy_count} legacy version director(ies)."
     fi
@@ -252,6 +262,17 @@ main() {
 
     say "Extracting bundle..."
     tar xzf "$tarball" -C "$bundle_dir" --strip-components=1
+
+    # The release tarball ships a ``dosassets/`` skeleton at its root
+    # so the "extract and run dosforge from inside the bundle dir"
+    # workflow has install media folders ready.  Our flat installer
+    # uses a separate top-level <prefix>/dosassets/ instead (so
+    # upgrades don't touch user data), which makes the bundled
+    # skeleton a confusing duplicate.  Remove it.
+    if [[ -d "${bundle_dir}/dosassets" ]]; then
+        rm -rf "${bundle_dir}/dosassets"
+        say "Removed duplicate ${bundle_dir}/dosassets/ (real one lives at ${PREFIX}/dosassets/)."
+    fi
 
     local wheel="${bundle_dir}/dosforge-${version}-py3-none-any.whl"
     [[ -f "$wheel" ]] || fatal "Wheel not found in extracted bundle: ${wheel}"
