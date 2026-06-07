@@ -62,7 +62,7 @@ while (( $# > 0 )); do
 done
 
 # ----- pretty helpers ------------------------------------------------
-say()   { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
+say()   { printf '\033[1;36m==>\033[0m %s\n' "$*" >&2; }
 warn()  { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }
 fatal() { printf '\033[1;31mFATAL:\033[0m %s\n' "$*" >&2; exit 1; }
 
