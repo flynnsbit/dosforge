@@ -484,6 +484,10 @@ class DosForgeApp(App[None]):
                                             "PC-DOS 7.1 bootable (FAT32)",
                                             BootMode.PCDOS71.value,
                                         ),
+                                        (
+                                            "Compaq DOS 2.11 bootable (5.25-360k)",
+                                            BootMode.COMPAQ2.value,
+                                        ),
                                         ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
                                     ],
                                     value=BootMode.NONE.value,
@@ -904,6 +908,7 @@ class DosForgeApp(App[None]):
                     BootMode.MSDOS33.value,
                     BootMode.MSDOS331.value,
                     BootMode.PCDOS.value,
+                    BootMode.COMPAQ2.value,
                     BootMode.COMPAQ331.value,
                 }
                 # FAT12 requires the msdos33-style FORMAT install pipeline;
@@ -912,6 +917,7 @@ class DosForgeApp(App[None]):
                     if boot_value not in (
                         BootMode.MSDOS33.value,
                         BootMode.IBM8088.value,
+                        BootMode.COMPAQ2.value,
                         BootMode.NONE.value,
                     ):
                         self.query_one("#boot-mode", Select).value = BootMode.MSDOS33.value
@@ -1013,6 +1019,7 @@ class DosForgeApp(App[None]):
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.PCDOS71,
+            BootMode.COMPAQ2,
             BootMode.COMPAQ331,
         }
         show_dos_profile = boot_controls_active and boot_mode in dos_boot_modes

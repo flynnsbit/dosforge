@@ -73,6 +73,7 @@ _DOS_PROFILE_BOOT_MODES = frozenset(
         BootMode.PCDOS7,
         BootMode.PCDOS2000,
         BootMode.PCDOS71,
+        BootMode.COMPAQ2,
         BootMode.COMPAQ331,
     }
 )
@@ -86,11 +87,12 @@ _XEBEC_XT_BOOT_MODES = frozenset(
         BootMode.MSDOS33,
         BootMode.MSDOS331,
         BootMode.PCDOS,
+        BootMode.COMPAQ2,
         BootMode.COMPAQ331,
     }
 )
 _XEBEC_FAT12_BOOT_MODES = frozenset(
-    {BootMode.MSDOS33, BootMode.IBM8088, BootMode.NONE}
+    {BootMode.MSDOS33, BootMode.IBM8088, BootMode.COMPAQ2, BootMode.NONE}
 )
 
 
@@ -329,6 +331,11 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
     # IBM PC-DOS 2000 = PC-DOS 7.0 rebrand; same FAT support as PCDOS7.
     BootMode.PCDOS2000: _BootMediaRule(
         allowed_formats=frozenset({DiskFormat.FAT12, DiskFormat.FAT16}),
+    ),
+    # Microsoft MS-DOS 2.11 (Compaq OEM): FAT12 only, 16 MiB partition cap
+    # (DOS 2.x predates FAT16 entirely).
+    BootMode.COMPAQ2: _BootMediaRule(
+        allowed_formats=frozenset({DiskFormat.FAT12}), max_mb=16,
     ),
 }
 

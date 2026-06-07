@@ -81,6 +81,15 @@ class BootMode(str, Enum):
     PCDOS2000 = "pcdos2000"
     PCDOS71 = "pcdos71"
     COMPAQ331 = "compaq331"
+    # Compaq OEM DOS 2.x (specifically Microsoft MS-DOS 2.11 with
+    # Compaq's OEM build, 1984-05-30) — the earliest hard-disk-aware
+    # DOS that dosforge supports.  FAT12 ONLY, max ~16 MiB partition
+    # (DOS 2.x predates FAT16).  Bootable from the single 360 KB
+    # 5.25" DSDD install floppy (disk01.img) inside the WinWorldPC
+    # ``Microsoft MS-DOS 2.11 [Compaq OEM] (5.25-360k).7z`` archive
+    # — the descriptor auto-extracts the .7z if no raw IMG is found
+    # in dosassets/compaq2/.
+    COMPAQ2 = "compaq2"
     # 4DOS shell overlay (planned, requires --host-dos).  Phase 14F
     # implementation is pending until 4DOS install media is provided.
     # When set, dosforge raises a clear "not yet implemented" message

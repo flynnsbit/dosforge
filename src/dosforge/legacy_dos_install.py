@@ -163,6 +163,56 @@ def msdos33_profile(install_image: Path, boot_assets_dir: Path | None = None) ->
     )
 
 
+def compaq2_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    """Compaq OEM MS-DOS 2.11 install profile.
+
+    ``install_image`` is a raw 360 KB 5.25" DSDD floppy from the
+    WinWorldPC ``Microsoft MS-DOS 2.11 [Compaq OEM]`` archive
+    (``disk01.img``).  The floppy ships IBMBIO.COM + IBMDOS.COM
+    (hidden+system, 1984-05-30) + COMMAND.COM + FORMAT.COM + SYS.COM
+    + FDISK.COM at its root.
+
+    DOS 2.x quirks vs the MSDOS33+ profiles:
+
+    * FAT12 ONLY — DOS 2.x predates FAT16 entirely.  Validation caps
+      the partition at 16 MiB (the FAT12 sweet spot for DOS 2.x).
+    * Compaq's OEM FORMAT.COM (1984-05-30) prompts TWICE for a
+      fixed disk: ``Press any key to begin formatting drive C:``
+      followed by ``Warning! ... Do you want to continue (Y/N)?
+      [N]``.  Both default to N so both need explicit Y; we feed
+      ``YYY\r\n\r\n\r\n`` to handle both prompts plus any
+      post-format dialog.
+    * No ``FDISK /MBR`` — DOS 2.x's FDISK predates the /MBR option
+      by ~7 years.  dosforge writes its own era-appropriate generic
+      MBR (the same ``MS-DOS / PC-DOS 3.3-compatible MBR boot
+      loader`` used for the rest of the legacy DOS modes).
+    * Uses Compaq/IBM-naming for system files (IBMBIO/IBMDOS) even
+      though it's a Microsoft OEM build — Compaq's reference design
+      was IBM-PC-compatible so the binaries match the IBM naming
+      convention.
+    """
+    _ = boot_assets_dir  # unused; declared for shared profile_builder signature
+    return LegacyDosInstallProfile(
+        label="Compaq DOS 2.11",
+        install_image=install_image,
+        required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+        install_method="format",
+        # 16 MiB FAT12 partition + DOS 2.11's primitive FORMAT.COM:
+        # finishes in under a minute on host CPUs but allow headroom
+        # for Windows-side QEMU subprocess overhead.
+        timeout_seconds=180.0,
+        # Compaq's OEM FORMAT.COM (1984-05-30) prompts twice for a
+        # fixed disk: (1) "Press any key to begin formatting drive C:"
+        # and (2) "Warning! The data in drive C: will be destroyed.
+        # Do you want to continue the format (Y/N)? [N]".  Both
+        # default to N, so both need explicit Y; the trailing \r\n
+        # satisfies any post-format prompt.
+        format_yes_input=b"YYY\r\n\r\n\r\n",
+        # DOS 2.x FDISK has no /MBR option (didn't exist until DOS 5.0).
+        supports_fdisk_mbr=False,
+    )
+
+
 def msdos5_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
     """MS-DOS 5.0 install profile.
 
@@ -1259,6 +1309,7 @@ __all__ = [
     "LegacyDosInstallProfile",
     "LegacyDosQemuInstaller",
     "compaq331_profile",
+    "compaq2_profile",
     "msdos33_profile",
     "msdos5_profile",
     "msdos622_profile",

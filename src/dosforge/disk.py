@@ -28,13 +28,14 @@ from .legacy_dos_install import (
     Compaq331InstallSources,
     LegacyDosInstallProfile,
     LegacyDosQemuInstaller,
+    compaq2_profile,
     compaq331_profile,
     msdos33_profile,
     msdos5_profile,
     msdos622_profile,
     msdos71_profile,
-    pcdos7_profile,
     pcdos2000_profile,
+    pcdos7_profile,
     pcdos71_fat16_profile,
     pcdos71_profile,
 )
@@ -257,6 +258,25 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
         system_file_marker="IBMBIO.COM",
         profile_builder=pcdos2000_profile,
     ),
+    # Compaq OEM MS-DOS 2.11 (FAT12, 360 KB install floppy).  Sources
+    # both ``disk01.img`` directly (if user pre-extracted) and the
+    # WinWorldPC ``Microsoft MS-DOS 2.11 [Compaq OEM] (5.25-360k).7z``
+    # archive (auto-extracted via py7zr in
+    # ``_legacy_dos_archive.extract_legacy_dos_install_archive``).
+    # Marker is IBMBIO.COM (Compaq used IBM-style system file names
+    # even though it's a Microsoft OEM build).
+    BootMode.COMPAQ2: _LegacyDosInstallDescriptor(
+        label="Compaq DOS 2.11",
+        asset_fallback_dirs=("compaq2",),
+        preferred_image_names=(
+            "disk01.img",
+            "DISK01.IMG",
+            "disk01.ima",
+            "DISK01.IMA",
+        ),
+        system_file_marker="IBMBIO.COM",
+        profile_builder=compaq2_profile,
+    ),
 }
 
 
@@ -331,6 +351,7 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
     - ``BootMode.PCDOS71`` -- PC-DOS 7.1 via FORMAT32 inside QEMU.
     """
     if request.boot_mode in (
+        BootMode.COMPAQ2,
         BootMode.COMPAQ331,
         BootMode.MSDOS331,
         BootMode.MSDOS33,
@@ -382,11 +403,16 @@ def _legacy_dos_install_descriptor(request: CreateRequest) -> _LegacyDosInstallD
 def _uses_msdos33_filesystem_layout(request: CreateRequest) -> bool:
     """Return True when DOS 3.30's FORMAT lays out the FAT itself.
 
+    Also covers older DOS 2.x with the same track-aligned, primitive
+    BPB layout (Compaq DOS 2.11 — FAT12 only, gets partition type
+    0x01 instead of 0x04).
+
     Partition-table prep for these requests must:
-    - set MBR partition type 0x04 (FAT16 <32 MiB, pre-FAT16B), and
+    - set MBR partition type 0x04 (FAT16 <32 MiB, pre-FAT16B) or
+      0x01 (FAT12, DOS 2.x), and
     - skip mformat (FORMAT C: /S writes its own BPB from scratch).
     """
-    if request.boot_mode is BootMode.MSDOS33:
+    if request.boot_mode in (BootMode.MSDOS33, BootMode.COMPAQ2):
         return True
     if (
         request.boot_mode is BootMode.IBM8088
@@ -1158,25 +1184,30 @@ class DiskManager:
 
         validate_size_for_format(request.size_bytes, request.disk_format)
         if request.disk_format is DiskFormat.FAT12:
-            # FAT12 on VHD is a narrow capability: only the MartyPC
-            # Xebec Type 1 (10 MiB MFM) preset is supported today, with
-            # an MS-DOS 3.30 (msdos33) or IBM 8088 + DOS33 install.
+            # FAT12 on VHD is a narrow capability:
+            #   * MartyPC Xebec Type 1 (10 MiB MFM) preset with MS-DOS 3.30
+            #     (msdos33) or IBM 8088 + DOS33 install, OR
+            #   * Compaq DOS 2.11 (compaq2) — DOS 2.x predates FAT16
+            #     entirely so FAT12 is its only option (capped at 16 MiB
+            #     elsewhere in this validator).
             # Anywhere else we'd need a hard-disk-aware FAT12 boot
             # sector / SYS workflow we don't currently produce.
-            if request.machine_target is not MachineTarget.MARTYPC_XEBEC:
-                raise ValidationError(
-                    "FAT12 on VHD is only supported with the MartyPC Xebec Type 1 (10 MiB) preset."
-                )
-            if request.martypc_xebec_drive_type is not MartyPCXebecDriveType.TYPE1:
-                raise ValidationError(
-                    "FAT12 on VHD is only supported with MartyPC Xebec Type 1 (10 MiB). "
-                    "Pick FAT16 for Xebec Type 2 / 13 / 16."
-                )
-            if not _uses_msdos33_filesystem_layout(request):
-                raise ValidationError(
-                    "FAT12 on VHD requires boot-mode=msdos33 or ibm8088 + --ibm-dos-version dos33 "
-                    "(DOS's own FORMAT C: /S writes the FAT12 BPB)."
-                )
+            if request.boot_mode is not BootMode.COMPAQ2:
+                if request.machine_target is not MachineTarget.MARTYPC_XEBEC:
+                    raise ValidationError(
+                        "FAT12 on VHD is only supported with the MartyPC Xebec Type 1 (10 MiB) preset "
+                        "or boot-mode=compaq2 (Compaq DOS 2.11)."
+                    )
+                if request.martypc_xebec_drive_type is not MartyPCXebecDriveType.TYPE1:
+                    raise ValidationError(
+                        "FAT12 on VHD is only supported with MartyPC Xebec Type 1 (10 MiB) "
+                        "or boot-mode=compaq2. Pick FAT16 for Xebec Type 2 / 13 / 16."
+                    )
+                if not _uses_msdos33_filesystem_layout(request):
+                    raise ValidationError(
+                        "FAT12 on VHD requires boot-mode=msdos33, ibm8088 + --ibm-dos-version dos33, "
+                        "or boot-mode=compaq2 (DOS's own FORMAT C: /S writes the FAT12 BPB)."
+                    )
         if request.boot_mode is BootMode.IBM8088:
             if request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12):
                 raise ValidationError(
@@ -1222,6 +1253,24 @@ class DiskManager:
                 f"Compaq DOS 3.31 (compaq331) only supports FAT16B partitions up to "
                 f"{COMPAQ331_MAX_BYTES // 1024 // 1024} MiB. Use msdos5 / msdos622 "
                 "for larger partitions."
+            )
+        # Compaq DOS 2.11 (and DOS 2.x in general) predate FAT16 entirely
+        # and address at most ~16 MiB via FAT12. Cap accordingly.
+        if (
+            request.boot_mode is BootMode.COMPAQ2
+            and request.size_bytes > 16 * 1024 * 1024
+        ):
+            raise ValidationError(
+                "Compaq DOS 2.11 (compaq2) only supports FAT12 partitions up to "
+                "16 MiB. Use compaq331 (FAT16B) or msdos5 / msdos622 for larger "
+                "partitions."
+            )
+        if (
+            request.boot_mode is BootMode.COMPAQ2
+            and request.disk_format is not DiskFormat.FAT12
+        ):
+            raise ValidationError(
+                "Compaq DOS 2.11 (compaq2) requires FAT12 (DOS 2.x predates FAT16)."
             )
         legacy_fat16_modes = {
             BootMode.MSDOS331,
@@ -1309,6 +1358,7 @@ class DiskManager:
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.PCDOS71,
+            BootMode.COMPAQ2,
             BootMode.COMPAQ331,
         }
         if request.boot_mode not in boot_dos_modes:
@@ -1379,12 +1429,13 @@ class DiskManager:
             BootMode.MSDOS33,
             BootMode.MSDOS331,
             BootMode.PCDOS,
+            BootMode.COMPAQ2,
             BootMode.COMPAQ331,
         }
         if request.boot_mode not in xt_class_modes:
             raise ValidationError(
                 "MartyPC Xebec target only supports XT-class DOS boot modes "
-                "(none, ibm8088, msdos33, msdos331, pcdos, compaq331)."
+                "(none, ibm8088, msdos33, msdos331, pcdos, compaq2, compaq331)."
             )
         if request.boot_mode is BootMode.IBM8088 and request.ibm_dos_version is not IBMDOSVersion.DOS33:
             raise ValidationError(
@@ -1823,7 +1874,18 @@ class DiskManager:
 
         min_bytes: int | None
         max_bytes: int | None
-        if request.disk_format is DiskFormat.FAT16:
+        if request.disk_format is DiskFormat.FAT12:
+            # Compaq DOS 2.11 and other FAT12-on-VHD users want a
+            # *small* hard disk (DOS 2.x maxes out at ~16 MiB).  Fall
+            # back to the floppy minimum so 10-16 MiB requests don't
+            # get bumped up to 64 MiB by the FAT32 default floor.
+            from .size import FAT12_MIN_BYTES, FAT12_MAX_BYTES
+
+            min_bytes = FAT12_MIN_BYTES
+            max_bytes = FAT12_MAX_BYTES
+            if request.boot_mode is BootMode.COMPAQ2:
+                max_bytes = min(max_bytes, 16 * 1024 * 1024)
+        elif request.disk_format is DiskFormat.FAT16:
             min_bytes = FAT16_MIN_BYTES
             max_bytes = FAT16_MAX_BYTES
             if request.boot_mode is BootMode.IBM8088:
@@ -1951,6 +2013,7 @@ class DiskManager:
             BootMode.MSDOS71,
             BootMode.MSDOS33,
             BootMode.MSDOS331,
+            BootMode.COMPAQ2,
             BootMode.COMPAQ331,
             BootMode.IBM8088,
             BootMode.MSDOS5,
@@ -1963,8 +2026,9 @@ class DiskManager:
             raise ValidationError(
                 "This boot mode is not yet supported on this platform. "
                 "On Windows, supported VHD boot modes are: none, freedos, "
-                "msdos71, msdos33, msdos331, compaq331, ibm8088 (dos33), "
-                "msdos5, msdos622, pcdos, pcdos7, pcdos2000, pcdos71."
+                "msdos71, msdos33, msdos331, compaq2, compaq331, "
+                "ibm8088 (dos33), msdos5, msdos622, pcdos, pcdos7, "
+                "pcdos2000, pcdos71."
             )
 
         target_path = request.path
@@ -2192,6 +2256,7 @@ class DiskManager:
             # cursor (real hardware).  An earlier comment here claimed
             # FORMAT wrote both MBR and VBR -- that was incorrect.
             if request.boot_mode in (
+                BootMode.COMPAQ2,
                 BootMode.COMPAQ331,
                 BootMode.MSDOS331,
                 BootMode.MSDOS33,
@@ -2498,6 +2563,16 @@ class DiskManager:
                 )
             if install_image is None:
                 install_image = extract_pcdos7_install_floppy(boot_assets_dir)
+        elif request.boot_mode is BootMode.COMPAQ2:
+            # COMPAQ2 ships as a single .7z archive containing a 360 KB
+            # disk01.img (the user did a "direct download" of the
+            # WinWorldPC archive rather than pre-extracting).  Auto-
+            # extract via py7zr, cache the result, and use the
+            # bundled disk01.img as the install_image.  Short-circuits
+            # to a raw IMG if the user has already extracted.
+            from ._legacy_dos_archive import extract_legacy_dos_install_archive
+
+            install_image = extract_legacy_dos_install_archive(boot_assets_dir)
         else:
             install_image = self._find_legacy_dos_install_image(
                 directory=boot_assets_dir,

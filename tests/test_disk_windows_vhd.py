@@ -309,6 +309,30 @@ def test_windows_vhd_pipeline_accepts_pcdos2000(tmp_path: Path):
         )
 
 
+def test_windows_vhd_pipeline_accepts_compaq2(tmp_path: Path):
+    """Compaq DOS 2.11 (v0.6.17) is FAT12-only, capped at 16 MiB, and
+    sources its install media from a .7z auto-extract.  The
+    unsupported-mode gate must let it through; failures past that point
+    come from missing install media in dosassets/compaq2/, not the gate.
+    """
+    target = tmp_path / "compaq2.vhd"
+    request = _basic_request(
+        target,
+        boot_mode=BootMode.COMPAQ2,
+        disk_format=DiskFormat.FAT12,
+        size_bytes=16 * 1024 * 1024,
+    )
+    runner = FakeRunner(vhd_size_bytes=request.size_bytes)
+    manager = _manager(tmp_path, runner)
+    try:
+        manager.create_and_prepare(request)
+    except ValidationError as exc:
+        message = str(exc)
+        assert "not yet supported on this platform" not in message, (
+            f"COMPAQ2 should not be blocked by the unsupported-mode gate, got: {message}"
+        )
+
+
 def test_windows_vhd_pipeline_copies_custom_payload(tmp_path: Path):
     target = tmp_path / "with-payload.vhd"
     payload = tmp_path / "payload"
