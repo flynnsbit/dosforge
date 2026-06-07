@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .. import __version__
 from ..disk import DiskManager
 from ..errors import DosForgeError
 from .theme import enable_dpi_awareness
@@ -77,7 +78,7 @@ class DosForgeGUI:
         # first mapped, so we must set DWMWA_USE_IMMERSIVE_DARK_MODE
         # before that happens or the title bar shows in light mode.
         self.root.withdraw()
-        self.root.title("DosForge")
+        self.root.title(f"DosForge v{__version__}")
         self.root.minsize(960, 640)
         self._center(1180, 780)
 
@@ -88,7 +89,7 @@ class DosForgeGUI:
         # Header: title + theme toggle.
         header = ttk.Frame(self.root, style="Header.TFrame", padding=(20, 14, 20, 8))
         header.pack(side="top", fill="x")
-        ttk.Label(header, text="DosForge", style="Title.TLabel").pack(side="left")
+        ttk.Label(header, text=f"DosForge v{__version__}", style="Title.TLabel").pack(side="left")
         ttk.Label(
             header,
             text="Build, browse, and mount DOS-friendly disk images",

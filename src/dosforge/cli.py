@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from . import __version__
 from .commands import CommandRunner
 from .dependencies import assert_dependencies
 from .disk import DiskManager
@@ -79,6 +80,12 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
         prog="dosforge",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_CLI_HELP_EPILOG,
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"dosforge {__version__}",
+        help="Print version and exit.",
     )
     subcommands = parser.add_subparsers(dest="command")
 

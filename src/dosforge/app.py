@@ -36,6 +36,7 @@ _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 from .disk import DiskManager
 from .errors import DosForgeError
+from . import __version__
 from . import formlogic as fl
 from .models import (
     BootMode,
@@ -62,60 +63,71 @@ class SingleClickSelect(Select):
     settles focus, the second runs the Toggle.  We open the overlay
     eagerly on ``MouseDown`` so it appears on the first press.
 
-    But raw single-click-open creates two race conditions with the
-    parent :class:`Select`'s built-in behavior:
+    Three race conditions with the parent ``Select``'s built-in
+    behavior all needed handling:
 
-    1. **Open race.**  ``MouseDown`` opens the overlay, then the
-       synthesized ``Click`` posts ``SelectCurrent.Toggle``, then the
-       parent's ``@on(Toggle)`` handler does
-       ``self.expanded = not self.expanded`` — which flips us back
-       to ``expanded=False`` and the menu disappears.
+    1. **Open race (v0.7.5 patch attempted).**  ``MouseDown`` opens
+       the overlay, then synthesized ``Click`` posts
+       ``SelectCurrent.Toggle``, then the parent's flip handler does
+       ``expanded = not expanded`` — collapsing the menu we just
+       opened.
 
-    2. **Close race.**  When the user clicks the chevron of an
-       *already-expanded* dropdown, the overlay loses focus first
-       (``SelectOverlay.Dismiss(lost_focus=True)`` → parent sets
-       ``expanded=False``), then ``SelectCurrent.Toggle`` fires; the
-       parent's flip then does ``not False = True`` and the dropdown
-       **stays open**.  This was the v0.7.5 dropdown-toggle bug.
+    2. **Close-via-blur race (v0.7.7 patch attempted).**  When the
+       Select had to gain focus from elsewhere, clicking the chevron
+       caused the overlay to lose focus first
+       (``SelectOverlay.Dismiss(lost_focus=True)`` → parent's dismiss
+       handler sets ``expanded=False``), then ``SelectCurrent.Toggle``
+       fired, then the parent's flip then did ``not False = True``
+       and re-opened the dropdown.
 
-    Both races resolve cleanly if we *always* short-circuit the
-    parent's Toggle handler via ``event.prevent_default()`` and
-    manage ``expanded`` ourselves:
+    3. **Close-without-blur race (v0.7.8 actual fix).**  When the
+       Select widget *already* had focus (because user previously
+       interacted with it), clicking the chevron does NOT shift
+       focus, so the overlay's blur-dismiss never fires.  In that
+       case the v0.7.7 "always prevent_default + don't touch state"
+       approach left ``expanded=True`` after the click — dropdown
+       stayed open.
 
-    * MouseDown is the only thing that opens the overlay.
-    * The overlay-blur-dismiss is the only thing that closes it on a
-      second click (the blur happens naturally when the user clicks
-      anywhere outside the overlay, including on our own chevron).
-    * Our Toggle handler does nothing visible — it just suppresses
-      the parent's flip.
+    The fix uses an explicit "MouseDown just opened me" flag so the
+    Toggle handler can distinguish the open-on-first-click case
+    (keep open) from the click-already-open case (force close):
+
+    * ``_on_mouse_down`` only opens when ``not self.expanded`` and
+      sets the flag.  Closing is never done here.
+    * The Toggle handler always blocks the parent's flip; if the
+      flag is set it just resets the flag (MouseDown did the open
+      work).  Otherwise it explicitly closes the overlay — which
+      handles both the focused-and-clicked-chevron case (no blur
+      dismiss to do it for us) and the blur-dismiss-already-fired
+      case (idempotent: just sets ``expanded=False`` again).
 
     Subclass-only: drop-in replacement for ``Select``.
     """
 
-    # True between MouseDown opening the overlay and the synthesized
-    # Click event being processed.  Used only as a defensive
-    # invariant check; the actual logic is always "prevent_default,
-    # don't touch expanded".
     _just_opened_on_mouse_down: bool = False
 
     def _on_mouse_down(self, event) -> None:
-        # Only ever opens.  Closing is handled by Textual's overlay
-        # blur (which fires when the user clicks anywhere outside
-        # the overlay, including on our own chevron when expanded).
+        # Only opens; never closes.
         if not self.expanded:
             self.action_show_overlay()
             self._just_opened_on_mouse_down = True
 
     @_textual_on(SelectCurrent.Toggle)
     def _single_click_toggle(self, event: SelectCurrent.Toggle) -> None:
-        # Always block the parent's ``expanded = not expanded`` flip.
-        # See the class docstring for the open + close race
-        # explanations.  MouseDown + overlay-blur-dismiss together
-        # already drive the expanded state correctly; the parent's
-        # flip only causes races.
+        # Always block the parent's ``expanded = not expanded`` flip
+        # to avoid the open-race and blur-close races (see docstring).
         event.stop()
         event.prevent_default()
-        self._just_opened_on_mouse_down = False
+        if self._just_opened_on_mouse_down:
+            # MouseDown just opened the overlay.  Keep it open.
+            self._just_opened_on_mouse_down = False
+            return
+        # MouseDown was a no-op (dropdown was already expanded).  The
+        # user is explicitly toggling closed -- force-close here.
+        # This also handles the focused-and-clicked-chevron case
+        # where overlay-blur-dismiss never fires (no focus shift),
+        # and is idempotent if it did fire (expanded already False).
+        self.expanded = False
 
 
 _DOS_INSTALL_PROFILE_OPTIONS = [
@@ -152,7 +164,7 @@ _FLOPPY_OPTIONS = [
 
 
 class DosForgeApp(App[None]):
-    TITLE = "DosForge"
+    TITLE = f"DosForge v{__version__}"
     SUB_TITLE = "Build, browse, and mount DOS-friendly disk images"
     ALLOW_SELECT = False
     BINDINGS = [
