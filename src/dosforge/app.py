@@ -68,33 +68,41 @@ class SingleClickSelect(Select):
     *every* decorated handler. The parent ``Select`` registers its
     own ``@on(SelectCurrent.Toggle)`` handler that unconditionally
     does ``self.expanded = not self.expanded`` — so on mouse-up the
-    parent's handler flips us right back to ``expanded=False`` and
-    the menu disappears.
+    parent's handler would flip us right back to ``expanded=False``
+    and the menu would disappear.
 
-    ``event.stop()`` doesn't help here because it only stops the
-    message bubbling to parent widgets, not sibling handlers on the
-    same widget. The correct lever is
-    ``event.prevent_default()`` — Textual's message pump checks
-    ``message._no_default_action`` at the top of each MRO iteration
-    and breaks the loop, so the parent's Toggle handler never runs.
+    Solution: track whether the *current* Toggle was caused by us
+    just opening on MouseDown.  If so, suppress the parent's handler
+    so the dropdown stays open.  Otherwise (a second click on an
+    already-open dropdown, or a programmatic toggle), let the parent
+    run so the dropdown closes normally.
 
     Subclass-only: drop-in replacement for ``Select``.
     """
 
+    # Set to True by ``_on_mouse_down`` when we just opened the
+    # overlay; cleared by the Toggle handler after it suppresses the
+    # parent.  Without this flag every second click would also be
+    # suppressed and the menu could never be closed by clicking the
+    # dropdown again.
+    _just_opened_on_mouse_down: bool = False
+
     def _on_mouse_down(self, event) -> None:
         if not self.expanded:
             self.action_show_overlay()
+            self._just_opened_on_mouse_down = True
 
     @_textual_on(SelectCurrent.Toggle)
     def _single_click_toggle(self, event: SelectCurrent.Toggle) -> None:
-        # MouseDown already opened the overlay. We must call
-        # prevent_default() to short-circuit the parent Select's
-        # toggling handler, otherwise it would race-close the menu
-        # on the synthesized click that follows mouse-up.
-        event.stop()
-        event.prevent_default()
-        if not self.expanded:
-            self.action_show_overlay()
+        if self._just_opened_on_mouse_down:
+            # MouseDown already opened the overlay; suppress the
+            # parent's Toggle so it doesn't immediately close.
+            self._just_opened_on_mouse_down = False
+            event.stop()
+            event.prevent_default()
+            return
+        # Already-open dropdown getting clicked again -- let the
+        # parent's Toggle handler run so it closes normally.
 
 
 _DOS_INSTALL_PROFILE_OPTIONS = [

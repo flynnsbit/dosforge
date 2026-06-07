@@ -24,10 +24,25 @@
 #   --no-symlink       Skip the ~/.local/bin/dosforge symlink.
 #   --prefix DIR       Use DIR as the install root.  Defaults to
 #                      ${XDG_DATA_HOME:-$HOME/.local/share}/dosforge.
+#                      User dosassets/ ALWAYS lives at <prefix>/dosassets/
+#                      regardless of which version is installed.
 #   --keep-tarball     Don't delete the downloaded tarball after install.
 #   --tag TAG          Install a specific tag (e.g. v0.7.2) instead of
 #                      the latest.
 #   --help             Print this help.
+#
+# Install layout (single-version, pipx-style):
+#
+#   <prefix>/dosforge/
+#   ├── venv/        Python env (REMOVED + recreated on every upgrade)
+#   ├── bundle/      Extracted release tarball (REMOVED + recreated)
+#   └── dosassets/   USER DATA — NEVER touched on upgrade.  This is
+#                    where DOS install media goes (auto-extracted .7z
+#                    archives, raw IMG files, etc.).
+#
+# Older installs from v0.7.3/v0.7.4 used a versioned layout
+# (<prefix>/dosforge/<version>/) which leaked disk on every upgrade;
+# v0.7.5+ detects and cleans those up automatically.
 #
 set -euo pipefail
 
@@ -61,7 +76,7 @@ while (( $# > 0 )); do
     shift
 done
 
-# ----- pretty helpers ------------------------------------------------
+# ----- pretty helpers (all to stderr so $(fn) captures only data) ----
 say()   { printf '\033[1;36m==>\033[0m %s\n' "$*" >&2; }
 warn()  { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }
 fatal() { printf '\033[1;31mFATAL:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -158,6 +173,36 @@ for a in d.get('assets', []):
 "
 }
 
+# ----- migrate older layouts to the v0.7.5+ flat layout --------------
+migrate_legacy_layout() {
+    # v0.7.3 + v0.7.4 installed to <PREFIX>/<version>/venv/.  Find
+    # any such version-named subdirectories and remove them.  This is
+    # only a disk-space reclamation -- the user's dosassets/ lives
+    # right next to them and is never touched.
+    local legacy_count=0
+    for entry in "$PREFIX"/*/; do
+        [[ -d "$entry" ]] || continue
+        local name; name="$(basename "$entry")"
+        # Match purely-numeric version dirs (0.7.3, 0.7.4, etc.).
+        # Don't touch venv/, bundle/, dosassets/ or the "current"
+        # symlink.
+        if [[ "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            say "Removing legacy install: ${entry}"
+            rm -rf "$entry"
+            legacy_count=$(( legacy_count + 1 ))
+        fi
+    done
+    # v0.7.3 + v0.7.4 also created a "current" symlink pointing at the
+    # latest version dir; clean it up now that the version dirs are gone.
+    if [[ -L "${PREFIX}/current" ]]; then
+        rm -f "${PREFIX}/current"
+        say "Removed legacy 'current' symlink."
+    fi
+    if (( legacy_count > 0 )); then
+        say "Cleaned up ${legacy_count} legacy version director(ies)."
+    fi
+}
+
 # ----- main flow -----------------------------------------------------
 main() {
     install_system_deps
@@ -176,22 +221,46 @@ main() {
     say "Latest release: ${tag} (version ${version})"
     say "Asset URL:      ${asset_url}"
 
-    # Workspace under PREFIX/<version>/ so multiple versions can coexist.
-    local versioned="${PREFIX}/${version}"
-    mkdir -p "$versioned"
-    say "Install root: ${versioned}"
+    mkdir -p "$PREFIX"
+    migrate_legacy_layout
 
-    local tarball="${versioned}/dosforge-${version}-linux.tar.gz"
+    say "Install root: ${PREFIX}"
+    say "  - venv:      ${PREFIX}/venv/      (replaced on upgrade)"
+    say "  - bundle:    ${PREFIX}/bundle/    (replaced on upgrade)"
+    say "  - dosassets: ${PREFIX}/dosassets/ (USER DATA, NEVER touched on upgrade)"
+
+    # Detect previous install version (for the upgrade message).
+    local prev_version=""
+    if [[ -x "${PREFIX}/venv/bin/dosforge" ]]; then
+        prev_version="$("${PREFIX}/venv/bin/dosforge" --help 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ -n "$prev_version" ]]; then
+        if [[ "$prev_version" == "$version" ]]; then
+            say "Reinstalling dosforge ${version} (same version already present)."
+        else
+            say "Upgrading dosforge ${prev_version} -> ${version}."
+        fi
+    fi
+
+    local bundle_dir="${PREFIX}/bundle"
+    local tarball="${bundle_dir}/dosforge-${version}-linux.tar.gz"
+    rm -rf "$bundle_dir"
+    mkdir -p "$bundle_dir"
+
     say "Downloading bundle..."
     curl -fL --progress-bar -o "$tarball" "$asset_url"
 
     say "Extracting bundle..."
-    tar xzf "$tarball" -C "$versioned" --strip-components=1
+    tar xzf "$tarball" -C "$bundle_dir" --strip-components=1
 
-    local wheel="${versioned}/dosforge-${version}-py3-none-any.whl"
+    local wheel="${bundle_dir}/dosforge-${version}-py3-none-any.whl"
     [[ -f "$wheel" ]] || fatal "Wheel not found in extracted bundle: ${wheel}"
 
-    local venv="${versioned}/venv"
+    local venv="${PREFIX}/venv"
+    if [[ -d "$venv" ]]; then
+        say "Removing old venv at ${venv}..."
+        rm -rf "$venv"
+    fi
     say "Creating venv at ${venv}..."
     python3 -m venv "$venv"
     "${venv}/bin/pip" install --upgrade pip >/dev/null
@@ -201,16 +270,12 @@ main() {
     "${venv}/bin/dosforge" --help >/dev/null \
         || fatal "dosforge --help failed after pip install."
 
-    # Update a "current" symlink so ~/.local/bin/dosforge always points
-    # at the most recently installed version.
-    ln -sfn "$versioned" "${PREFIX}/current"
-
     if (( DO_SYMLINK )); then
         local bindir="$HOME/.local/bin"
         mkdir -p "$bindir"
         local link="${bindir}/dosforge"
-        say "Linking ${link} -> ${PREFIX}/current/venv/bin/dosforge"
-        ln -sf "${PREFIX}/current/venv/bin/dosforge" "$link"
+        say "Linking ${link} -> ${venv}/bin/dosforge"
+        ln -sf "${venv}/bin/dosforge" "$link"
         if [[ ":${PATH}:" != *":${bindir}:"* ]]; then
             warn "${bindir} is not on your PATH."
             warn "Add this to your shell rc (~/.bashrc, ~/.zshrc, etc.):"
@@ -219,8 +284,8 @@ main() {
     fi
 
     if (( DO_INIT_ASSETS )); then
-        say "Hydrating ~/.local/share/dosforge/dosassets/ skeleton..."
-        "${venv}/bin/dosforge" init-assets >/dev/null
+        say "Hydrating ${PREFIX}/dosassets/ skeleton..."
+        "${venv}/bin/dosforge" init-assets --target "${PREFIX}/dosassets" >/dev/null
     fi
 
     if (( KEEP_TARBALL == 0 )); then
@@ -235,10 +300,14 @@ main() {
     echo "    dosforge where-assets"
     echo
     echo "DOS install media goes in:"
-    echo "    ${XDG_DATA_HOME:-$HOME/.local/share}/dosforge/dosassets/<mode>/"
+    echo "    ${PREFIX}/dosassets/<mode>/"
+    echo "(see each mode's readme.txt for expected filenames / .7z names)"
     echo
     echo "For IBM PC-DOS 7.1 (FAT32 + LBA), run:"
     echo "    dosforge fetch-pcdos71-assets"
+    echo
+    echo "To uninstall: rm -rf '${PREFIX}/venv' '${PREFIX}/bundle'"
+    echo "(your dosassets/ stays put for the next install)"
 }
 
 main

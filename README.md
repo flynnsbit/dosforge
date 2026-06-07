@@ -187,18 +187,33 @@ That's it.  The installer:
 2. Downloads the **latest** dosforge release tarball from
    [GitHub Releases](https://github.com/flynnsbit/dosforge/releases/latest)
    — no version pin, always grabs whatever's current.
-3. Creates an isolated venv under
-   `~/.local/share/dosforge/<version>/venv` (multiple versions can
-   coexist; `~/.local/share/dosforge/current` is a symlink to the
-   most recently installed).
+3. Creates an isolated venv under `~/.local/share/dosforge/venv/`.
+   On upgrade the old venv is removed first, so disk usage stays
+   flat (no leftover version directories piling up).
 4. Symlinks `~/.local/bin/dosforge` so it's on your `PATH` after the
    first install (if `~/.local/bin` isn't on your `PATH` already,
    the installer warns you and shows what to add to your shell rc).
 5. Hydrates the `~/.local/share/dosforge/dosassets/` folder
    skeleton (one folder + `readme.txt` per supported DOS mode).
+   **This folder is your user data and is never touched on upgrade.**
 6. Smoke-tests `dosforge --help` before finishing.
 
-Want to review the script before running it?
+### Install layout
+
+```
+~/.local/share/dosforge/
+├── venv/          # Python env — replaced on upgrade
+├── bundle/        # extracted release contents — replaced on upgrade
+└── dosassets/     # USER DATA — never touched on upgrade
+    ├── compaq2/   # drop Microsoft MS-DOS 2.11 [Compaq OEM]...7z here
+    ├── msdos622/  # drop Microsoft MS-DOS 6.22...7z here
+    └── ...        # one folder per supported DOS mode
+```
+
+Override with `--prefix DIR` if you want it somewhere else (the
+dosassets/ subdirectory always lives under `<prefix>/dosassets/`).
+
+### Review-before-run
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/flynnsbit/dosforge/main/scripts/install.sh -o install-dosforge.sh
@@ -217,7 +232,16 @@ Useful flags (pass after `bash install-dosforge.sh`):
 | `--tag v0.7.2` | Install a specific tag instead of the latest |
 | `--keep-tarball` | Keep the downloaded `.tar.gz` after install |
 
-After install:
+### Uninstall
+
+```bash
+rm -rf ~/.local/share/dosforge/venv ~/.local/share/dosforge/bundle
+rm -f ~/.local/bin/dosforge
+# Your dosassets/ stays put for the next install.  Wipe it too with:
+# rm -rf ~/.local/share/dosforge/dosassets
+```
+
+### After install
 
 ```bash
 dosforge --help              # full reference
