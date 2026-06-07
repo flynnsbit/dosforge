@@ -15,10 +15,8 @@ from ..models import (
     FreeDOSSource,
     IBMDOSVersion,
     MSDOSInstallProfile,
-    MachineTarget,
-    MartyPCXebecDriveType,
+    DiskController,
     MediaType,
-    MARTYPC_AT_FORMATS,
     iter_bios_drive_types,
 )
 
@@ -27,24 +25,12 @@ MEDIA_TYPE_OPTIONS = [
     ("IMG (floppy)", MediaType.IMG.value),
 ]
 
-MACHINE_TARGET_OPTIONS = [
-    ("Generic (86Box / QEMU / etc.)", MachineTarget.GENERIC.value),
-    ("MartyPC IBM/Xebec MFM", MachineTarget.MARTYPC_XEBEC.value),
-    ("MartyPC XT-IDE (Rev 2 PIO)", MachineTarget.MARTYPC_XTIDE.value),
-    ("MartyPC JR-IDE (PCjr sidecar)", MachineTarget.MARTYPC_JRIDE.value),
+DISK_CONTROLLER_OPTIONS = [
+    ("Auto-detect from boot mode", ""),
+    ("IDE (AT-class)", DiskController.IDE.value),
+    ("MFM (XT-class, ST-225 era)", DiskController.MFM.value),
 ]
 
-MARTYPC_XEBEC_DRIVE_TYPE_OPTIONS = [
-    (drive_type.description, drive_type.value) for drive_type in MartyPCXebecDriveType
-]
-
-MARTYPC_AT_DRIVE_TYPE_OPTIONS = [
-    (
-        f"{fmt.description}  [{fmt.cylinders}x{fmt.heads}x{fmt.sectors_per_track}]",
-        fmt.slug,
-    )
-    for fmt in MARTYPC_AT_FORMATS
-]
 
 BIOS_CUSTOM_VALUE = ""
 BIOS_DRIVE_TYPE_OPTIONS: list[tuple[str, str]] = [
@@ -55,7 +41,7 @@ for _vendor in (BIOSVendor.PHOENIX, BIOSVendor.AMI):
         BIOS_DRIVE_TYPE_OPTIONS.append((_spec.description, _spec.slug))
 
 DISK_FORMAT_OPTIONS = [
-    ("FAT12 (MartyPC Xebec Type 1 only)", DiskFormat.FAT12.value),
+    ("FAT12 (MFM / DOS 2.x-3.x)", DiskFormat.FAT12.value),
     ("FAT16", DiskFormat.FAT16.value),
     ("FAT32", DiskFormat.FAT32.value),
 ]
@@ -74,7 +60,7 @@ FLOPPY_OPTIONS = [
 BOOT_MODE_OPTIONS = [
     ("None (data disk only)", BootMode.NONE.value),
     ("FreeDOS bootable", BootMode.FREEDOS.value),
-    ("MS-DOS 7.1 bootable", BootMode.MSDOS71.value),
+    ("MS-DOS 7.10 / Win95 OSR2 bootable (FAT16/FAT32, 4.00.1111)", BootMode.MSDOS71.value),
     ("IBM PC 8088/V20 (DOS 3.3 / 5.0)", BootMode.IBM8088.value),
     ("MS-DOS 3.3 bootable", BootMode.MSDOS33.value),
     ("MS-DOS 3.31 bootable", BootMode.MSDOS331.value),
@@ -84,7 +70,7 @@ BOOT_MODE_OPTIONS = [
     ("PC-DOS 7.0 bootable (XDF media)", BootMode.PCDOS7.value),
     ("IBM PC-DOS 2000 bootable (6-floppy set)", BootMode.PCDOS2000.value),
     ("PC-DOS 7.1 bootable (FAT32)", BootMode.PCDOS71.value),
-    ("Compaq DOS 2.11 (5.25-360k floppy IMG or MartyPC Xebec Type 1 10 MiB MFM VHD)", BootMode.COMPAQ2.value),
+    ("Compaq DOS 2.11 (5.25-360k floppy IMG or 10 MiB MFM VHD)", BootMode.COMPAQ2.value),
     ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
 ]
 

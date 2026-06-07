@@ -5,7 +5,7 @@ import pytest
 import dosforge.cli as cli
 from dosforge.commands import RunResult
 from dosforge.errors import ValidationError
-from dosforge.models import BootMode, FloppyType, IBMDOSVersion, MSDOSInstallProfile, MediaType
+from dosforge.models import BootMode, DiskController, FloppyType, IBMDOSVersion, MSDOSInstallProfile, MediaType
 
 
 @pytest.fixture(autouse=True)
@@ -201,6 +201,36 @@ def test_create_vhd_allows_missing_size_with_custom_payload(monkeypatch, capsys)
     assert request.custom_payload_path.as_posix() == "/tmp/payload"
     assert "Created and prepared" in capsys.readouterr().out
 
+
+
+def test_create_parses_disk_controller_and_custom_chs(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeManager:
+        def create_and_prepare(self, request) -> None:
+            captured["request"] = request
+
+    monkeypatch.setattr(cli, "DiskManager", lambda: FakeManager())
+
+    result = cli.main(
+        [
+            "create",
+            "--path",
+            r"C:\images\mfm.vhd",
+            "--format",
+            "fat16",
+            "--disk-controller",
+            "mfm",
+            "--custom-chs",
+            "615,4,17",
+        ]
+    )
+    assert result == 0
+    request = captured["request"]
+    assert request.disk_controller is DiskController.MFM
+    assert request.custom_chs == (615, 4, 17)
+    assert request.size_bytes == 615 * 4 * 17 * 512
+    assert "Created and prepared" in capsys.readouterr().out
 
 def test_create_img_parses_2880k_floppy_option(monkeypatch, capsys) -> None:
     captured: dict[str, object] = {}

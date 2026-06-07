@@ -27,8 +27,8 @@ from dosforge.errors import ValidationError
 from dosforge.models import (
     BootMode,
     CreateRequest,
+    DiskController,
     DiskFormat,
-    MachineTarget,
     MediaType,
 )
 
@@ -111,7 +111,6 @@ def _basic_request(target_path: Path, *, disk_format=DiskFormat.FAT16, size_byte
         disk_format=disk_format,
         media_type=MediaType.VHD,
         boot_mode=BootMode.NONE,
-        machine_target=MachineTarget.GENERIC,
     )
     base.update(overrides)
     return CreateRequest(**base)
@@ -311,7 +310,7 @@ def test_windows_vhd_pipeline_accepts_pcdos2000(tmp_path: Path):
 
 def test_windows_vhd_pipeline_rejects_compaq2_on_at_class(tmp_path: Path):
     """Compaq DOS 2.11 (v0.6.19) on plain VHD (IDE/AT) is still rejected
-    with an actionable error pointing at the new MartyPC Xebec Type 1
+    with an actionable error pointing at the new MFM controller
     path or the floppy IMG fallback.  Its 1984 boot code depends on
     Compaq BIOS extensions only the Xebec MFM controller path matches.
     """
@@ -321,6 +320,7 @@ def test_windows_vhd_pipeline_rejects_compaq2_on_at_class(tmp_path: Path):
         boot_mode=BootMode.COMPAQ2,
         disk_format=DiskFormat.FAT12,
         size_bytes=16 * 1024 * 1024,
+        disk_controller=DiskController.IDE,
     )
     runner = FakeRunner(vhd_size_bytes=request.size_bytes)
     manager = _manager(tmp_path, runner)
@@ -328,8 +328,8 @@ def test_windows_vhd_pipeline_rejects_compaq2_on_at_class(tmp_path: Path):
         manager.create_and_prepare(request)
     message = str(excinfo.value)
     assert "compaq2" in message.lower()
-    assert "martypc-xebec" in message.lower()
-    assert "type1" in message.lower()
+    assert "disk-controller mfm" in message.lower()
+    assert "phoenix:1" in message.lower()
 
 
 def test_windows_vhd_pipeline_copies_custom_payload(tmp_path: Path):

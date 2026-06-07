@@ -31,7 +31,6 @@ from dosforge.models import (
     DiskFormat,
     FloppyType,
     FreeDOSSource,
-    MachineTarget,
     MediaType,
 )
 
@@ -56,7 +55,6 @@ def _make_floppy_request(target_path: Path) -> CreateRequest:
         floppy_type=FloppyType.F1440K,
         boot_mode=BootMode.FREEDOS,
         freedos_source=FreeDOSSource.LOCAL,
-        machine_target=MachineTarget.GENERIC,
     )
 
 
@@ -78,7 +76,6 @@ def test_effective_filesystem_format_passes_through_for_vhd(tmp_path: Path):
         floppy_type=request.floppy_type,
         boot_mode=request.boot_mode,
         freedos_source=request.freedos_source,
-        machine_target=request.machine_target,
     )
     assert resolver._effective_filesystem_format(request) is DiskFormat.FAT16
 

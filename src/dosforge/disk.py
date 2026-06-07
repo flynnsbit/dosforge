@@ -42,19 +42,18 @@ from .legacy_dos_install import (
 from .dependencies import BOOT_COMMANDS, REQUIRED_COMMANDS, assert_dependencies, find_missing
 from .errors import DependencyError, DosForgeError, ValidationError
 from .models import (
+    BIOSVendor,
     BootMode,
     CreateRequest,
+    DiskController,
     DiskFormat,
     FloppyType,
     FreeDOSSource,
     IBMDOSVersion,
     MSDOSInstallProfile,
-    MachineTarget,
-    MartyPCAtFormat,
-    MartyPCXebecDriveType,
     MediaType,
     MountRecord,
-    lookup_martypc_at_format,
+    lookup_bios_drive_type,
 )
 from .paths import (
     DOS_ASSETS_SUBDIR,
@@ -289,7 +288,7 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
 # Extracted verbatim from a real MS-DOS 3.30 install performed inside 86Box
 # on an MFM/RLL drive (the user's 86Box-MFM-20M-Option3.vhd reference). The
 # boot loader uses CHS reads only (INT 13h AH=02), which is essential for
-# pre-LBA XT-class BIOSes (the MartyPC Xebec controller and 86Box's MFM/RLL
+# pre-LBA XT-class BIOSes (the MFM controller and 86Box's MFM/RLL
 # controller both fall in that category). Modern Linux MBRs that parted
 # writes use INT 13h AH=42 LBA reads and silently fail on these BIOSes
 # (POST OK, then the boot sector load returns CF=1 and the MBR error path
@@ -422,12 +421,49 @@ def _uses_msdos33_filesystem_layout(request: CreateRequest) -> bool:
     return False
 
 
+def _xt_class_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
+    """Return (cylinders, heads, spt, size_bytes) for MFM/XT-class VHDs."""
+    spec = request.bios_drive_spec
+    if spec is not None:
+        return (spec.cylinders, spec.heads, spec.sectors_per_track, spec.size_bytes)
+    if request.custom_chs is not None:
+        cylinders, heads, sectors_per_track = request.custom_chs
+        return (
+            cylinders,
+            heads,
+            sectors_per_track,
+            cylinders * heads * sectors_per_track * 512,
+        )
+    spec = lookup_bios_drive_type(BIOSVendor.PHOENIX, 1)
+    return (spec.cylinders, spec.heads, spec.sectors_per_track, spec.size_bytes)
+
+
+def _ide_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
+    """Return (cylinders, heads, spt, size_bytes) for IDE/AT-class VHDs."""
+    spec = request.bios_drive_spec
+    if spec is not None:
+        return (spec.cylinders, spec.heads, spec.sectors_per_track, spec.size_bytes)
+    if request.custom_chs is not None:
+        cylinders, heads, sectors_per_track = request.custom_chs
+        return (
+            cylinders,
+            heads,
+            sectors_per_track,
+            cylinders * heads * sectors_per_track * 512,
+        )
+    heads = 16
+    sectors_per_track = 63
+    size_bytes = request.size_bytes
+    cylinders = size_bytes // (heads * sectors_per_track * 512)
+    return (cylinders, heads, sectors_per_track, size_bytes)
+
+
 def _needs_xt_class_mbr_rewrite(request: CreateRequest) -> bool:
     """Return True when the VHD must use a CHS-only DOS-3.3 MBR.
 
     parted's modern MBR boot loader uses INT 13h AH=42 LBA reads and
     invents a BIOS-canonical (head=31+) start CHS in the partition
-    entry — both fatal on pre-LBA XT-class BIOSes like MartyPC's
+    entry — both fatal on pre-LBA XT-class BIOSes like MFM's
     Xebec MFM controller. For these targets we overwrite parted's
     MBR with a standard DOS-3.3 MBR boot loader (CHS reads only) and
     a track-aligned partition entry (start_LBA = spt, real CHS
@@ -437,7 +473,7 @@ def _needs_xt_class_mbr_rewrite(request: CreateRequest) -> bool:
     fine when the BIOS exposes LBA-aware INT 13h extensions.
     """
     return (
-        request.machine_target is MachineTarget.MARTYPC_XEBEC
+        request.effective_disk_controller is DiskController.MFM
         and _uses_msdos33_filesystem_layout(request)
     )
 
@@ -452,8 +488,8 @@ def _partition_offset_bytes_for(request: CreateRequest) -> int:
     produces).
     """
     if _needs_xt_class_mbr_rewrite(request):
-        spec = request.martypc_xebec_drive_type.spec
-        return spec.sectors_per_track * 512
+        _, _, spt, _ = _xt_class_geometry(request)
+        return spt * 512
     return 63 * 512
 
 
@@ -651,7 +687,7 @@ class DiskManager:
                 request=request,
             )
 
-        # XT-class machine targets (MartyPC Xebec on msdos33-layout) need
+        # XT-class machine targets (MFM on msdos33-layout) need
         # an MS-DOS 3.3-style MBR + a track-aligned partition entry.
         # parted's MBR uses LBA INT 13h reads and invents BIOS-canonical
         # start CHS, both of which silently fail on pre-LBA XT BIOSes.
@@ -660,13 +696,13 @@ class DiskManager:
         # subsequent FORMAT C: /S at LBA = spt, which is exactly the
         # layout real DOS 3.3 FDISK produces on MFM controllers.
         if _needs_xt_class_mbr_rewrite(request):
-            spec = request.martypc_xebec_drive_type.spec
+            cylinders, heads, sectors_per_track, _ = _xt_class_geometry(request)
             fs_type = 0x01 if request.disk_format is DiskFormat.FAT12 else 0x04
             self._rewrite_mbr_for_xt_class(
                 vhd_path=target_path,
-                cylinders=spec.cylinders,
-                heads=spec.heads,
-                sectors_per_track=spec.sectors_per_track,
+                cylinders=cylinders,
+                heads=heads,
+                sectors_per_track=sectors_per_track,
                 fs_type=fs_type,
             )
 
@@ -697,7 +733,7 @@ class DiskManager:
             # to the guest, so when DOS's FORMAT.COM writes the partition
             # BPB it picks up 16/63 for heads/spt. For targets whose
             # actual on-hardware controller exposes a different geometry
-            # (notably MartyPC's Xebec MFM controller, which uses native
+            # (notably the MFM MFM controller, which uses native
             # CHS, e.g. 615×4×17), the BPB ends up mismatching real
             # INT 13h reads and the boot sector double-faults — two beeps
             # and a drop into ROM-BASIC. Patch the BPB heads/spt to
@@ -1167,65 +1203,34 @@ class DiskManager:
                 raise ValidationError("Select System format to install DOS boot files into IMG.")
             return
 
-        if request.machine_target is MachineTarget.MARTYPC_XEBEC:
-            self._validate_martypc_xebec_request(request)
-        elif request.machine_target in (
-            MachineTarget.MARTYPC_XTIDE,
-            MachineTarget.MARTYPC_JRIDE,
-        ):
-            self._validate_martypc_at_request(request)
-
-        # BIOS drive-type preset: lock size + footer CHS to the
-        # selected Phoenix/AMI Type N row. Mutually exclusive with the
-        # MartyPC machine targets (which already lock geometry through
-        # their own preset tables).
         if request.bios_drive_type is not None:
             self._validate_bios_drive_type_request(request)
+        elif request.custom_chs is not None:
+            self._validate_custom_chs_request(request)
 
-        # Compaq DOS 2.11 fundamentally cannot boot from a hard disk
-        # in IDE/AT-class emulators: its 1984 MBR/VBR rely on
-        # Compaq-specific BIOS extensions that 86Box / DOSBox-X /
-        # PCem don't emulate.  The ONE working VHD path is the
-        # MartyPC Xebec Type 1 (10 MiB MFM) target, which uses an
-        # XT-class WD1002A-style controller + ST-225-style CHS
-        # geometry + track-aligned partition (start LBA = spt)
-        # exactly like a real 1984 Compaq Plus / DeskPro install.
-        # Anything else is rejected with an actionable error.  Check
-        # FIRST -- before validate_size_for_format -- so the user
-        # picking MartyPC AT/xtide gets the actionable compaq2-specific
-        # message instead of a generic FAT12 size cap error.
+        if request.effective_disk_controller is DiskController.MFM:
+            self._validate_mfm_request(request)
+
+        # Compaq DOS 2.11 hard-disk boot requires an XT-class MFM controller;
+        # IDE/AT-class emulators lack the Compaq-era BIOS behavior it expects.
         if (
             request.boot_mode is BootMode.COMPAQ2
             and request.media_type is MediaType.VHD
-            and not (
-                request.machine_target is MachineTarget.MARTYPC_XEBEC
-                and request.martypc_xebec_drive_type is MartyPCXebecDriveType.TYPE1
-            )
+            and request.effective_disk_controller is DiskController.IDE
         ):
             raise ValidationError(
-                "Compaq DOS 2.11 (compaq2) on VHD requires --machine-target "
-                "martypc-xebec --martypc-xebec-drive-type type1 (10 MiB MFM, the "
-                "1984-authentic Compaq HDD target).  For IDE/AT-class machines, "
-                "DOS 2.11's boot code depends on Compaq BIOS extensions no modern "
-                "emulator provides -- use --media-type img --floppy-type 360k "
-                "instead, or pick compaq331 / msdos5 / msdos622 for a "
-                "hard-disk-compatible DOS."
+                "Compaq DOS 2.11 (compaq2) on VHD requires --disk-controller mfm "
+                "with a 10 MiB MFM geometry such as --bios-drive-type phoenix:1. "
+                "For IDE/AT-class machines, DOS 2.11's boot code depends on "
+                "Compaq BIOS extensions no modern emulator provides -- use "
+                "--media-type img --floppy-type 360k instead, or pick "
+                "compaq331 / msdos5 / msdos622 for a hard-disk-compatible DOS."
             )
         validate_size_for_format(request.size_bytes, request.disk_format)
         if request.disk_format is DiskFormat.FAT12:
-            # FAT12 on VHD is a narrow capability: only the MartyPC
-            # Xebec Type 1 (10 MiB MFM) preset is supported today, with
-            # an MS-DOS 3.30 (msdos33) or IBM 8088 + DOS33 install.
-            # Anywhere else we'd need a hard-disk-aware FAT12 boot
-            # sector / SYS workflow we don't currently produce.
-            if request.machine_target is not MachineTarget.MARTYPC_XEBEC:
+            if request.effective_disk_controller is not DiskController.MFM:
                 raise ValidationError(
-                    "FAT12 on VHD is only supported with the MartyPC Xebec Type 1 (10 MiB) preset."
-                )
-            if request.martypc_xebec_drive_type is not MartyPCXebecDriveType.TYPE1:
-                raise ValidationError(
-                    "FAT12 on VHD is only supported with MartyPC Xebec Type 1 (10 MiB). "
-                    "Pick FAT16 for Xebec Type 2 / 13 / 16."
+                    "FAT12 on VHD is only supported with an MFM controller and 10 MiB-class CHS geometry."
                 )
             if not _uses_msdos33_filesystem_layout(request):
                 raise ValidationError(
@@ -1235,7 +1240,7 @@ class DiskManager:
         if request.boot_mode is BootMode.IBM8088:
             if request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12):
                 raise ValidationError(
-                    "IBM PC 8088/V20 mode supports FAT16 (and FAT12 for the MartyPC Xebec Type 1 preset)."
+                    "IBM PC 8088/V20 mode supports FAT16 (and FAT12 for 10 MiB MFM presets)."
                 )
             validate_size_for_ibm_dos(request.size_bytes, request.ibm_dos_version)
         # MS-DOS 3.30 (msdos33) predates FAT16B and only reads
@@ -1330,14 +1335,14 @@ class DiskManager:
                 "Use --size 1G (or larger), or pick --format fat16 for "
                 "smaller drives."
             )
-        # MSDOS33 accepts FAT16 (default) and FAT12 (only for MartyPC Xebec
+        # MSDOS33 accepts FAT16 (default) and FAT12 (only for MFM
         # Type 1, validated above).
         if (
             request.boot_mode is BootMode.MSDOS33
             and request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12)
         ):
             raise ValidationError(
-                "MS-DOS 3.30 boot mode supports FAT16 (and FAT12 for the MartyPC Xebec Type 1 preset)."
+                "MS-DOS 3.30 boot mode supports FAT16 (and FAT12 for 10 MiB MFM presets)."
             )
         if (
             request.boot_mode is BootMode.FREEDOS
@@ -1429,118 +1434,40 @@ class DiskManager:
                 "to copy these files, move them into a sub-directory away from the install set."
             )
 
-    def _validate_martypc_xebec_request(self, request: CreateRequest) -> None:
+    def _validate_custom_chs_request(self, request: CreateRequest) -> None:
         if request.media_type is not MediaType.VHD:
+            raise ValidationError("Custom CHS geometry is only valid for VHD media.")
+        cylinders, heads, sectors_per_track = request.custom_chs or (0, 0, 0)
+        if cylinders <= 0 or heads <= 0 or sectors_per_track <= 0:
             raise ValidationError(
-                "MartyPC Xebec target requires VHD media; IMG floppies are not supported."
+                "Custom CHS geometry must use positive CYL,HEAD,SPT values."
             )
-        drive_type = request.martypc_xebec_drive_type
-        if drive_type is MartyPCXebecDriveType.TYPE1:
-            # 10 MiB MFM drive — must use FAT12 (only 20800 sectors,
-            # well under FAT16's 16 MiB minimum).
-            if request.disk_format is not DiskFormat.FAT12:
-                raise ValidationError(
-                    "MartyPC Xebec Type 1 (10 MiB, 306x4x17) requires FAT12. "
-                    "Pick disk-format=fat12 (and boot-mode=msdos33 or ibm8088+dos33)."
-                )
-        else:
-            if request.disk_format is not DiskFormat.FAT16:
-                raise ValidationError(
-                    "MartyPC Xebec target requires FAT16 (FAT32 is not supported by the XT-class Xebec HDC). "
-                    "Type 1 uses FAT12 instead."
-                )
-        xt_class_modes = {
-            BootMode.NONE,
-            BootMode.IBM8088,
-            BootMode.MSDOS33,
-            BootMode.MSDOS331,
-            BootMode.PCDOS,
-            BootMode.COMPAQ2,
-            BootMode.COMPAQ331,
-        }
-        if request.boot_mode not in xt_class_modes:
-            raise ValidationError(
-                "MartyPC Xebec target only supports XT-class DOS boot modes "
-                "(none, ibm8088, msdos33, msdos331, pcdos, compaq2, compaq331)."
-            )
-        if request.boot_mode is BootMode.IBM8088 and request.ibm_dos_version is not IBMDOSVersion.DOS33:
-            raise ValidationError(
-                "MartyPC Xebec target with ibm8088 boot mode requires --ibm-dos-version dos33 "
-                "(the 20 MiB Xebec drives are well under the DOS 5.0 504 MiB profile cap)."
-            )
-        # Force the requested size to match the drive type so users don't get a
-        # confusing "size was X, became Y" surprise. Validation always runs
-        # before the size is consumed downstream.
-        request.size_bytes = drive_type.size_bytes
+        request.size_bytes = cylinders * heads * sectors_per_track * 512
 
-    def _validate_martypc_at_request(self, request: CreateRequest) -> None:
-        controller_label = (
-            "XT-IDE"
-            if request.machine_target is MachineTarget.MARTYPC_XTIDE
-            else "JR-IDE"
-        )
+    def _validate_mfm_request(self, request: CreateRequest) -> None:
         if request.media_type is not MediaType.VHD:
-            raise ValidationError(
-                f"MartyPC {controller_label} target requires VHD media; IMG floppies are not supported."
-            )
-        fmt = request.martypc_at_drive_type
-        size_bytes = fmt.size_bytes
-        if size_bytes < FAT16_MIN_BYTES and request.disk_format is DiskFormat.FAT16:
-            raise ValidationError(
-                f"MartyPC {controller_label} drive type {fmt.slug} "
-                f"({fmt.description}) is below the 16 MiB FAT16 minimum and requires FAT12, "
-                "which dosforge does not yet produce for VHD targets. "
-                "Pick an AT drive type that is at least 16 MiB."
-            )
-        if request.disk_format is DiskFormat.FAT32 and size_bytes < FAT32_MIN_BYTES:
-            raise ValidationError(
-                f"MartyPC {controller_label} drive type {fmt.slug} "
-                f"({fmt.description}) is below the 64 MiB FAT32 minimum. "
-                "Pick a larger drive type, or use FAT16."
-            )
-        if request.boot_mode is BootMode.IBM8088:
-            ibm_max = (
-                IBM_DOS33_MAX_BYTES
-                if request.ibm_dos_version is IBMDOSVersion.DOS33
-                else IBM_DOS50_MAX_BYTES
-            )
-            if size_bytes > ibm_max:
-                version_label = (
-                    "DOS 3.3 (32 MiB)"
-                    if request.ibm_dos_version is IBMDOSVersion.DOS33
-                    else "DOS 5.0 (504 MiB)"
-                )
-                raise ValidationError(
-                    f"MartyPC {controller_label} drive type {fmt.slug} "
-                    f"({fmt.description}, {size_bytes // 1024 // 1024} MiB) exceeds the "
-                    f"IBM 8088/V20 {version_label} limit. Pick a smaller AT drive type or "
-                    "switch to a non-IBM8088 boot mode."
-                )
+            raise ValidationError("MFM disk-controller requests require VHD media.")
+        _, _, _, size_bytes = _xt_class_geometry(request)
         request.size_bytes = size_bytes
+        if request.boot_mode in (BootMode.MSDOS71, BootMode.PCDOS71):
+            raise ValidationError(
+                "MFM disk-controller requests do not support msdos71 or pcdos71 boot modes; "
+                "use --disk-controller ide for AT-class DOS 7.x/LBA/FAT32 builds."
+            )
+        if request.disk_format is DiskFormat.FAT32:
+            raise ValidationError(
+                "MFM disk-controller requests do not support FAT32; use FAT12/FAT16 or --disk-controller ide."
+            )
+        if size_bytes > 504 * 1024 * 1024:
+            raise ValidationError(
+                "MFM disk-controller requests are limited to 504 MiB or smaller CHS geometries."
+            )
 
     def _validate_bios_drive_type_request(self, request: CreateRequest) -> None:
-        """Validate a Phoenix/AMI BIOS drive-type preset and lock the size.
-
-        The classic AT-BIOS HDD types lock both the total size and the
-        footer CHS, so 86Box's BIOS auto-detect locks onto "Type N"
-        instead of "User-defined". Mutually exclusive with the MartyPC
-        machine targets — they're a different geometry source and
-        combining them would produce ambiguous footers.
-
-        Also enforces the regular boot-mode size caps (msdos33 and
-        msdos331 at 32 MiB, IBM8088+DOS33 at 32 MiB, etc.) since some
-        BIOS Types exceed those caps (Type 4 = 62 MB, Type 9 = 112 MB).
-        """
+        """Validate a Phoenix/AMI BIOS drive-type preset and lock the size."""
         if request.media_type is not MediaType.VHD:
             raise ValidationError(
                 "BIOS drive-type presets are only valid for VHD media."
-            )
-        if request.machine_target is not MachineTarget.GENERIC:
-            raise ValidationError(
-                "BIOS drive-type presets are mutually exclusive with MartyPC "
-                "machine targets. Use machine-target=generic to pick a Phoenix/AMI "
-                "Type N, or switch off the BIOS drive-type to use MartyPC's "
-                "drive-type table."
             )
         spec = request.bios_drive_spec  # raises if invalid (vendor, type_id)
         assert spec is not None  # _validate_create_request only calls us when set
@@ -1590,24 +1517,12 @@ class DiskManager:
             return
         if request.media_type is not MediaType.VHD:
             return
-        if request.machine_target in (
-            MachineTarget.MARTYPC_XEBEC,
-            MachineTarget.MARTYPC_XTIDE,
-            MachineTarget.MARTYPC_JRIDE,
+        if (
+            request.effective_disk_controller is DiskController.MFM
+            or request.bios_drive_type is not None
+            or request.custom_chs is not None
         ):
-            # MartyPC targets have fixed geometry/size; we cannot grow them
-            # to fit payload. Validation in _validate_martypc_*_request
-            # enforces the chosen drive type's size verbatim, so the most
-            # helpful thing we can do is fail fast when the requested
-            # payload won't fit.
-            self._validate_custom_payload_fits_fixed_drive(
-                request=request,
-                custom_payload=custom_payload,
-            )
-            return
-        if request.bios_drive_type is not None:
-            # BIOS-typed disks are locked to the preset's exact size,
-            # same as MartyPC drives. Fail fast if the payload won't fit.
+            # Geometry-locked disks cannot auto-grow to fit payloads.
             self._validate_custom_payload_fits_fixed_drive(
                 request=request,
                 custom_payload=custom_payload,
@@ -1629,11 +1544,11 @@ class DiskManager:
         request: CreateRequest,
         custom_payload: Path,
     ) -> None:
-        """Reject a custom payload that won't fit in a fixed-size MartyPC VHD.
+        """Reject a custom payload that won't fit in a fixed-size MFM VHD.
 
         Mirrors the behavior of generic VHDs (which auto-grow) and the
         floppy IMG / mounted-FS payload copy (which uses statvfs to
-        verify free space). MartyPC drives have a fixed geometry from
+        verify free space). geometry-locked drives have a fixed geometry from
         the chosen drive type, so we estimate payload bytes here and
         raise a clear ValidationError if it exceeds the data area.
 
@@ -1666,68 +1581,35 @@ class DiskManager:
                 f"Custom payload (~{estimated_payload // 1024} KiB on FAT) does not fit on the "
                 f"{drive_label} ({request.size_bytes // 1024} KiB total, "
                 f"~{available_bytes // 1024} KiB usable after DOS files / FAT overhead). "
-                "Pick a larger MartyPC drive type, or shrink the custom payload."
+                "Pick a larger geometry, or shrink the custom payload."
             )
 
     @staticmethod
     def _describe_machine_drive(request: CreateRequest) -> str:
-        if request.machine_target is MachineTarget.MARTYPC_XEBEC:
-            spec = request.martypc_xebec_drive_type.spec
-            return (
-                f"MartyPC Xebec {request.martypc_xebec_drive_type.value} "
-                f"({spec.description})"
-            )
-        if request.machine_target in (
-            MachineTarget.MARTYPC_XTIDE,
-            MachineTarget.MARTYPC_JRIDE,
-        ):
-            fmt = request.martypc_at_drive_type
-            label = "XT-IDE" if request.machine_target is MachineTarget.MARTYPC_XTIDE else "JR-IDE"
-            return f"MartyPC {label} {fmt.slug} ({fmt.description})"
+        if request.effective_disk_controller is DiskController.MFM:
+            cylinders, heads, sectors_per_track, _ = _xt_class_geometry(request)
+            return f"MFM {cylinders}x{heads}x{sectors_per_track}"
         bios_spec = request.bios_drive_spec
         if bios_spec is not None:
             return f"BIOS preset {bios_spec.slug} ({bios_spec.description})"
+        if request.custom_chs is not None:
+            cylinders, heads, sectors_per_track = request.custom_chs
+            return f"custom CHS {cylinders}x{heads}x{sectors_per_track}"
         return "selected fixed-size drive"
-
-    @staticmethod
-    def _martypc_locked_geometry(
-        request: CreateRequest,
-    ) -> tuple[int, int, int] | None:
-        """Return (cyl, heads, spt) when the request targets a MartyPC HDC.
-
-        Returns ``None`` for generic targets so callers can fall through to
-        the standard 16h/63spt footer normalization.
-        """
-        if request.machine_target is MachineTarget.MARTYPC_XEBEC:
-            spec = request.martypc_xebec_drive_type.spec
-            return (spec.cylinders, spec.heads, spec.sectors_per_track)
-        if request.machine_target in (
-            MachineTarget.MARTYPC_XTIDE,
-            MachineTarget.MARTYPC_JRIDE,
-        ):
-            fmt = request.martypc_at_drive_type
-            return (fmt.cylinders, fmt.heads, fmt.sectors_per_track)
-        return None
 
     @staticmethod
     def _request_locked_geometry(
         request: CreateRequest,
     ) -> tuple[int, int, int] | None:
-        """Return locked (cyl, heads, spt) from MartyPC OR BIOS-type presets.
-
-        The MartyPC machine targets and the classic AT-BIOS HDD-type
-        presets both lock the footer CHS to an exact value (instead of
-        the 16h/63s canonical normalization). They are mutually
-        exclusive — validated in ``_validate_create_request``. This
-        helper returns whichever geometry source is active, or ``None``
-        for a fully generic build.
-        """
-        martypc = DiskManager._martypc_locked_geometry(request)
-        if martypc is not None:
-            return martypc
+        """Return locked (cyl, heads, spt) from controller/BIOS/custom CHS."""
+        if request.effective_disk_controller is DiskController.MFM:
+            cylinders, heads, sectors_per_track, _ = _xt_class_geometry(request)
+            return (cylinders, heads, sectors_per_track)
         spec = request.bios_drive_spec
         if spec is not None:
             return (spec.cylinders, spec.heads, spec.sectors_per_track)
+        if request.custom_chs is not None:
+            return request.custom_chs
         return None
 
     def _create_fixed_vhd(
@@ -1869,34 +1751,24 @@ class DiskManager:
     def _normalize_vhd_size_for_chs(self, request: CreateRequest) -> int:
         """Determine the byte-exact size to pass to ``qemu-img create``.
 
-        - ``MachineTarget.MARTYPC_XEBEC``: returns the exact size of the
-          selected Xebec drive type (cyl x heads x spt x 512). MartyPC's
-          Xebec HDC validates the footer against this exact CHS at mount
-          time, so any deviation will be rejected.
-        - ``MachineTarget.MARTYPC_XTIDE`` / ``MARTYPC_JRIDE``: returns the
-          exact size of the selected AT/XT-IDE drive type from MartyPC's
-          127-entry AtFormats table.
+        - MFM controller: returns the resolved XT-class CHS size.
         - ``CreateRequest.bios_drive_type`` set: returns the exact size
-          of the selected classic AT BIOS Type N preset (mirrors the
-          MartyPC behavior — the BIOS table also requires footer CHS to
-          match the table's geometry exactly so 86Box's BIOS auto-detect
-          locks onto Type N at boot).
-        - ``MachineTarget.GENERIC``: rounds ``request.size_bytes`` to a
+          of the selected classic AT BIOS Type N preset.
+        - ``CreateRequest.custom_chs`` set: returns the exact custom CHS size.
+        - otherwise: rounds ``request.size_bytes`` to a
           cylinder of 16-head x 63-spt geometry so the post-create footer
           rewrite maps ``cyl x 16 x 63`` exactly to ``total_sectors``. Caps
           respect the requested DOS / FAT format (DOS-3.3 partition uint16
           cap, FAT16 2 GiB, FAT32 2 TiB).
         """
-        if request.machine_target is MachineTarget.MARTYPC_XEBEC:
-            return request.martypc_xebec_drive_type.size_bytes
-        if request.machine_target in (
-            MachineTarget.MARTYPC_XTIDE,
-            MachineTarget.MARTYPC_JRIDE,
-        ):
-            return request.martypc_at_drive_type.size_bytes
-        bios_spec = request.bios_drive_spec
-        if bios_spec is not None:
-            return bios_spec.size_bytes
+        if request.effective_disk_controller is DiskController.MFM:
+            _, _, _, size = _xt_class_geometry(request)
+            return size
+        if request.bios_drive_type is not None:
+            return request.bios_drive_spec.size_bytes
+        if request.custom_chs is not None:
+            cyl, h, spt = request.custom_chs
+            return cyl * h * spt * 512
 
         min_bytes: int | None
         max_bytes: int | None
@@ -2213,21 +2085,21 @@ class DiskManager:
             format_cmd.append("::")
             self.runner.run(format_cmd)
 
-        # XT-class machine targets (MartyPC Xebec on msdos33-layout) need
+        # XT-class machine targets (MFM on msdos33-layout) need
         # an MS-DOS 3.3-style MBR + track-aligned partition entry that
-        # MartyPC's pre-LBA Xebec controller will accept. Rewrite the
+        # MFM's pre-LBA Xebec controller will accept. Rewrite the
         # MBR here, while QEMU isn't running and we have exclusive file
         # access. The new partition entry points subsequent FORMAT C: /S
         # at LBA = spt, which is what real DOS 3.3 FDISK produces on MFM
         # controllers.
         if _needs_xt_class_mbr_rewrite(request):
-            spec = request.martypc_xebec_drive_type.spec
+            cylinders, heads, sectors_per_track, _ = _xt_class_geometry(request)
             fs_type = 0x01 if request.disk_format is DiskFormat.FAT12 else 0x04
             self._rewrite_mbr_for_xt_class(
                 vhd_path=target_path,
-                cylinders=spec.cylinders,
-                heads=spec.heads,
-                sectors_per_track=spec.sectors_per_track,
+                cylinders=cylinders,
+                heads=heads,
+                sectors_per_track=sectors_per_track,
                 fs_type=fs_type,
             )
 
@@ -2376,7 +2248,7 @@ class DiskManager:
                 # FAT16 modes: QEMU SYS install leaves QEMU's SeaBIOS
                 # geometry in the BPB. Patch to the VHD footer CHS that
                 # the target controller will actually present (16h/63s
-                # on generic targets; MartyPC Xebec drive geometry on
+                # on generic targets; MFM drive geometry on
                 # Xebec targets — that's what avoids the "two beeps +
                 # ROM-BASIC" boot failure on Xebec).
                 #
@@ -2674,7 +2546,7 @@ class DiskManager:
         )
         profile = descriptor.profile_builder(install_image, boot_assets_dir)
         # MBR partition usually starts at LBA 63 (parted's legacy DOS
-        # layout). XT-class targets (MartyPC Xebec on msdos33) get a
+        # layout). XT-class targets (MFM on msdos33) get a
         # track-aligned partition at LBA = spt instead — see
         # ``_partition_offset_bytes_for``.
         if partition_offset_bytes is None:
@@ -3935,9 +3807,9 @@ class DiskManager:
         After QEMU runs FORMAT C: /S inside DOS, the BPB heads/spt
         reflect QEMU's SeaBIOS view of the disk (BIOS-canonical
         16h/63s), not the geometry the real target controller will
-        expose. For non-MartyPC targets (86Box AUTO IDE / LARGE
+        expose. For non-geometry-locked targets (86Box AUTO IDE / LARGE
         translation) the footer is also 16/63, so this is a no-op.
-        For MartyPC Xebec targets the footer carries the controller's
+        For MFM targets the footer carries the controller's
         native MFM CHS (e.g. 615×4×17 for Type 2), and patching the
         BPB here is what stops the "two beeps + corrupt characters +
         ROM-BASIC" boot failure.
@@ -3995,7 +3867,7 @@ class DiskManager:
         """Overwrite the VHD's MBR with a DOS-3.3-style boot loader and
         a track-aligned partition entry.
 
-        Used for MartyPC Xebec targets whose XT-class BIOS only supports
+        Used for MFM targets whose XT-class BIOS only supports
         INT 13h AH=02 (CHS) reads. The partition is placed at LBA = spt
         (one track in, exactly what real DOS 3.3 FDISK produces on an
         MFM drive) with start CHS = (cyl=0, head=1, sec=1) and end CHS

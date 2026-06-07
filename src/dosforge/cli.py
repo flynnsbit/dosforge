@@ -16,18 +16,15 @@ from .models import (
     BIOSVendor,
     BootMode,
     CreateRequest,
+    DiskController,
     DiskFormat,
     FloppyType,
     FreeDOSSource,
     IBMDOSVersion,
     MSDOSInstallProfile,
-    MachineTarget,
-    MartyPCXebecDriveType,
     MediaType,
-    DEFAULT_MARTYPC_AT_FORMAT_SLUG,
-    MARTYPC_AT_FORMATS,
     iter_bios_drive_types,
-    lookup_martypc_at_format,
+    lookup_bios_drive_type,
     parse_bios_drive_slug,
 )
 from .size import parse_size
@@ -62,6 +59,19 @@ examples:
 
 Run any subcommand with --help for its full option list.
 """
+
+
+def _parse_chs(value: str) -> tuple[int, int, int]:
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 3:
+        raise argparse.ArgumentTypeError("expected CYL,HEAD,SPT (for example 306,4,17)")
+    try:
+        cylinders, heads, sectors_per_track = (int(part) for part in parts)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("CHS values must be integers") from exc
+    if cylinders <= 0 or heads <= 0 or sectors_per_track <= 0:
+        raise argparse.ArgumentTypeError("CHS values must be positive")
+    return (cylinders, heads, sectors_per_track)
 
 
 def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
@@ -171,37 +181,16 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
         help="Directory whose contents are copied into the created filesystem root.",
     )
     create.add_argument(
-        "--machine-target",
-        choices=[target.value for target in MachineTarget],
-        default=MachineTarget.GENERIC.value,
-        help=(
-            "Emulator/machine profile constraining VHD geometry. "
-            "'generic' uses canonical ATA 16h/63spt; "
-            "'martypc-xebec' uses one of the 4 fixed Xebec MFM drive geometries."
-        ),
+        "--disk-controller",
+        choices=[controller.value for controller in DiskController],
+        default=None,
+        help="Hard-disk controller class for VHD output (auto-detected from boot mode if unset).",
     )
     create.add_argument(
-        "--martypc-xebec-drive-type",
-        choices=[dt.value for dt in MartyPCXebecDriveType],
-        default=MartyPCXebecDriveType.TYPE2.value,
-        help=(
-            "MartyPC Xebec drive type when --machine-target=martypc-xebec: "
-            "type1 (10 MiB 306x4x17, requires FAT12 — not yet supported), "
-            "type16 (20 MiB 612x4x17), "
-            "type2 (20 MiB 615x4x17), "
-            "type13 (20 MiB 306x8x17)."
-        ),
-    )
-    create.add_argument(
-        "--martypc-at-drive-type",
-        default=DEFAULT_MARTYPC_AT_FORMAT_SLUG,
-        metavar="SLUG",
-        help=(
-            "MartyPC AT/XT-IDE drive type when --machine-target=martypc-xtide "
-            "or martypc-jride. Slug format is 'at-<cyl>-<heads>-<spt>' (for "
-            "example 'at-1024-16-63' for the 504 MiB entry). Run "
-            "'dosforge list-martypc-formats' for the full set of 127 entries."
-        ),
+        "--custom-chs",
+        type=_parse_chs,
+        default=None,
+        help="Custom CHS geometry as CYL,HEAD,SPT (e.g. 306,4,17). Used when --bios-drive-type is unset.",
     )
     create.add_argument(
         "--bios-drive-type",
@@ -212,8 +201,7 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
             "auto-detect shows 'Type N' instead of 'User-defined'. Format is "
             "'<vendor>:<type_id>', e.g. 'phoenix:1' (10 MB 306x4x17), "
             "'ami:45' (68 MB 1024x8x17), or 'auto:N' (alias for phoenix). "
-            "Run 'dosforge list-bios-drive-types' for the full table. "
-            "Mutually exclusive with the MartyPC machine targets."
+            "Run 'dosforge list-bios-drive-types' for the full table."
         ),
     )
 
@@ -225,10 +213,6 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
     unmount.add_argument("--mount-point", required=True, help="Mount path to unmount.")
 
     subcommands.add_parser("list-mounts", help="List tracked active mounts.")
-    subcommands.add_parser(
-        "list-martypc-formats",
-        help="Print all 127 MartyPC AT/XT-IDE drive type slugs and exit.",
-    )
     subcommands.add_parser(
         "list-bios-drive-types",
         help="Print the Phoenix and AMI classic AT BIOS HDD type tables and exit.",
@@ -831,14 +815,7 @@ def _run_manager_subcommand(args, parser) -> int:
             media_type = MediaType(args.media_type)
             floppy_type = FloppyType(args.floppy_type)
             disk_format = DiskFormat(args.disk_format) if media_type is MediaType.VHD else DiskFormat.FAT16
-            machine_target_value = MachineTarget(args.machine_target)
-            martypc_at_slug = args.martypc_at_drive_type
-            if machine_target_value in (
-                MachineTarget.MARTYPC_XTIDE,
-                MachineTarget.MARTYPC_JRIDE,
-            ):
-                # Validate slug eagerly so CLI errors are clear.
-                lookup_martypc_at_format(martypc_at_slug)
+            disk_controller = DiskController(args.disk_controller) if args.disk_controller else None
             bios_drive_type: tuple[BIOSVendor, int] | None = None
             if args.bios_drive_type is not None:
                 try:
@@ -846,27 +823,20 @@ def _run_manager_subcommand(args, parser) -> int:
                 except ValueError as exc:
                     raise ValidationError(str(exc)) from exc
             if media_type is MediaType.VHD:
-                if args.size:
+                if bios_drive_type is not None:
+                    vendor, type_id = bios_drive_type
+                    size_bytes = lookup_bios_drive_type(vendor, type_id).size_bytes
+                elif args.custom_chs is not None:
+                    cyl, heads, spt = args.custom_chs
+                    size_bytes = cyl * heads * spt * 512
+                elif args.size:
                     size_bytes = parse_size(args.size)
                 elif args.custom_payload_path:
                     size_bytes = 1
-                elif machine_target_value is MachineTarget.MARTYPC_XEBEC:
-                    size_bytes = MartyPCXebecDriveType(args.martypc_xebec_drive_type).size_bytes
-                elif machine_target_value in (
-                    MachineTarget.MARTYPC_XTIDE,
-                    MachineTarget.MARTYPC_JRIDE,
-                ):
-                    size_bytes = lookup_martypc_at_format(martypc_at_slug).size_bytes
-                elif bios_drive_type is not None:
-                    # BIOS-typed drives lock size to the preset; placeholder
-                    # value is overwritten by ``_validate_bios_drive_type_request``.
-                    from .models import lookup_bios_drive_type as _lookup_bios
-                    vendor, type_id = bios_drive_type
-                    size_bytes = _lookup_bios(vendor, type_id).size_bytes
                 else:
                     raise ValidationError(
-                        "--size is required when --media-type is vhd unless --custom-payload-path is provided, "
-                        "--bios-drive-type is set, or --machine-target selects a fixed-geometry profile."
+                        "--size is required when --media-type is vhd unless --custom-payload-path, "
+                        "--bios-drive-type, or --custom-chs is provided."
                     )
             else:
                 size_bytes = parse_size(args.size) if args.size else floppy_type.size_bytes
@@ -886,10 +856,9 @@ def _run_manager_subcommand(args, parser) -> int:
                 msdos_install_profile=MSDOSInstallProfile(args.msdos_install_profile),
                 ibm_dos_version=IBMDOSVersion(args.ibm_dos_version),
                 custom_payload_path=Path(args.custom_payload_path).expanduser() if args.custom_payload_path else None,
-                machine_target=MachineTarget(args.machine_target),
-                martypc_xebec_drive_type=MartyPCXebecDriveType(args.martypc_xebec_drive_type),
-                martypc_at_drive_type_slug=martypc_at_slug,
                 bios_drive_type=bios_drive_type,
+                disk_controller=disk_controller,
+                custom_chs=args.custom_chs,
                 host_boot_mode=BootMode(args.host_boot_mode) if args.host_boot_mode else None,
             )
             # Surface a "this build is slow" hint up-front for boot
@@ -967,17 +936,6 @@ def _run_manager_subcommand(args, parser) -> int:
                 print(f"{mount.mount_point}\t{mount.vhd_path}\t{mount.nbd_device}")
             return 0
 
-        if args.command == "list-martypc-formats":
-            print(
-                f"{'slug':18s}  {'CHS':>13}  {'bytes':>11}  {'MiB':>7}  description"
-            )
-            for fmt in MARTYPC_AT_FORMATS:
-                chs = f"{fmt.cylinders}x{fmt.heads}x{fmt.sectors_per_track}"
-                print(
-                    f"{fmt.slug:18s}  {chs:>13}  {fmt.size_bytes:>11}  "
-                    f"{fmt.size_bytes/1024/1024:>7.2f}  {fmt.description}"
-                )
-            return 0
 
         if args.command == "list-bios-drive-types":
             for vendor in (BIOSVendor.PHOENIX, BIOSVendor.AMI):

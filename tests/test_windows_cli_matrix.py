@@ -197,15 +197,6 @@ class TestPlumbingVerbs:
         result = run_cli("list-mounts")
         assert_success(result)
 
-    def test_list_martypc_formats(self):
-        result = run_cli("list-martypc-formats")
-        assert_success(result)
-        # The table should advertise the standard 504 MiB cap entry.
-        assert "at-1024-16-63" in result.stdout
-        # We expect 127 entries; count slug-shaped lines.
-        slug_lines = re.findall(r"^\s*at-\d+-\d+-\d+", result.stdout, flags=re.MULTILINE)
-        assert len(slug_lines) == 127, f"Expected 127 AT slugs, got {len(slug_lines)}"
-
     def test_list_bios_drive_types(self):
         result = run_cli("list-bios-drive-types")
         assert_success(result)
@@ -389,34 +380,32 @@ class TestVhdCustomPayload:
 
 
 # --------------------------------------------------------------------------
-# 5. Machine-target VHDs
+# 5. Controller/geometry VHDs
 # --------------------------------------------------------------------------
 
 
-class TestMachineTargets:
+class TestControllerTargets:
     @pytest.mark.parametrize(
-        "drive_type,expected_cyl,expected_heads,expected_spt",
+        "bios_type,expected_cyl,expected_heads,expected_spt",
         [
-            ("type16", 612, 4, 17),
-            ("type2", 615, 4, 17),
-            ("type13", 306, 8, 17),
+            (2, 615, 4, 17),
         ],
     )
-    def test_martypc_xebec_geometry_locks_footer(
+    def test_mfm_bios_geometry_locks_footer(
         self,
         tmp_path: Path,
-        drive_type: str,
+        bios_type: int,
         expected_cyl: int,
         expected_heads: int,
         expected_spt: int,
     ):
-        vhd = tmp_path / f"xebec-{drive_type}.vhd"
+        vhd = tmp_path / f"mfm-phoenix-{bios_type}.vhd"
         result = run_cli(
             "create",
             "--media-type", "vhd",
             "--format", "fat16",
-            "--machine-target", "martypc-xebec",
-            "--martypc-xebec-drive-type", drive_type,
+            "--disk-controller", "mfm",
+            "--bios-drive-type", f"phoenix:{bios_type}",
             "--path", str(vhd),
         )
         assert_success(result)
@@ -424,19 +413,16 @@ class TestMachineTargets:
         cyl = struct.unpack(">H", footer[56:58])[0]
         heads = footer[58]
         spt = footer[59]
-        assert (cyl, heads, spt) == (expected_cyl, expected_heads, expected_spt), (
-            f"Footer CHS mismatch for {drive_type}: "
-            f"expected {(expected_cyl, expected_heads, expected_spt)}, got {(cyl, heads, spt)}"
-        )
+        assert (cyl, heads, spt) == (expected_cyl, expected_heads, expected_spt)
 
-    def test_martypc_xtide_504mib_standard(self, tmp_path: Path):
+    def test_ide_custom_chs_504mib_standard(self, tmp_path: Path):
         vhd = tmp_path / "xtide-504m.vhd"
         result = run_cli(
             "create",
             "--media-type", "vhd",
             "--format", "fat16",
-            "--machine-target", "martypc-xtide",
-            "--martypc-at-drive-type", "at-1024-16-63",
+            "--disk-controller", "ide",
+            "--custom-chs", "1024,16,63",
             "--path", str(vhd),
         )
         assert_success(result)
@@ -445,7 +431,7 @@ class TestMachineTargets:
         heads = footer[58]
         spt = footer[59]
         assert (cyl, heads, spt) == (1024, 16, 63), (
-            f"504MiB XT-IDE footer CHS expected (1024,16,63), got {(cyl, heads, spt)}"
+            f"504MiB IDE footer CHS expected (1024,16,63), got {(cyl, heads, spt)}"
         )
         # Total data area should be exactly cyl*heads*spt*512.
         expected_total = 1024 * 16 * 63 * 512
@@ -737,8 +723,7 @@ class TestNegativeCases:
             "--size", "128M",
             "--path", str(vhd),
             "--boot-mode", "freedos",
-            "--freedos-source", "local",
-            "--boot-assets-path", str(FREEDOS_ASSETS),
+            "--freedos-source", "auto",
         )
         assert_clean_error(result, contains="FAT16")
 

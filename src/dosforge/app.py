@@ -45,15 +45,11 @@ from .models import (
     FreeDOSSource,
     IBMDOSVersion,
     MSDOSInstallProfile,
-    MachineTarget,
-    MartyPCXebecDriveType,
+    DiskController,
     MediaType,
     BIOSVendor,
-    DEFAULT_MARTYPC_AT_FORMAT_SLUG,
-    MARTYPC_AT_FORMATS,
     iter_bios_drive_types,
     lookup_bios_drive_type,
-    lookup_martypc_at_format,
     parse_bios_drive_slug,
 )
 from .size import parse_size
@@ -109,29 +105,12 @@ _IBM_DOS_VERSION_OPTIONS = [
     ("IBM DOS 3.3 (max 32MB)", IBMDOSVersion.DOS33.value),
     ("IBM DOS 5.0 (max ~504MB)", IBMDOSVersion.DOS50.value),
 ]
-_MACHINE_TARGET_OPTIONS = [
-    ("Generic (86Box / QEMU / etc.)", MachineTarget.GENERIC.value),
-    ("MartyPC IBM/Xebec MFM", MachineTarget.MARTYPC_XEBEC.value),
-    ("MartyPC XT-IDE (Rev 2 PIO)", MachineTarget.MARTYPC_XTIDE.value),
-    ("MartyPC JR-IDE (PCjr sidecar)", MachineTarget.MARTYPC_JRIDE.value),
-]
-_MARTYPC_XEBEC_DRIVE_TYPE_OPTIONS = [
-    (drive_type.description, drive_type.value)
-    for drive_type in MartyPCXebecDriveType
-]
-# MartyPC's AT/XT-IDE table is 127 entries; the Select widget scrolls fine.
-_MARTYPC_AT_DRIVE_TYPE_OPTIONS = [
-    (
-        f"{fmt.description}  [{fmt.cylinders}x{fmt.heads}x{fmt.sectors_per_track}]",
-        fmt.slug,
-    )
-    for fmt in MARTYPC_AT_FORMATS
+_DISK_CONTROLLER_OPTIONS = [
+    ("Auto-detect from boot mode", ""),
+    ("IDE (AT-class)", DiskController.IDE.value),
+    ("MFM (XT-class, ST-225 era)", DiskController.MFM.value),
 ]
 
-# Classic AT BIOS HDD type presets — 44 entries each for Phoenix and
-# AMI (Type 15 reserved/omitted). The Select widget shows them grouped
-# with the special "Custom" entry on top so the default behavior
-# (typing a size in MB) maps to a single value.
 _BIOS_CUSTOM_VALUE = ""
 _BIOS_DRIVE_TYPE_OPTIONS: list[tuple[str, str]] = [
     ("Custom — use size field", _BIOS_CUSTOM_VALUE),
@@ -462,7 +441,7 @@ class DosForgeApp(App[None]):
                                     options=[
                                         ("None (data disk only)", BootMode.NONE.value),
                                         ("FreeDOS bootable", BootMode.FREEDOS.value),
-                                        ("MS-DOS 7.1 bootable", BootMode.MSDOS71.value),
+                                        ("MS-DOS 7.10 / Win95 OSR2 bootable (FAT16/FAT32, 4.00.1111)", BootMode.MSDOS71.value),
                                         (
                                             "IBM PC 8088/V20 (DOS 3.3 / 5.0)",
                                             BootMode.IBM8088.value,
@@ -485,7 +464,7 @@ class DosForgeApp(App[None]):
                                             BootMode.PCDOS71.value,
                                         ),
                                         (
-                                            "Compaq DOS 2.11 (360k floppy or MartyPC Xebec Type 1 MFM)",
+                                            "Compaq DOS 2.11 (360k floppy or 10 MiB MFM VHD)",
                                             BootMode.COMPAQ2.value,
                                         ),
                                         ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
@@ -533,21 +512,11 @@ class DosForgeApp(App[None]):
                                     value=MediaType.VHD.value,
                                     id="media-type",
                                 )
-                                yield Label("Machine target", id="machine-target-label")
+                                yield Label("Disk controller", id="disk-controller-label")
                                 yield SingleClickSelect(
-                                    options=_MACHINE_TARGET_OPTIONS,
-                                    value=MachineTarget.GENERIC.value,
-                                    id="machine-target",
-                                )
-                                yield SingleClickSelect(
-                                    options=_MARTYPC_XEBEC_DRIVE_TYPE_OPTIONS,
-                                    value=MartyPCXebecDriveType.TYPE2.value,
-                                    id="martypc-xebec-drive-type",
-                                )
-                                yield SingleClickSelect(
-                                    options=_MARTYPC_AT_DRIVE_TYPE_OPTIONS,
-                                    value=DEFAULT_MARTYPC_AT_FORMAT_SLUG,
-                                    id="martypc-at-drive-type",
+                                    options=_DISK_CONTROLLER_OPTIONS,
+                                    value="",
+                                    id="disk-controller",
                                 )
                                 yield Label("Output path", id="create-path-label")
                                 with Horizontal(classes="path-row", id="create-path-row"):
@@ -568,10 +537,15 @@ class DosForgeApp(App[None]):
                                     value=_BIOS_CUSTOM_VALUE,
                                     id="bios-drive-type",
                                 )
+                                yield Label("Custom CHS", id="custom-chs-label")
+                                yield Input(
+                                    placeholder="CYL,HEAD,SPT (for example 306,4,17)",
+                                    id="custom-chs",
+                                )
                                 yield Label("Filesystem", id="create-format-label")
                                 yield SingleClickSelect(
                                     options=[
-                                        ("FAT12 (MartyPC Xebec Type 1 only)", DiskFormat.FAT12.value),
+                                        ("FAT12 (MFM / DOS 2.x-3.x)", DiskFormat.FAT12.value),
                                         ("FAT16", DiskFormat.FAT16.value),
                                         ("FAT32", DiskFormat.FAT32.value),
                                     ],
@@ -885,73 +859,11 @@ class DosForgeApp(App[None]):
             if media_type is MediaType.IMG:
                 self.query_one("#img-system-format", Checkbox).value = False
                 self.query_one("#boot-mode", Select).value = BootMode.NONE.value
-                # IMG floppies can't use a MartyPC HDC target.
-                self.query_one("#machine-target", Select).value = MachineTarget.GENERIC.value
+                self.query_one("#disk-controller", Select).value = ""
+                self.query_one("#custom-chs", Input).value = ""
             self._sync_create_form_visibility()
             return
-        if event.select.id == "machine-target":
-            target = MachineTarget(str(event.value))
-            if target is MachineTarget.MARTYPC_XEBEC:
-                # Xebec drive type drives the disk format: Type 1 is 10 MiB
-                # FAT12, Types 2 / 13 / 16 are 20 MiB FAT16.
-                drive_type = MartyPCXebecDriveType(
-                    cast(str, self.query_one("#martypc-xebec-drive-type", Select).value)
-                )
-                if drive_type is MartyPCXebecDriveType.TYPE1:
-                    self.query_one("#create-format", Select).value = DiskFormat.FAT12.value
-                else:
-                    self.query_one("#create-format", Select).value = DiskFormat.FAT16.value
-                boot_value = cast(str, self.query_one("#boot-mode", Select).value)
-                xt_modes = {
-                    BootMode.NONE.value,
-                    BootMode.IBM8088.value,
-                    BootMode.MSDOS33.value,
-                    BootMode.MSDOS331.value,
-                    BootMode.PCDOS.value,
-                    BootMode.COMPAQ2.value,
-                    BootMode.COMPAQ331.value,
-                }
-                # FAT12 requires the msdos33-style FORMAT install pipeline;
-                # snap incompatible boot modes to msdos33.
-                if drive_type is MartyPCXebecDriveType.TYPE1:
-                    if boot_value not in (
-                        BootMode.MSDOS33.value,
-                        BootMode.IBM8088.value,
-                        BootMode.COMPAQ2.value,
-                        BootMode.NONE.value,
-                    ):
-                        self.query_one("#boot-mode", Select).value = BootMode.MSDOS33.value
-                elif boot_value not in xt_modes:
-                    self.query_one("#boot-mode", Select).value = BootMode.MSDOS33.value
-                # Force DOS 3.3 since the Xebec drive sizes are all well
-                # under the DOS 5.0 cap and FAT12 only works with DOS 3.3.
-                self.query_one("#ibm-dos-version", Select).value = IBMDOSVersion.DOS33.value
-            self._sync_create_form_visibility()
-            return
-        if event.select.id == "martypc-xebec-drive-type":
-            # Drive-type change can flip FAT12 ↔ FAT16 for MartyPC Xebec
-            # targets. Reapply the same rule as the machine-target handler.
-            target = MachineTarget(cast(str, self.query_one("#machine-target", Select).value))
-            if target is MachineTarget.MARTYPC_XEBEC:
-                drive_type = MartyPCXebecDriveType(str(event.value))
-                if drive_type is MartyPCXebecDriveType.TYPE1:
-                    self.query_one("#create-format", Select).value = DiskFormat.FAT12.value
-                    boot_value = cast(str, self.query_one("#boot-mode", Select).value)
-                    if boot_value not in (
-                        BootMode.MSDOS33.value,
-                        BootMode.IBM8088.value,
-                        BootMode.NONE.value,
-                    ):
-                        self.query_one("#boot-mode", Select).value = BootMode.MSDOS33.value
-                else:
-                    if (
-                        cast(str, self.query_one("#create-format", Select).value)
-                        == DiskFormat.FAT12.value
-                    ):
-                        self.query_one("#create-format", Select).value = DiskFormat.FAT16.value
-            self._sync_create_form_visibility()
-            return
-        if event.select.id == "martypc-at-drive-type":
+        if event.select.id == "disk-controller":
             self._sync_create_form_visibility()
             return
         if event.select.id == "bios-drive-type":
@@ -992,18 +904,11 @@ class DosForgeApp(App[None]):
         if len(self.query("#create-path")) == 0:
             return
         media_type = MediaType(cast(str, self.query_one("#media-type", Select).value))
-        machine_target = MachineTarget(cast(str, self.query_one("#machine-target", Select).value))
         boot_mode = BootMode(cast(str, self.query_one("#boot-mode", Select).value))
         freedos_source = FreeDOSSource(cast(str, self.query_one("#freedos-source", Select).value))
         img_system_format = self.query_one("#img-system-format", Checkbox).value
 
         is_vhd = media_type is MediaType.VHD
-        is_martypc_xebec = is_vhd and machine_target is MachineTarget.MARTYPC_XEBEC
-        is_martypc_at = is_vhd and machine_target in (
-            MachineTarget.MARTYPC_XTIDE,
-            MachineTarget.MARTYPC_JRIDE,
-        )
-        is_martypc = is_martypc_xebec or is_martypc_at
         boot_controls_active = is_vhd or img_system_format
 
         show_freedos = boot_controls_active and boot_mode is BootMode.FREEDOS
@@ -1023,14 +928,7 @@ class DosForgeApp(App[None]):
             BootMode.COMPAQ331,
         }
         show_dos_profile = boot_controls_active and boot_mode in dos_boot_modes
-        show_ibm_dos_version = (
-            boot_controls_active
-            and boot_mode is BootMode.IBM8088
-            # MartyPC Xebec drives are <= 32 MiB, MartyPC AT covers both
-            # dos33 and dos50 sizes; hide the toggle on Xebec since dos33 is
-            # forced by validation. AT keeps the toggle for user choice.
-            and not is_martypc_xebec
-        )
+        show_ibm_dos_version = boot_controls_active and boot_mode is BootMode.IBM8088
         show_boot_assets = (
             show_dos_profile
             or (show_freedos and freedos_source is FreeDOSSource.LOCAL)
@@ -1050,8 +948,9 @@ class DosForgeApp(App[None]):
         # presets both lock size to an exact CHS, so the size input is
         # hidden / read-only for those.
         size_input = self.query_one("#create-size", Input)
-        size_input.display = is_vhd and not is_martypc
-        if is_vhd and bios_drive_active and not is_martypc:
+        size_input.display = is_vhd
+        custom_chs_active = bool(self.query_one("#custom-chs", Input).value.strip())
+        if is_vhd and bios_drive_active:
             # Surface the BIOS preset's size in the input box, read-only,
             # so the user can see what they'll get.
             try:
@@ -1065,7 +964,7 @@ class DosForgeApp(App[None]):
             else:
                 size_input.disabled = False
         else:
-            size_input.disabled = False
+            size_input.disabled = custom_chs_active
 
         # Pair each widget with its Label so the label hides too when the
         # widget hides. Otherwise you get orphan labels like "Floppy size"
@@ -1081,17 +980,14 @@ class DosForgeApp(App[None]):
                 except Exception:
                     pass
 
-        _toggle("create-format", "create-format-label", is_vhd and not is_martypc_xebec)
-        _toggle("machine-target", "machine-target-label", is_vhd)
-        _toggle("martypc-xebec-drive-type", None, is_martypc_xebec)
-        _toggle("martypc-at-drive-type", None, is_martypc_at)
-        # BIOS Type preset is only meaningful for generic VHD targets.
-        # MartyPC has its own preset tables and would conflict.
-        _toggle("bios-drive-type", "bios-drive-type-label", is_vhd and not is_martypc)
+        _toggle("create-format", "create-format-label", is_vhd)
+        _toggle("disk-controller", "disk-controller-label", is_vhd)
+        _toggle("bios-drive-type", "bios-drive-type-label", is_vhd)
+        _toggle("custom-chs", "custom-chs-label", is_vhd)
         # Hide the "Static size" label whenever the size input is hidden
         # (MartyPC fixed-geometry targets).
         try:
-            self.query_one("#create-size-label").display = is_vhd and not is_martypc
+            self.query_one("#create-size-label").display = is_vhd
         except Exception:
             pass
         _toggle("floppy-type", "floppy-type-label", not is_vhd)
@@ -1108,7 +1004,7 @@ class DosForgeApp(App[None]):
         except Exception:
             pass
         # Custom payload doesn't work with fixed-geometry MartyPC targets.
-        custom_payload_visible = (is_vhd or img_system_format) and not is_martypc
+        custom_payload_visible = is_vhd or img_system_format
         self.query_one("#custom-payload-row", Horizontal).display = custom_payload_visible
         try:
             self.query_one("#custom-payload-label").display = custom_payload_visible
@@ -1196,7 +1092,7 @@ class DosForgeApp(App[None]):
             return
         try:
             media = MediaType(cast(str, self.query_one("#media-type", Select).value))
-            machine = MachineTarget(cast(str, self.query_one("#machine-target", Select).value))
+            controller = cast(str, self.query_one("#disk-controller", Select).value) or "auto"
             boot = BootMode(cast(str, self.query_one("#boot-mode", Select).value))
             profile = MSDOSInstallProfile(
                 cast(str, self.query_one("#dos-profile", Select).value)
@@ -1226,7 +1122,7 @@ class DosForgeApp(App[None]):
         summary_lines = [
             f"[b]Output[/b]    {path}",
             f"[b]Media[/b]     {media_line}",
-            f"[b]Machine[/b]   {machine.value}",
+            f"[b]Controller[/b] {controller}",
             f"[b]Boot[/b]      {boot_line}",
             f"[b]Assets[/b]    {boot_assets}",
             f"[b]Payload[/b]   {custom_payload}",
@@ -1603,113 +1499,7 @@ class DosForgeApp(App[None]):
         self.query_one("#status", Static).update(f"{label} {summary}")
 
     def _request_from_form(self) -> CreateRequest:
-        path_text = self.query_one("#create-path", Input).value.strip()
-        if not path_text:
-            raise DosForgeError("Create path is required.")
-        size_text = self.query_one("#create-size", Input).value.strip()
-        media_select = self.query_one("#media-type", Select)
-        format_select = self.query_one("#create-format", Select)
-        floppy_select = self.query_one("#floppy-type", Select)
-        boot_select = self.query_one("#boot-mode", Select)
-        source_select = self.query_one("#freedos-source", Select)
-        dos_profile_select = self.query_one("#dos-profile", Select)
-        ibm_version_select = self.query_one("#ibm-dos-version", Select)
-        machine_target_select = self.query_one("#machine-target", Select)
-        martypc_xebec_select = self.query_one("#martypc-xebec-drive-type", Select)
-        martypc_at_select = self.query_one("#martypc-at-drive-type", Select)
-        bios_drive_select = self.query_one("#bios-drive-type", Select)
-
-        media_value = cast(str, media_select.value)
-        format_value = cast(str, format_select.value)
-        floppy_value = cast(str, floppy_select.value)
-        boot_value = cast(str, boot_select.value)
-        source_value = cast(str, source_select.value)
-        dos_profile_value = cast(str, dos_profile_select.value)
-        ibm_version_value = cast(str, ibm_version_select.value)
-        machine_target_value = cast(str, machine_target_select.value)
-        martypc_xebec_value = cast(str, martypc_xebec_select.value)
-        martypc_at_value = cast(str, martypc_at_select.value)
-        bios_drive_value = cast(str, bios_drive_select.value)
-        img_system_format = self.query_one("#img-system-format", Checkbox).value
-
-        media_type = MediaType(media_value)
-        floppy_type = FloppyType(floppy_value)
-        machine_target = MachineTarget(machine_target_value)
-        martypc_xebec_drive_type = MartyPCXebecDriveType(martypc_xebec_value)
-
-        msdos_install_profile = MSDOSInstallProfile(dos_profile_value)
-        ibm_dos_version = IBMDOSVersion(ibm_version_value)
-
-        boot_assets_text = self.query_one("#boot-assets", Input).value.strip()
-        boot_assets_path = Path(boot_assets_text).expanduser() if boot_assets_text else None
-        custom_payload_text = self.query_one("#custom-payload", Input).value.strip()
-        custom_payload_path = Path(custom_payload_text).expanduser() if custom_payload_text else None
-        freedos_url = self.query_one("#freedos-url", Input).value.strip() or None
-        label_text = self.query_one("#volume-label", Input).value.strip() or None
-        overwrite = self.query_one("#overwrite", Checkbox).value
-        if (
-            media_type is MediaType.VHD
-            and boot_value == BootMode.IBM8088.value
-            and size_text.upper() == "512M"
-        ):
-            size_text = "32M"
-
-        if media_type is MediaType.VHD:
-            if machine_target is MachineTarget.MARTYPC_XEBEC:
-                # Size is forced by validation; provide the drive type's
-                # known size so the request is internally consistent before
-                # _validate_create_request runs.
-                size_bytes = martypc_xebec_drive_type.size_bytes
-            elif machine_target in (
-                MachineTarget.MARTYPC_XTIDE,
-                MachineTarget.MARTYPC_JRIDE,
-            ):
-                size_bytes = lookup_martypc_at_format(martypc_at_value).size_bytes
-            elif size_text:
-                size_bytes = parse_size(size_text)
-            elif custom_payload_path is not None:
-                size_bytes = 1
-            else:
-                raise DosForgeError("Create size is required.")
-        else:
-            size_bytes = floppy_type.size_bytes
-        request_boot_mode = BootMode(boot_value) if (media_type is MediaType.VHD or img_system_format) else BootMode.NONE
-        disk_format = DiskFormat(format_value) if media_type is MediaType.VHD else DiskFormat.FAT16
-        # MartyPC Xebec drive-type dictates the disk format:
-        # Type 1 = 10 MiB FAT12, Types 2 / 13 / 16 = 20 MiB FAT16. Force
-        # the right value here in case widget sync was missed.
-        if machine_target is MachineTarget.MARTYPC_XEBEC:
-            disk_format = (
-                DiskFormat.FAT12
-                if martypc_xebec_drive_type is MartyPCXebecDriveType.TYPE1
-                else DiskFormat.FAT16
-            )
-
-        return CreateRequest(
-            path=Path(path_text).expanduser(),
-            size_bytes=size_bytes,
-            disk_format=disk_format,
-            media_type=media_type,
-            floppy_type=floppy_type,
-            img_system_format=img_system_format,
-            label=label_text,
-            overwrite=overwrite,
-            boot_mode=request_boot_mode,
-            freedos_source=FreeDOSSource(source_value),
-            boot_assets_path=boot_assets_path,
-            freedos_download_url=freedos_url,
-            msdos_install_profile=msdos_install_profile,
-            ibm_dos_version=ibm_dos_version,
-            custom_payload_path=custom_payload_path,
-            machine_target=machine_target,
-            martypc_xebec_drive_type=martypc_xebec_drive_type,
-            martypc_at_drive_type_slug=martypc_at_value,
-            bios_drive_type=(
-                parse_bios_drive_slug(bios_drive_value)
-                if bios_drive_value
-                else None
-            ),
-        )
+        return fl.build_create_request(self._current_form_state())
 
     def _refresh_mounts(self) -> None:
         mounts = self.manager.list_mounts()
@@ -2058,25 +1848,26 @@ class DosForgeApp(App[None]):
             size_input.value = "32M"
 
     def _current_form_state(self) -> fl.FormState:
-        """Snapshot the create-form widget values into a :class:`FormState`.
-
-        Used by :meth:`_apply_boot_mode_snap` /
-        :meth:`_apply_format_snap` so we can reuse the pure formlogic
-        coerce functions instead of duplicating the per-boot-mode FS +
-        size rules in two places.  Only the fields the snap functions
-        consume are populated; everything else gets defaults.
-        """
-        media_type = cast(str, self.query_one("#media-type", Select).value)
-        machine_target = cast(str, self.query_one("#machine-target", Select).value)
+        """Snapshot the create-form widget values into a :class:`FormState`."""
         return fl.FormState(
-            media_type=media_type,
-            machine_target=machine_target,
-            martypc_xebec_drive_type=cast(
-                str, self.query_one("#martypc-xebec-drive-type", Select).value
-            ),
+            media_type=cast(str, self.query_one("#media-type", Select).value),
+            disk_controller=cast(str, self.query_one("#disk-controller", Select).value),
+            custom_chs=self.query_one("#custom-chs", Input).value,
+            output_path=self.query_one("#create-path", Input).value,
             size_text=self.query_one("#create-size", Input).value,
+            bios_drive_type=cast(str, self.query_one("#bios-drive-type", Select).value),
             disk_format=cast(str, self.query_one("#create-format", Select).value),
+            floppy_type=cast(str, self.query_one("#floppy-type", Select).value),
+            img_system_format=self.query_one("#img-system-format", Checkbox).value,
             boot_mode=cast(str, self.query_one("#boot-mode", Select).value),
+            freedos_source=cast(str, self.query_one("#freedos-source", Select).value),
+            dos_profile=cast(str, self.query_one("#dos-profile", Select).value),
+            ibm_dos_version=cast(str, self.query_one("#ibm-dos-version", Select).value),
+            boot_assets=self.query_one("#boot-assets", Input).value,
+            custom_payload=self.query_one("#custom-payload", Input).value,
+            freedos_url=self.query_one("#freedos-url", Input).value,
+            volume_label=self.query_one("#volume-label", Input).value,
+            overwrite=self.query_one("#overwrite", Checkbox).value,
         )
 
     def _apply_boot_mode_snap(self, new_boot_mode: BootMode) -> None:
@@ -2091,10 +1882,16 @@ class DosForgeApp(App[None]):
         state = self._current_form_state()
         state = fl_replace(state, boot_mode=new_boot_mode.value)
         snapped = fl.coerce_on_boot_change(state)
+        if snapped.media_type != state.media_type:
+            self.query_one("#media-type", Select).value = snapped.media_type
+        if snapped.disk_controller != state.disk_controller:
+            self.query_one("#disk-controller", Select).value = snapped.disk_controller
         if snapped.disk_format != state.disk_format:
             self.query_one("#create-format", Select).value = snapped.disk_format
         if snapped.size_text != state.size_text:
             self.query_one("#create-size", Input).value = snapped.size_text
+        if snapped.bios_drive_type != state.bios_drive_type:
+            self.query_one("#bios-drive-type", Select).value = snapped.bios_drive_type
         self._clear_status()
 
     def _apply_format_snap(self) -> None:

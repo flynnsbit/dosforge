@@ -11,22 +11,23 @@ disk in one of two layouts:
    WinWorldPC ``disk01.img``.  Boots in any 86Box / DOSBox-X
    machine with a 5.25" 360k or 1.2M drive.
 
-2. **MartyPC Xebec Type 1 VHD** -- a 10 MiB MFM/Xebec hard-disk
-   image with an XT-class MBR + track-aligned FAT12 partition,
-   matching how a real 1984 Compaq Plus or DeskPro presented its
-   HDD.  Boots in **MartyPC** with the Xebec Type 1 (10 MiB)
-   preset.  Other emulators (86Box AT-class IDE, DOSBox-X) cannot
-   boot Compaq DOS 2.11 from HDD because they lack the
-   Compaq-specific 1984 BIOS extensions.
+2. **MFM hard-disk VHD** -- a 10 MiB ST-225-class hard-disk
+   image (306×4×17 geometry, FAT12, track-aligned partition
+   starting at LBA 17) with an XT-class CHS-only MBR.  This
+   matches how a real 1984 Compaq Plus / DeskPro presented its
+   MFM hard disk.  Boots in **MartyPC** with the Xebec Type 1
+   (10 MiB) preset; other emulators (86Box AT-class IDE,
+   DOSBox-X) cannot boot Compaq DOS 2.11 from HDD because they
+   lack the Compaq-specific 1984 BIOS extensions.
 
-   Build command:
+   Build command (v0.7.0+):
 
      dosforge create \\
          --media-type vhd --boot-mode compaq2 \\
          --format fat12 \\
-         --machine-target martypc-xebec \\
-         --martypc-xebec-drive-type type1 \\
-         --path C:\\my-vhds\\compaq2-xebec.vhd
+         --disk-controller mfm \\
+         --bios-drive-type phoenix:1 \\
+         --path C:\\my-vhds\\compaq2-mfm.vhd
 
 Floppy IMG build command:
 

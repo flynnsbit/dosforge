@@ -80,6 +80,7 @@ class CreateView(ttk.Frame):
         self.var_boot_assets = tk.StringVar()
         self.var_payload = tk.StringVar()
         self.var_freedos_url = tk.StringVar()
+        self.var_custom_chs = tk.StringVar()
         self.var_overwrite = tk.BooleanVar(value=False)
         self.var_img_sysfmt = tk.BooleanVar(value=False)
 
@@ -89,6 +90,7 @@ class CreateView(ttk.Frame):
             self.var_boot_assets,
             self.var_payload,
             self.var_freedos_url,
+            self.var_custom_chs,
         ):
             _var.trace_add("write", lambda *_: self._on_text_change())
         self.var_overwrite.trace_add("write", lambda *_: self._on_text_change())
@@ -96,11 +98,7 @@ class CreateView(ttk.Frame):
 
         # Combobox holders (widgets built lazily via factories below).
         self.combo_media = _Combo(opt.MEDIA_TYPE_OPTIONS, self._on_media_change)
-        self.combo_machine = _Combo(opt.MACHINE_TARGET_OPTIONS, self._on_machine_change)
-        self.combo_xebec = _Combo(
-            opt.MARTYPC_XEBEC_DRIVE_TYPE_OPTIONS, self._on_xebec_change
-        )
-        self.combo_at = _Combo(opt.MARTYPC_AT_DRIVE_TYPE_OPTIONS, self._on_change)
+        self.combo_controller = _Combo(opt.DISK_CONTROLLER_OPTIONS, self._on_change)
         self.combo_bios = _Combo(opt.BIOS_DRIVE_TYPE_OPTIONS, self._on_change)
         self.combo_format = _Combo(opt.DISK_FORMAT_OPTIONS, self._on_format_change)
         self.combo_floppy = _Combo(opt.FLOPPY_OPTIONS, self._on_change)
@@ -186,24 +184,22 @@ class CreateView(ttk.Frame):
         mb.columnconfigure(0, weight=1)
         self._add_field(mb, fl.FIELD_MEDIA_TYPE, "Media type",
                         self.combo_media.build, row=0)
-        self._add_field(mb, fl.FIELD_MACHINE_TARGET, "Machine target",
-                        self.combo_machine.build, row=1)
-        self._add_field(mb, fl.FIELD_MARTYPC_XEBEC, "Xebec drive type",
-                        self.combo_xebec.build, row=2)
-        self._add_field(mb, fl.FIELD_MARTYPC_AT, "AT/XT-IDE drive type",
-                        self.combo_at.build, row=3)
+        self._add_field(mb, fl.FIELD_DISK_CONTROLLER, "Disk controller",
+                        self.combo_controller.build, row=1)
         size_field = self._add_field(
             mb, fl.FIELD_SIZE, "Size (e.g. 512M, 32M, 1G)",
             lambda p: ttk.Entry(p, textvariable=self.var_size),
-            row=4,
+            row=2,
         )
         self._size_entry = size_field.control
-        self._add_field(mb, fl.FIELD_BIOS_DRIVE, "BIOS drive preset",
-                        self.combo_bios.build, row=5)
+        self._add_field(mb, fl.FIELD_BIOS_DRIVE, "Geometry preset",
+                        self.combo_bios.build, row=3)
+        self._add_field(mb, fl.FIELD_CUSTOM_CHS, "Custom CHS",
+                        lambda p: ttk.Entry(p, textvariable=self.var_custom_chs), row=4)
         self._add_field(mb, fl.FIELD_FORMAT, "Filesystem",
-                        self.combo_format.build, row=6)
+                        self.combo_format.build, row=5)
         self._add_field(mb, fl.FIELD_FLOPPY, "Floppy size",
-                        self.combo_floppy.build, row=7)
+                        self.combo_floppy.build, row=6)
         self._add_field(
             mb, fl.FIELD_IMG_SYSTEM_FORMAT, "",
             lambda p: ttk.Checkbutton(
@@ -213,7 +209,7 @@ class CreateView(ttk.Frame):
                 command=self._on_img_sysfmt_change,
                 takefocus=False,
             ),
-            row=8,
+            row=7,
         )
 
         # ── Card: Assets & payload ─────────────────────────────────────
@@ -259,7 +255,7 @@ class CreateView(ttk.Frame):
             style="Accent.TButton",
             command=self._create,
         )
-        self._create_btn.grid(row=8, column=0, columnspan=2, sticky="w", pady=(14, 0))
+        self._create_btn.grid(row=7, column=0, columnspan=2, sticky="w", pady=(14, 0))
 
     def _add_field(
         self, parent, key, label, factory, *, row, browse_command=None, help_text=None
@@ -276,9 +272,8 @@ class CreateView(ttk.Frame):
     def _read_state(self) -> fl.FormState:
         return fl.FormState(
             media_type=self.combo_media.get_value(),
-            machine_target=self.combo_machine.get_value(),
-            martypc_xebec_drive_type=self.combo_xebec.get_value(),
-            martypc_at_drive_type=self.combo_at.get_value(),
+            disk_controller=self.combo_controller.get_value(),
+            custom_chs=self.var_custom_chs.get(),
             output_path=self.var_path.get(),
             size_text=self.var_size.get(),
             bios_drive_type=self.combo_bios.get_value(),
@@ -306,9 +301,8 @@ class CreateView(ttk.Frame):
 
     def _write_state_inner(self, state: fl.FormState) -> None:
         self.combo_media.set_value(state.media_type)
-        self.combo_machine.set_value(state.machine_target)
-        self.combo_xebec.set_value(state.martypc_xebec_drive_type)
-        self.combo_at.set_value(state.martypc_at_drive_type)
+        self.combo_controller.set_value(state.disk_controller)
+        self.var_custom_chs.set(state.custom_chs)
         self.var_path.set(state.output_path)
         self.var_size.set(state.size_text)
         self.combo_bios.set_value(state.bios_drive_type)
@@ -342,12 +336,6 @@ class CreateView(ttk.Frame):
 
     def _on_media_change(self) -> None:
         self._coerce(fl.coerce_on_media_change)
-
-    def _on_machine_change(self) -> None:
-        self._coerce(fl.coerce_on_machine_change)
-
-    def _on_xebec_change(self) -> None:
-        self._coerce(fl.coerce_on_xebec_drive_change)
 
     def _on_boot_change(self) -> None:
         self._coerce(fl.coerce_on_boot_change)

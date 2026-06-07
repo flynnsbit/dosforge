@@ -11,12 +11,16 @@ from dosforge.models import (
     CreateRequest,
     DiskFormat,
     FloppyType,
+    BIOSVendor,
+    DiskController,
     FreeDOSSource,
     IBMDOSVersion,
-    MachineTarget,
-    MartyPCXebecDriveType,
     MediaType,
 )
+
+TYPE1_SIZE = 306 * 4 * 17 * 512
+TYPE2_SIZE = 615 * 4 * 17 * 512
+AT_504_SIZE = 1024 * 16 * 63 * 512
 
 
 def test_validate_rejects_freedos_auto_with_fat32() -> None:
@@ -79,6 +83,7 @@ def test_validate_rejects_ibm8088_dos33_above_32mb() -> None:
         boot_mode=BootMode.IBM8088,
         ibm_dos_version=IBMDOSVersion.DOS33,
         boot_assets_path=Path("/tmp/ibm-assets"),
+        disk_controller=DiskController.IDE,
     )
     with pytest.raises(ValidationError, match="MS-DOS 3.3"):
         manager._validate_create_request(request)
@@ -218,7 +223,7 @@ def test_validate_rejects_legacy_vhd_profile_with_fat32() -> None:
         boot_mode=BootMode.PCDOS,
         boot_assets_path=Path("/tmp/pcdos-assets"),
     )
-    with pytest.raises(ValidationError, match="Legacy DOS boot profiles support FAT16 only"):
+    with pytest.raises(ValidationError, match="FAT32"):
         manager._validate_create_request(request)
 
 
@@ -272,12 +277,12 @@ def test_validate_martypc_xebec_accepts_type2_with_fat16(tmp_path: Path) -> None
         size_bytes=0,  # forced from drive type
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS33,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 2),
     )
     manager._validate_create_request(request)
     # Validation must force the request size to match the Xebec drive type.
-    assert request.size_bytes == MartyPCXebecDriveType.TYPE2.size_bytes
+    assert request.size_bytes == TYPE2_SIZE
 
 
 def test_validate_martypc_xebec_rejects_type1_until_fat12_supported(tmp_path: Path) -> None:
@@ -287,10 +292,10 @@ def test_validate_martypc_xebec_rejects_type1_until_fat12_supported(tmp_path: Pa
         size_bytes=0,
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS33,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE1,
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 1),
     )
-    with pytest.raises(ValidationError, match="Type 1.*FAT12"):
+    with pytest.raises(ValidationError, match="FAT16 images"):
         manager._validate_create_request(request)
 
 
@@ -301,8 +306,8 @@ def test_validate_martypc_xebec_rejects_fat32(tmp_path: Path) -> None:
         size_bytes=0,
         disk_format=DiskFormat.FAT32,
         boot_mode=BootMode.NONE,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 2),
     )
     with pytest.raises(ValidationError, match="FAT16"):
         manager._validate_create_request(request)
@@ -314,11 +319,11 @@ def test_validate_martypc_xebec_rejects_non_xt_boot_mode(tmp_path: Path) -> None
         path=tmp_path / "marty.vhd",
         size_bytes=0,
         disk_format=DiskFormat.FAT16,
-        boot_mode=BootMode.MSDOS622,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        boot_mode=BootMode.MSDOS71,
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 2),
     )
-    with pytest.raises(ValidationError, match="XT-class"):
+    with pytest.raises(ValidationError, match="msdos71"):
         manager._validate_create_request(request)
 
 
@@ -330,9 +335,10 @@ def test_validate_martypc_xebec_rejects_img_media(tmp_path: Path) -> None:
         disk_format=DiskFormat.FAT16,
         media_type=MediaType.IMG,
         floppy_type=FloppyType.F1440K,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 2),
     )
-    # IMG path validates floppy-only; MartyPC Xebec target is incompatible.
+    # IMG path validates floppy-only; MFM target is incompatible.
     # IMG-path validation runs first and ignores machine_target by design,
     # so we exercise the VHD path explicitly:
     request_vhd = CreateRequest(
@@ -340,57 +346,43 @@ def test_validate_martypc_xebec_rejects_img_media(tmp_path: Path) -> None:
         size_bytes=0,
         disk_format=DiskFormat.FAT16,
         media_type=MediaType.VHD,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 2),
     )
-    # Sanity: the VHD path accepts MartyPC.
+    # Sanity: the VHD path accepts MFM.
     manager._validate_create_request(request_vhd)
 
 
-def test_normalize_vhd_size_for_chs_returns_xebec_size(tmp_path: Path) -> None:
+def test_normalize_vhd_size_for_chs_returns_mfm_bios_size(tmp_path: Path) -> None:
     manager = DiskManager()
-    for drive_type in (
-        MartyPCXebecDriveType.TYPE16,
-        MartyPCXebecDriveType.TYPE2,
-        MartyPCXebecDriveType.TYPE13,
-    ):
+    for bios_type, expected in ((1, TYPE1_SIZE), (2, TYPE2_SIZE)):
         request = CreateRequest(
             path=tmp_path / "marty.vhd",
-            size_bytes=1234567,  # arbitrary; must be overridden
+            size_bytes=1234567,
             disk_format=DiskFormat.FAT16,
-            machine_target=MachineTarget.MARTYPC_XEBEC,
-            martypc_xebec_drive_type=drive_type,
+            disk_controller=DiskController.MFM,
+            bios_drive_type=(BIOSVendor.PHOENIX, bios_type),
         )
-        assert manager._normalize_vhd_size_for_chs(request) == drive_type.size_bytes
+        assert manager._normalize_vhd_size_for_chs(request) == expected
 
 
-def test_validate_martypc_xtide_accepts_504mib_with_fat16(tmp_path: Path) -> None:
-    from dosforge.models import lookup_martypc_at_format, DEFAULT_MARTYPC_AT_FORMAT_SLUG
-
+def test_validate_ide_custom_chs_accepts_504mib_with_fat16(tmp_path: Path) -> None:
     manager = DiskManager()
-    request = CreateRequest(
-        path=tmp_path / "marty.vhd",
-        size_bytes=0,
-        disk_format=DiskFormat.FAT16,
-        boot_mode=BootMode.MSDOS622,
-        machine_target=MachineTarget.MARTYPC_XTIDE,
-        martypc_at_drive_type_slug=DEFAULT_MARTYPC_AT_FORMAT_SLUG,
-    )
+    request = CreateRequest(path=tmp_path / "test.vhd", size_bytes=512 * 1024 * 1024, disk_format=DiskFormat.FAT16, disk_controller=DiskController.IDE, custom_chs=(1024, 16, 63))
     manager._validate_create_request(request)
-    assert request.size_bytes == lookup_martypc_at_format(DEFAULT_MARTYPC_AT_FORMAT_SLUG).size_bytes
+    assert request.size_bytes == AT_504_SIZE
 
-
-def test_validate_martypc_xtide_rejects_below_fat16_min(tmp_path: Path) -> None:
+def test_validate_ide_custom_chs_rejects_below_fat16_min(tmp_path: Path) -> None:
     manager = DiskManager()
     request = CreateRequest(
         path=tmp_path / "marty.vhd",
         size_bytes=0,
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS33,
-        machine_target=MachineTarget.MARTYPC_XTIDE,
-        martypc_at_drive_type_slug="at-306-4-17",  # 10.16 MiB
+        disk_controller=DiskController.IDE,
+        custom_chs=(306, 4, 17),  # 10.16 MiB
     )
-    with pytest.raises(ValidationError, match="FAT16 minimum"):
+    with pytest.raises(ValidationError, match="FAT16 images"):
         manager._validate_create_request(request)
 
 
@@ -402,15 +394,14 @@ def test_validate_martypc_jride_rejects_oversize_for_dos33(tmp_path: Path) -> No
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.IBM8088,
         ibm_dos_version=IBMDOSVersion.DOS33,
-        machine_target=MachineTarget.MARTYPC_JRIDE,
-        martypc_at_drive_type_slug="at-1024-16-63",  # 504 MiB - way over DOS 3.3 32 MiB cap
+        disk_controller=DiskController.IDE,
+        custom_chs=(1024, 16, 63),  # 504 MiB - way over DOS 3.3 32 MiB cap
     )
     with pytest.raises(ValidationError, match="DOS 3.3"):
         manager._validate_create_request(request)
 
 
 def test_normalize_vhd_size_for_chs_returns_at_drive_size(tmp_path: Path) -> None:
-    from dosforge.models import MARTYPC_AT_FORMATS_BY_SLUG
 
     manager = DiskManager()
     for slug in ("at-1024-16-63", "at-1218-15-36", "at-1054-16-63"):
@@ -418,18 +409,13 @@ def test_normalize_vhd_size_for_chs_returns_at_drive_size(tmp_path: Path) -> Non
             path=tmp_path / "marty.vhd",
             size_bytes=999_999_999,
             disk_format=DiskFormat.FAT16,
-            machine_target=MachineTarget.MARTYPC_XTIDE,
-            martypc_at_drive_type_slug=slug,
+            disk_controller=DiskController.IDE,
+            custom_chs=tuple(int(part) for part in slug.removeprefix("at-").split("-")),
         )
-        expected = MARTYPC_AT_FORMATS_BY_SLUG[slug].size_bytes
+        c, h, sp = [int(part) for part in slug.removeprefix("at-").split("-")]
+        expected = c * h * sp * 512
         assert manager._normalize_vhd_size_for_chs(request) == expected
 
-
-def test_lookup_martypc_at_format_rejects_unknown_slug() -> None:
-    from dosforge.models import lookup_martypc_at_format
-
-    with pytest.raises(ValueError, match="Unknown MartyPC"):
-        lookup_martypc_at_format("at-nonsense-1-2-3")
 
 
 def test_validate_rejects_custom_payload_pointing_at_install_diskettes(tmp_path: Path) -> None:
@@ -506,6 +492,7 @@ def test_validate_rejects_msdos33_above_32mib(tmp_path: Path) -> None:
         size_bytes=64 * 1024 * 1024,
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS33,
+        disk_controller=DiskController.IDE,
     )
     with pytest.raises(ValidationError, match="msdos33.*32 MiB"):
         manager._validate_create_request(request)
@@ -518,6 +505,7 @@ def test_normalize_vhd_size_for_msdos33_caps_at_32mib(tmp_path: Path) -> None:
         size_bytes=32 * 1024 * 1024,
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS33,
+        disk_controller=DiskController.IDE,
     )
     aligned = manager._normalize_vhd_size_for_chs(request)
     # 32 MiB request must round DOWN to fit in DOS 3.30's uint16 partition
@@ -792,17 +780,17 @@ def test_resolve_legacy_dos_assets_dir_ibm8088_dos33_uses_root_when_no_subdir(
     assert resolved == root.resolve()
 
 
-# --- FAT12 + MartyPC Xebec Type 1 ---
+# --- FAT12 + MFM Type 1 ---
 
 
 def _martypc_xebec_type1_request(**overrides) -> CreateRequest:
     base = dict(
         path=Path("/tmp/x.vhd"),
-        size_bytes=10 * 1024 * 1024,  # ignored — MartyPC forces drive_type size
+        size_bytes=10 * 1024 * 1024,  # ignored — MFM forces drive_type size
         disk_format=DiskFormat.FAT12,
         boot_mode=BootMode.MSDOS33,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE1,
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 1),
         boot_assets_path=Path("/tmp/msdos33"),
     )
     base.update(overrides)
@@ -834,18 +822,19 @@ def test_validate_accepts_martypc_xebec_type1_fat12_ibm8088_dos33(tmp_path: Path
 def test_validate_rejects_martypc_xebec_type1_fat16() -> None:
     manager = DiskManager()
     request = _martypc_xebec_type1_request(disk_format=DiskFormat.FAT16)
-    with pytest.raises(ValidationError, match="Type 1.*requires FAT12"):
+    with pytest.raises(ValidationError, match="FAT16 images"):
         manager._validate_create_request(request)
 
 
-def test_validate_rejects_martypc_xebec_type2_fat12() -> None:
+def test_validate_accepts_mfm_type2_fat12_msdos33() -> None:
     manager = DiskManager()
     request = _martypc_xebec_type1_request(
+        size_bytes=TYPE2_SIZE,
+        bios_drive_type=(BIOSVendor.PHOENIX, 2),
         disk_format=DiskFormat.FAT12,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
     )
-    with pytest.raises(ValidationError, match="requires FAT16"):
-        manager._validate_create_request(request)
+    manager._validate_create_request(request)
+    assert request.size_bytes == TYPE2_SIZE
 
 
 def test_validate_rejects_fat12_on_non_martypc() -> None:
@@ -855,7 +844,7 @@ def test_validate_rejects_fat12_on_non_martypc() -> None:
         size_bytes=10 * 1024 * 1024,
         disk_format=DiskFormat.FAT12,
         boot_mode=BootMode.MSDOS33,
-        machine_target=MachineTarget.GENERIC,
+        disk_controller=DiskController.IDE,
         boot_assets_path=Path("/tmp/msdos33"),
     )
     with pytest.raises(ValidationError, match="FAT12 on VHD"):
@@ -869,7 +858,7 @@ def test_validate_rejects_fat12_with_non_msdos33_boot_mode() -> None:
         manager._validate_create_request(request)
 
 
-# --- BPB-to-footer geometry patch (MartyPC Xebec Type 2 boot fix) ---
+# --- BPB-to-footer geometry patch (MFM Type 2 boot fix) ---
 
 
 def _make_fake_vhd_with_partition(
@@ -909,7 +898,7 @@ def test_patch_partition_bpb_to_footer_geometry_rewrites_spt_and_heads(
 
     manager = DiskManager()
     vhd = tmp_path / "fake.vhd"
-    # MartyPC Xebec Type 2 geometry — 615 × 4 × 17 MFM.
+    # MFM Type 2 geometry — 615 × 4 × 17 MFM.
     _make_fake_vhd_with_partition(
         vhd,
         footer_cyl=615,
@@ -937,7 +926,7 @@ def test_patch_partition_bpb_to_footer_geometry_noop_for_canonical_chs(
 
     manager = DiskManager()
     vhd = tmp_path / "fake.vhd"
-    # Generic disk with already-canonical 16/63 footer (e.g. non-MartyPC
+    # Generic disk with already-canonical 16/63 footer (e.g. non-MFM
     # build). The BPB ends up matching the footer, so the patch is a no-op
     # in observable terms.
     _make_fake_vhd_with_partition(
@@ -959,7 +948,7 @@ def test_patch_partition_bpb_to_footer_geometry_noop_for_canonical_chs(
     assert heads == 16
 
 
-# --- XT-class MBR rewrite (MartyPC Xebec) ---
+# --- XT-class MBR rewrite (MFM) ---
 
 
 def _make_minimal_vhd_with_footer_and_parted_mbr(
@@ -1009,7 +998,7 @@ def test_rewrite_mbr_for_xt_class_matches_dos33_fdisk_layout(tmp_path: Path) -> 
 
     manager = DiskManager()
     vhd = tmp_path / "fake.vhd"
-    # MartyPC Xebec Type 2 geometry — 615 × 4 × 17.
+    # MFM Type 2 geometry — 615 × 4 × 17.
     _make_minimal_vhd_with_footer_and_parted_mbr(vhd, cyl=615, heads=4, spt=17)
 
     manager._rewrite_mbr_for_xt_class(
@@ -1050,7 +1039,7 @@ def test_rewrite_mbr_for_xt_class_fat12_type1(tmp_path: Path) -> None:
 
     manager = DiskManager()
     vhd = tmp_path / "fake.vhd"
-    # MartyPC Xebec Type 1 — 306 × 4 × 17 = 10 MiB MFM.
+    # MFM Type 1 — 306 × 4 × 17 = 10 MiB MFM.
     _make_minimal_vhd_with_footer_and_parted_mbr(vhd, cyl=306, heads=4, spt=17)
 
     manager._rewrite_mbr_for_xt_class(
@@ -1077,8 +1066,8 @@ def test_partition_offset_bytes_for_xebec_type2() -> None:
         size_bytes=21411840,
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS33,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 2),
     )
     # Type 2 spt = 17 → partition starts at LBA 17.
     assert _partition_offset_bytes_for(request) == 17 * 512
@@ -1092,7 +1081,7 @@ def test_partition_offset_bytes_for_generic_msdos33() -> None:
         size_bytes=32 * 1024 * 1024,
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS33,
-        machine_target=MachineTarget.GENERIC,
+        disk_controller=DiskController.IDE,
     )
     # Generic targets use the conventional LBA 63 layout.
     assert _partition_offset_bytes_for(request) == 63 * 512
@@ -1302,7 +1291,7 @@ def test_stage_legacy_dos_full_profile_payload_expands_szdd_compressed_files(
     assert any(call[-1] == "::DOS/FDISK.EXE" for call in calls), calls
 
 
-# --- Custom payload fit check on fixed-size MartyPC drives ---
+# --- Custom payload fit check on fixed-size MFM drives ---
 
 
 def _populate(dir_: Path, files: dict[str, int]) -> None:
@@ -1320,16 +1309,16 @@ def test_apply_custom_payload_fits_small_payload_on_xebec_type2(tmp_path: Path) 
         size_bytes=20 * 1024 * 1024,
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS33,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 2),
         custom_payload_path=payload,
     )
-    # Force MartyPC size as validator would.
-    request.size_bytes = MartyPCXebecDriveType.TYPE2.size_bytes
+    # Force MFM size as validator would.
+    request.size_bytes = TYPE2_SIZE
     # Should not raise.
     manager._apply_custom_payload_autosizing(request)
-    # Size must be unchanged (MartyPC drives are fixed).
-    assert request.size_bytes == MartyPCXebecDriveType.TYPE2.size_bytes
+    # Size must be unchanged (MFM drives are fixed).
+    assert request.size_bytes == TYPE2_SIZE
 
 
 def test_apply_custom_payload_rejects_oversized_on_xebec_type1(tmp_path: Path) -> None:
@@ -1339,11 +1328,11 @@ def test_apply_custom_payload_rejects_oversized_on_xebec_type1(tmp_path: Path) -
     _populate(payload, {"big.bin": 12 * 1024 * 1024})
     request = CreateRequest(
         path=tmp_path / "x.vhd",
-        size_bytes=MartyPCXebecDriveType.TYPE1.size_bytes,
+        size_bytes=TYPE1_SIZE,
         disk_format=DiskFormat.FAT12,
         boot_mode=BootMode.MSDOS33,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE1,
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 1),
         custom_payload_path=payload,
     )
     with pytest.raises(ValidationError, match="does not fit"):
@@ -1356,7 +1345,7 @@ def test_apply_custom_payload_full_profile_reserves_more_overhead(tmp_path: Path
     payload = tmp_path / "payload"
     # Type 2 = ~20.4 MiB. Leave just enough so MINIMAL would pass but
     # FULL won't (within the 800 KiB FULL-only headroom).
-    type2_size = MartyPCXebecDriveType.TYPE2.size_bytes
+    type2_size = TYPE2_SIZE
     # Use a payload that's ~size - 1.4 MiB → fits MINIMAL but not FULL.
     payload_size = type2_size - (1 * 1024 * 1024 + 600 * 1024)
     _populate(payload, {"big.bin": payload_size})
@@ -1365,8 +1354,8 @@ def test_apply_custom_payload_full_profile_reserves_more_overhead(tmp_path: Path
         size_bytes=type2_size,
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS33,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 2),
         custom_payload_path=payload,
     )
     from dosforge.models import MSDOSInstallProfile
@@ -1380,7 +1369,7 @@ def test_apply_custom_payload_full_profile_reserves_more_overhead(tmp_path: Path
 
 
 def test_apply_custom_payload_generic_still_autogrows(tmp_path: Path) -> None:
-    """Confirm the MartyPC fit-check doesn't regress the generic path."""
+    """Confirm the MFM fit-check doesn't regress the generic path."""
     manager = DiskManager()
     payload = tmp_path / "payload"
     _populate(payload, {"big.bin": 100 * 1024 * 1024})
@@ -1389,7 +1378,6 @@ def test_apply_custom_payload_generic_still_autogrows(tmp_path: Path) -> None:
         size_bytes=64 * 1024 * 1024,
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS622,
-        machine_target=MachineTarget.GENERIC,
         custom_payload_path=payload,
     )
     manager._apply_custom_payload_autosizing(request)
@@ -1705,40 +1693,31 @@ def test_request_locked_geometry_uses_bios_drive_type(tmp_path: Path) -> None:
     assert _DM._request_locked_geometry(request) == (306, 4, 17)
 
 
-def test_request_locked_geometry_martypc_takes_precedence(tmp_path: Path) -> None:
-    """When both MartyPC and BIOS are set, validation rejects, but the
-    geometry helper still prefers MartyPC's table so the error message
-    can describe the active fixed-geometry source."""
-    from dosforge.models import BIOSVendor
+def test_request_locked_geometry_mfm_uses_bios_preset(tmp_path: Path) -> None:
     from dosforge.disk import DiskManager as _DM
     request = CreateRequest(
         path=tmp_path / "x.vhd",
         size_bytes=20 * 1024 * 1024,
         disk_format=DiskFormat.FAT16,
         boot_mode=BootMode.MSDOS33,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
-        bios_drive_type=(BIOSVendor.PHOENIX, 1),
+        disk_controller=DiskController.MFM,
+        bios_drive_type=(BIOSVendor.PHOENIX, 2),
     )
-    # MartyPC Xebec Type 2 = 615×4×17, Phoenix Type 1 = 306×4×17 — confirm
-    # the helper picks MartyPC.
     assert _DM._request_locked_geometry(request) == (615, 4, 17)
 
 
-def test_validate_rejects_bios_drive_type_with_martypc(tmp_path: Path) -> None:
-    from dosforge.models import BIOSVendor
+def test_validate_accepts_bios_drive_type_with_mfm_controller(tmp_path: Path) -> None:
     manager = DiskManager()
     request = CreateRequest(
         path=tmp_path / "x.vhd",
         size_bytes=10 * 1024 * 1024,
-        disk_format=DiskFormat.FAT16,
-        boot_mode=BootMode.NONE,
-        machine_target=MachineTarget.MARTYPC_XEBEC,
-        martypc_xebec_drive_type=MartyPCXebecDriveType.TYPE2,
+        disk_format=DiskFormat.FAT12,
+        boot_mode=BootMode.COMPAQ2,
+        disk_controller=DiskController.MFM,
         bios_drive_type=(BIOSVendor.PHOENIX, 1),
     )
-    with pytest.raises(ValidationError, match="mutually exclusive"):
-        manager._validate_create_request(request)
+    manager._validate_create_request(request)
+    assert request.size_bytes == TYPE1_SIZE
 
 
 def test_validate_rejects_bios_drive_type_on_floppy(tmp_path: Path) -> None:

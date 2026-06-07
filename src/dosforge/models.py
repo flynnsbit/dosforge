@@ -63,6 +63,16 @@ class DiskFormat(str, Enum):
 class BootMode(str, Enum):
     NONE = "none"
     FREEDOS = "freedos"
+    # MS-DOS 7.10 — the FAT32-capable DOS kernel from Microsoft.  The
+    # 7.10 kernel was never sold as a standalone product; it shipped
+    # *only* inside Windows 95 OSR2 / OSR2.1 / OSR2.5 / OSR3 (build
+    # 4.00.1111+) and Windows 98 / 98 SE.  dosforge sources its install
+    # files from a Win95 OSR2 (4.00.1111) floppy set staged in
+    # ``dosassets/w95/`` (see that folder's readme.txt for layout).
+    # Produces a "DOS-only" boot — no Win95 GUI Setup, just the
+    # IO.SYS / MSDOS.SYS / COMMAND.COM trio + a CONFIG.SYS that
+    # bypasses WIN.COM so the system lands at a plain C:\> prompt.
+    # Supports FAT16 (up to 2 GiB) and FAT32 (above) on IDE/AT-class.
     MSDOS71 = "msdos71"
     IBM8088 = "ibm8088"
     MSDOS33 = "msdos33"
@@ -120,300 +130,41 @@ class IBMDOSVersion(str, Enum):
 class MachineTarget(str, Enum):
     """Optional emulator/machine profile constraining VHD geometry.
 
-    GENERIC uses canonical ATA 16h/63spt geometry with cap-aware size
-    alignment (the default behavior). Machine-specific targets force the
-    output VHD to use one of a small fixed set of legacy CHS geometries
-    that the emulator's hard disk controller will accept.
+    .. deprecated:: 0.7.0
+       Use :class:`DiskController` + ``bios_drive_type`` / ``custom_chs``
+       instead.  This enum is retained only as an internal compatibility
+       shim and will be removed in v0.8.0.  See
+       ``releases/{linux,windows}-v0.7.0-release-notes.md`` for migration.
     """
 
     GENERIC = "generic"
-    # MartyPC's IBM/Xebec MFM controller validates VHDs against exactly 4
-    # hardcoded geometries; see MartyPCXebecDriveType below.
     MARTYPC_XEBEC = "martypc-xebec"
-    # MartyPC's XT-IDE (Rev 2, PIO) controller validates VHDs against the
-    # 127-entry AtFormats table; see MARTYPC_AT_FORMATS below.
     MARTYPC_XTIDE = "martypc-xtide"
-    # MartyPC's JR-IDE (PCjr IDE sidecar) controller — shares the same
-    # 127-entry AtFormats table as XT-IDE.
     MARTYPC_JRIDE = "martypc-jride"
 
 
-@dataclass(frozen=True, slots=True)
-class MartyPCAtFormat:
-    """One entry from MartyPC's AT/XT-IDE geometry table.
+class DiskController(str, Enum):
+    """Hard-disk controller class targeted by a VHD build.
 
-    Source: ``crates/marty_core/src/devices/hdc/at_formats.rs``
-    (``AtFormats::vec()`` in dbalsom/martypc). All entries use ``s_off=1``
-    (ATA convention, 1-indexed sectors) and 512 byte sectors. ``wpc`` is
-    ``None`` for every AT entry.
+    Replaces the v0.6.x ``MachineTarget`` enum as the primary way to
+    select what kind of VHD dosforge produces.
+
+    ``IDE`` (the default) targets AT-class IDE/ATA controllers found in
+    any 86Box / DOSBox-X / PCem / MartyPC AT machine from 1988 onward.
+    Geometry is canonical 16h/63s unless overridden via
+    ``bios_drive_type`` or ``custom_chs``.
+
+    ``MFM`` targets pre-IDE ST-506/ST-412 controllers (Western Digital
+    WD1002A-WX1, Adaptec 4070, IBM/Xebec, etc.) from XT-class machines
+    (1984-1990).  Produces a track-aligned partition (start LBA = spt)
+    with an XT-class CHS-only MBR loader -- the layout DOS 2.x's 1984
+    boot code requires.  Geometry must come from ``bios_drive_type``
+    (Phoenix/AMI Types 1-15 cover all standard MFM drives) or
+    ``custom_chs`` (free-form for unusual MFM emulator presets).
     """
 
-    slug: str
-    cylinders: int
-    heads: int
-    sectors_per_track: int
-    description: str
-
-    @property
-    def total_sectors(self) -> int:
-        return self.cylinders * self.heads * self.sectors_per_track
-
-    @property
-    def size_bytes(self) -> int:
-        return self.total_sectors * 512
-
-
-def _at(c: int, h: int, s: int, desc: str) -> MartyPCAtFormat:
-    return MartyPCAtFormat(
-        slug=f"at-{c}-{h}-{s}",
-        cylinders=c,
-        heads=h,
-        sectors_per_track=s,
-        description=desc,
-    )
-
-
-# All 127 entries of MartyPC's AtFormats::vec(), in the order MartyPC defines
-# them. Used by both XT-IDE and JR-IDE controllers; the emulator validates the
-# VHD footer's exact CHS triple against this table.
-MARTYPC_AT_FORMATS: tuple[MartyPCAtFormat, ...] = (
-    _at(306, 4, 17, "10MB (306/4/17)"),
-    _at(615, 2, 17, "10MB (615/2/17)"),
-    _at(306, 4, 26, "15MB (306/4/26)"),
-    _at(1024, 2, 17, "17MB (1024/2/17)"),
-    _at(697, 3, 17, "17MB (697/3/17)"),
-    _at(306, 8, 17, "20MB (306/8/17)"),
-    _at(614, 4, 17, "20MB (614/4/17)"),
-    _at(615, 4, 17, "20MB (615/4/17)"),
-    _at(670, 4, 17, "22MB (670/4/17)"),
-    _at(697, 4, 17, "23MB (697/4/17)"),
-    _at(987, 3, 17, "24MB (987/3/17)"),
-    _at(820, 4, 17, "27MB (820/4/17)"),
-    _at(670, 5, 17, "27MB (670/5/17)"),
-    _at(697, 5, 17, "28MB (697/5/17)"),
-    _at(733, 5, 17, "30MB (733/5/17)"),
-    _at(615, 6, 17, "30MB (615/6/17)"),
-    _at(462, 8, 17, "30MB (462/8/17)"),
-    _at(306, 8, 26, "31MB (306/8/26)"),
-    _at(615, 4, 26, "31MB (615/4/26)"),
-    _at(1024, 4, 17, "34MB (1024/4/17)"),
-    _at(855, 5, 17, "35MB (855/5/17)"),
-    _at(925, 5, 17, "38MB (925/5/17)"),
-    _at(932, 5, 17, "38MB (932/5/17)"),
-    _at(1024, 2, 40, "40MB (1024/2/40)"),
-    _at(809, 6, 17, "40MB (809/6/17)"),
-    _at(976, 5, 17, "40MB (976/5/17)"),
-    _at(977, 5, 17, "40MB (977/5/17)"),
-    _at(698, 7, 17, "40MB (698/7/17)"),
-    _at(699, 7, 17, "40MB (699/7/17)"),
-    _at(981, 5, 17, "40MB (981/5/17)"),
-    _at(615, 8, 17, "40MB (615/8/17)"),
-    _at(989, 5, 17, "41MB (989/5/17)"),
-    _at(820, 4, 26, "41MB (820/4/26)"),
-    _at(1024, 5, 17, "42MB (1024/5/17)"),
-    _at(733, 7, 17, "42MB (733/7/17)"),
-    _at(754, 7, 17, "43MB (754/7/17)"),
-    _at(733, 5, 26, "46MB (733/5/26)"),
-    _at(940, 6, 17, "46MB (940/6/17)"),
-    _at(615, 6, 26, "46MB (615/6/26)"),
-    _at(462, 8, 26, "46MB (462/8/26)"),
-    _at(830, 7, 17, "48MB (830/7/17)"),
-    _at(855, 7, 17, "49MB (855/7/17)"),
-    _at(751, 8, 17, "49MB (751/8/17)"),
-    _at(1024, 4, 26, "52MB (1024/4/26)"),
-    _at(918, 7, 17, "53MB (918/7/17)"),
-    _at(925, 7, 17, "53MB (925/7/17)"),
-    _at(855, 5, 26, "54MB (855/5/26)"),
-    _at(977, 7, 17, "56MB (977/7/17)"),
-    _at(987, 7, 17, "57MB (987/7/17)"),
-    _at(1024, 7, 17, "59MB (1024/7/17)"),
-    _at(823, 4, 38, "61MB (823/4/38)"),
-    _at(925, 8, 17, "61MB (925/8/17)"),
-    _at(809, 6, 26, "61MB (809/6/26)"),
-    _at(976, 5, 26, "61MB (976/5/26)"),
-    _at(977, 5, 26, "62MB (977/5/26)"),
-    _at(698, 7, 26, "61MB (698/7/26)"),
-    _at(699, 7, 26, "62MB (699/7/26)"),
-    _at(940, 8, 17, "62MB (940/8/17)"),
-    _at(615, 8, 26, "62MB (615/8/26)"),
-    _at(1024, 5, 26, "65MB (1024/5/26)"),
-    _at(733, 7, 26, "65MB (733/7/26)"),
-    _at(1024, 8, 17, "68MB (1024/8/17)"),
-    _at(823, 10, 17, "68MB (823/10/17)"),
-    _at(754, 11, 17, "68MB (754/11/17)"),
-    _at(830, 10, 17, "68MB (830/10/17)"),
-    _at(925, 9, 17, "69MB (925/9/17)"),
-    _at(1224, 7, 17, "71MB (1224/7/17)"),
-    _at(940, 6, 26, "71MB (940/6/26)"),
-    _at(855, 7, 26, "75MB (855/7/26)"),
-    _at(751, 8, 26, "76MB (751/8/26)"),
-    _at(1024, 9, 17, "76MB (1024/9/17)"),
-    _at(965, 10, 17, "80MB (965/10/17)"),
-    _at(969, 5, 34, "80MB (969/5/34)"),
-    _at(980, 10, 17, "81MB (980/10/17)"),
-    _at(960, 5, 35, "82MB (960/5/35)"),
-    _at(918, 11, 17, "83MB (918/11/17)"),
-    _at(1024, 10, 17, "85MB (1024/10/17)"),
-    _at(977, 7, 26, "86MB (977/7/26)"),
-    _at(1024, 7, 26, "91MB (1024/7/26)"),
-    _at(1024, 11, 17, "93MB (1024/11/17)"),
-    _at(940, 8, 26, "95MB (940/8/26)"),
-    _at(776, 8, 33, "100MB (776/8/33)"),
-    _at(755, 16, 17, "100MB (755/16/17)"),
-    _at(1024, 12, 17, "102MB (1024/12/17)"),
-    _at(1024, 8, 26, "104MB (1024/8/26)"),
-    _at(823, 10, 26, "104MB (823/10/26)"),
-    _at(830, 10, 26, "105MB (830/10/26)"),
-    _at(925, 9, 26, "105MB (925/9/26)"),
-    _at(960, 9, 26, "109MB (960/9/26)"),
-    _at(1024, 13, 17, "110MB (1024/13/17)"),
-    _at(1224, 11, 17, "111MB (1224/11/17)"),
-    _at(900, 15, 17, "112MB (900/15/17)"),
-    _at(969, 7, 34, "112MB (969/7/34)"),
-    _at(917, 15, 17, "114MB (917/15/17)"),
-    _at(918, 15, 17, "114MB (918/15/17)"),
-    _at(1524, 4, 39, "116MB (1524/4/39)"),
-    _at(1024, 9, 26, "117MB (1024/9/26)"),
-    _at(1024, 14, 17, "119MB (1024/14/17)"),
-    _at(965, 10, 26, "122MB (965/10/26)"),
-    _at(980, 10, 26, "124MB (980/10/26)"),
-    _at(1020, 15, 17, "127MB (1020/15/17)"),
-    _at(1023, 15, 17, "127MB (1023/15/17)"),
-    _at(1024, 15, 17, "127MB (1024/15/17)"),
-    _at(1024, 16, 17, "136MB (1024/16/17)"),
-    _at(1224, 15, 17, "152MB (1224/15/17)"),
-    _at(755, 16, 26, "153MB (755/16/26)"),
-    _at(903, 8, 46, "162MB (903/8/46)"),
-    _at(984, 10, 34, "163MB (984/10/34)"),
-    _at(900, 15, 26, "171MB (900/15/26)"),
-    _at(917, 15, 26, "174MB (917/15/26)"),
-    _at(1023, 15, 26, "194MB (1023/15/26)"),
-    _at(684, 16, 38, "203MB (684/16/38)"),
-    _at(1930, 4, 62, "233MB (1930/4/62)"),
-    _at(967, 16, 31, "234MB (967/16/31)"),
-    _at(1013, 10, 63, "311MB (1013/10/63)"),
-    _at(1218, 15, 36, "321MB (1218/15/36)"),
-    _at(654, 16, 63, "321MB (654/16/63)"),
-    _at(659, 16, 63, "324MB (659/16/63)"),
-    _at(702, 16, 63, "345MB (702/16/63)"),
-    _at(1002, 13, 63, "400MB (1002/13/63)"),
-    _at(854, 16, 63, "420MB (854/16/63)"),
-    _at(987, 16, 63, "485MB (987/16/63)"),
-    _at(995, 16, 63, "489MB (995/16/63)"),
-    _at(1024, 16, 63, "504MB (1024/16/63)"),
-    _at(1036, 16, 63, "509MB (1036/16/63)"),
-    _at(1120, 16, 59, "516MB (1120/16/59)"),
-    _at(1054, 16, 63, "518MB (1054/16/63)"),
-)
-
-MARTYPC_AT_FORMATS_BY_SLUG: dict[str, MartyPCAtFormat] = {
-    fmt.slug: fmt for fmt in MARTYPC_AT_FORMATS
-}
-
-# Sensible default: the entry that matches generic-target's natural 504 MiB
-# alignment (1024 cyl × 16 heads × 63 spt). Same bytes as a generic-target
-# VHD created with that exact size, so users transitioning between modes
-# get predictable behavior.
-DEFAULT_MARTYPC_AT_FORMAT_SLUG: str = "at-1024-16-63"
-
-
-def lookup_martypc_at_format(slug: str) -> MartyPCAtFormat:
-    fmt = MARTYPC_AT_FORMATS_BY_SLUG.get(slug)
-    if fmt is None:
-        raise ValueError(
-            f"Unknown MartyPC AT/XT-IDE drive type slug: {slug!r}. "
-            f"Expected one of {len(MARTYPC_AT_FORMATS)} entries from MartyPC's AtFormats table."
-        )
-    return fmt
-
-
-@dataclass(frozen=True, slots=True)
-class MartyPCXebecSpec:
-    cylinders: int
-    heads: int
-    sectors_per_track: int
-    write_precomp_cylinder: int
-    description: str
-
-    @property
-    def total_sectors(self) -> int:
-        return self.cylinders * self.heads * self.sectors_per_track
-
-    @property
-    def size_bytes(self) -> int:
-        return self.total_sectors * 512
-
-
-class MartyPCXebecDriveType(str, Enum):
-    """MartyPC IBM/Xebec MFM controller drive types.
-
-    These four geometries are the only sizes the Xebec HDC in MartyPC will
-    accept. The emulator validates the VHD footer CHS against this exact
-    table at mount time; mismatched VHDs fail with ``UnsupportedVHD``.
-
-    Source: ``crates/marty_core/src/devices/hdc/xebec.rs`` in dbalsom/martypc.
-    """
-
-    TYPE1 = "type1"      # 10 MiB
-    TYPE16 = "type16"    # 20 MiB
-    TYPE2 = "type2"      # 20 MiB
-    TYPE13 = "type13"    # 20 MiB
-
-    @property
-    def spec(self) -> MartyPCXebecSpec:
-        return _MARTYPC_XEBEC_SPECS[self]
-
-    @property
-    def cylinders(self) -> int:
-        return self.spec.cylinders
-
-    @property
-    def heads(self) -> int:
-        return self.spec.heads
-
-    @property
-    def sectors_per_track(self) -> int:
-        return self.spec.sectors_per_track
-
-    @property
-    def size_bytes(self) -> int:
-        return self.spec.size_bytes
-
-    @property
-    def description(self) -> str:
-        return self.spec.description
-
-
-_MARTYPC_XEBEC_SPECS: dict[MartyPCXebecDriveType, MartyPCXebecSpec] = {
-    MartyPCXebecDriveType.TYPE1: MartyPCXebecSpec(
-        cylinders=306,
-        heads=4,
-        sectors_per_track=17,
-        write_precomp_cylinder=0,
-        description="10 MiB (306x4x17, Type 1)",
-    ),
-    MartyPCXebecDriveType.TYPE16: MartyPCXebecSpec(
-        cylinders=612,
-        heads=4,
-        sectors_per_track=17,
-        write_precomp_cylinder=0,
-        description="20 MiB (612x4x17, Type 16)",
-    ),
-    MartyPCXebecDriveType.TYPE2: MartyPCXebecSpec(
-        cylinders=615,
-        heads=4,
-        sectors_per_track=17,
-        write_precomp_cylinder=300,
-        description="20 MiB (615x4x17, Type 2)",
-    ),
-    MartyPCXebecDriveType.TYPE13: MartyPCXebecSpec(
-        cylinders=306,
-        heads=8,
-        sectors_per_track=17,
-        write_precomp_cylinder=128,
-        description="20 MiB (306x8x17, Type 13)",
-    ),
-}
+    IDE = "ide"
+    MFM = "mfm"
 
 
 # =====================================================================
@@ -780,9 +531,6 @@ class CreateRequest:
     msdos_install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL
     ibm_dos_version: IBMDOSVersion = IBMDOSVersion.DOS33
     custom_payload_path: Path | None = None
-    machine_target: MachineTarget = MachineTarget.GENERIC
-    martypc_xebec_drive_type: MartyPCXebecDriveType = MartyPCXebecDriveType.TYPE2
-    martypc_at_drive_type_slug: str = DEFAULT_MARTYPC_AT_FORMAT_SLUG
     # Optional classic-AT-BIOS hard-drive preset. When set as a
     # ``(vendor, type_id)`` tuple, the VHD's footer CHS + total size
     # are locked to the BIOS-table spec so 86Box BIOS auto-detect
@@ -790,6 +538,15 @@ class CreateRequest:
     # represented by ``None`` (the default) — in that case ``size_bytes``
     # is used as today and the footer gets the 16h/63s canonical CHS.
     bios_drive_type: tuple[BIOSVendor, int] | None = None
+    # ---- v0.7.0: controller-first VHD organization --------------------
+    # ``disk_controller`` is the primary way to choose VHD type.  When
+    # left at None, ``effective_disk_controller`` auto-detects from the
+    # boot mode (MFM for compaq2/msdos33/ibm8088+dos33/pcdos, IDE
+    # otherwise).  ``custom_chs`` provides a free-form cyl/head/spt
+    # geometry source.  See the v0.7.0 release notes for migration
+    # from the v0.6.x machine-target flags.
+    disk_controller: DiskController | None = None
+    custom_chs: tuple[int, int, int] | None = None
     # When ``boot_mode == BootMode.FOURDOS``, dosforge first runs the
     # ``host_boot_mode`` build flow to lay down a fully-bootable DOS, then
     # overlays the 4DOS shell on top (copies 4DOS.COM + helpers to
@@ -807,8 +564,32 @@ class CreateRequest:
         return lookup_bios_drive_type(vendor, type_id)
 
     @property
-    def martypc_at_drive_type(self) -> MartyPCAtFormat:
-        return lookup_martypc_at_format(self.martypc_at_drive_type_slug)
+    def effective_disk_controller(self) -> DiskController:
+        """Return the disk controller, auto-detected from boot mode if unset.
+
+        v0.7.0 selection rules:
+        - ``disk_controller`` explicitly set: use as-is
+        - Otherwise auto-detect from ``boot_mode``:
+          * COMPAQ2, MSDOS33, PCDOS, IBM8088+DOS33: MFM (XT-class era)
+          * Everything else: IDE
+        """
+        if self.disk_controller is not None:
+            return self.disk_controller
+        # Auto-detect path. Keep these branches narrow -- a boot mode
+        # only counts as MFM-default when its authentic 1980s hardware
+        # used an MFM controller.
+        if self.boot_mode is BootMode.COMPAQ2:
+            return DiskController.MFM
+        if self.boot_mode is BootMode.MSDOS33:
+            return DiskController.MFM
+        if self.boot_mode is BootMode.PCDOS:
+            return DiskController.MFM
+        if (
+            self.boot_mode is BootMode.IBM8088
+            and self.ibm_dos_version is IBMDOSVersion.DOS33
+        ):
+            return DiskController.MFM
+        return DiskController.IDE
 
 
 @dataclass(slots=True)
