@@ -38,8 +38,15 @@ from .paths import (
     resolve_dos_asset_dir,
 )
 
+# Pinned to a known-good FreeDOS image commit.  Tracking ``master``
+# on codercowboy/freedosbootdisks (the previous default) silently
+# breaks every dosforge build the moment upstream rewrites the boot
+# disk -- the user only finds out at "Verifying DMI Pool Data..."
+# in the emulator.  ``FREEDOS_FALLBACK_IMAGE_URL`` is kept as a
+# fallback so a future re-pin only changes the primary URL.
 FREEDOS_DEFAULT_IMAGE_URL = (
-    "https://raw.githubusercontent.com/codercowboy/freedosbootdisks/master/bootdisks/freedos.boot.disk.1.4MB.img"
+    "https://raw.githubusercontent.com/codercowboy/freedosbootdisks/"
+    "330e522bf9323ad54a6ff68c9b7cb9ae7a084cb4/bootdisks/freedos.boot.disk.1.4MB.img"
 )
 FREEDOS_FALLBACK_IMAGE_URL = (
     "https://raw.githubusercontent.com/codercowboy/freedosbootdisks/"

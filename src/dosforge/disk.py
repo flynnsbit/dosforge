@@ -64,6 +64,7 @@ from .paths import (
     app_cache_dir,
     app_mount_root,
     describe_dos_asset_locations,
+    dos_assets_root,
     resolve_dos_asset_dir,
 )
 from .size import (
@@ -1236,11 +1237,18 @@ class DiskManager:
             raise ValidationError(
                 f"Missing required tools for FreeDOS extraction: {', '.join(missing)}"
             )
-        target = (
-            destination
-            if destination is not None
-            else (Path.cwd() / DOS_ASSETS_SUBDIR / "freedos")
-        )
+        # Resolve "where to write the freshly fetched FreeDOS assets" the
+        # same way every other read uses (``resolve_dos_asset_dir``).  Using
+        # ``Path.cwd() / dosassets / freedos`` was wrong on installed
+        # bundles: it wrote to the user's CWD instead of the bundle's
+        # DOSFORGE_DOSASSETS_DIR location, so the create step kept
+        # reading the stale bundled boot sectors and the resulting VHD
+        # hung at "Verifying DMI Pool Data..." in the emulator.
+        if destination is not None:
+            target = destination
+        else:
+            resolved = resolve_dos_asset_dir("freedos")
+            target = resolved if resolved is not None else (dos_assets_root() / "freedos")
         return self.boot_resolver.export_latest_freedos_assets(
             target,
             image_url=download_url,
