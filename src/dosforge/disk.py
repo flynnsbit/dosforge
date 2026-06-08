@@ -25,7 +25,6 @@ from .fourdos_overlay import (
     resolve_fourdos_assets_dir,
 )
 from .legacy_dos_install import (
-    Compaq331InstallSources,
     LegacyDosInstallProfile,
     LegacyDosQemuInstaller,
     compaq2_profile,

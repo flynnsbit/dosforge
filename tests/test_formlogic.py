@@ -107,14 +107,7 @@ def test_geometry_source_custom_chs_shows_chs_hides_others():
     assert f.effective_size_text(state) == "10M"
 
 
-def test_disabled_fields_returns_empty_in_v080():
-    """disabled_fields() is a no-op in v0.8.0 -- the geometry-source
-    picker eliminates the need for the SIZE-disabled state by only
-    showing one input at a time.  Kept as no-op for backward compat."""
-    state = _state(bios_drive_type=_first_bios_slug())
-    assert f.disabled_fields(state) == set()
-    state = _state(custom_chs="306,4,17")
-    assert f.disabled_fields(state) == set()
+
 
 
 def test_infer_geometry_source_custom_chs_wins_over_preset():

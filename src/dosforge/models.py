@@ -178,27 +178,8 @@ class IBMDOSVersion(str, Enum):
     DOS50 = "dos50"
 
 
-class MachineTarget(str, Enum):
-    """Optional emulator/machine profile constraining VHD geometry.
-
-    .. deprecated:: 0.7.0
-       Use :class:`DiskController` + ``bios_drive_type`` / ``custom_chs``
-       instead.  This enum is retained only as an internal compatibility
-       shim and will be removed in v0.8.0.  See
-       ``releases/{linux,windows}-v0.7.0-release-notes.md`` for migration.
-    """
-
-    GENERIC = "generic"
-    MARTYPC_XEBEC = "martypc-xebec"
-    MARTYPC_XTIDE = "martypc-xtide"
-    MARTYPC_JRIDE = "martypc-jride"
-
-
 class DiskController(str, Enum):
     """Hard-disk controller class targeted by a VHD build.
-
-    Replaces the v0.6.x ``MachineTarget`` enum as the primary way to
-    select what kind of VHD dosforge produces.
 
     ``IDE`` (the default) targets AT-class IDE/ATA controllers found in
     any 86Box / DOSBox-X / PCem / MartyPC AT machine from 1988 onward.
@@ -241,13 +222,10 @@ class BIOSVendor(str, Enum):
 class GeometrySource(str, Enum):
     """Which input governs the VHD's effective on-disk geometry.
 
-    Added in v0.8.0 to make the Step 2 (Media) controls hierarchical:
-    the user picks a geometry source first, then sees only the
-    relevant input(s) underneath.  The backend already supported the
-    same 3-way precedence implicitly through ``disabled_fields()``
-    and the ``CreateRequest`` validation chain (custom CHS wins over
-    BIOS preset, BIOS preset wins over static size); this enum just
-    exposes that precedence as a top-level UI control.
+    The TUI / GUI surface a single picker rather than three
+    competing always-visible inputs: custom CHS wins over BIOS
+    preset wins over static size.  Only the chosen source's input
+    is visible underneath.
     """
 
     SIZE = "size"             # static-size text Input

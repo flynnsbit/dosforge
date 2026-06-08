@@ -1444,50 +1444,7 @@ class LegacyDosQemuInstaller:
             )
 
 
-# Backwards-compatible aliases for the older compaq331-specific names.
-@dataclass(frozen=True)
-class Compaq331InstallSources:
-    """Deprecated. Use LegacyDosInstallProfile + compaq331_profile()."""
-
-    startup_image: Path
-
-
-class Compaq331QemuInstaller(LegacyDosQemuInstaller):
-    """Deprecated. Use LegacyDosQemuInstaller + compaq331_profile()."""
-
-    def __init__(
-        self,
-        *,
-        runner: CommandRunner | None = None,
-        cache_root: Path,
-        timeout_seconds: float = 60.0,
-    ) -> None:
-        super().__init__(runner=runner, cache_root=cache_root)
-        self._timeout_seconds = timeout_seconds
-
-    def install_system(  # type: ignore[override]
-        self,
-        *,
-        vhd_path: Path,
-        sources: Compaq331InstallSources,
-        partition_offset_bytes: int,
-    ) -> None:
-        profile = LegacyDosInstallProfile(
-            label="Compaq DOS 3.31",
-            install_image=sources.startup_image,
-            required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
-            timeout_seconds=self._timeout_seconds,
-        )
-        super().install_system(
-            vhd_path=vhd_path,
-            profile=profile,
-            partition_offset_bytes=partition_offset_bytes,
-        )
-
-
 __all__ = [
-    "Compaq331InstallSources",
-    "Compaq331QemuInstaller",
     "LegacyDosInstallProfile",
     "LegacyDosQemuInstaller",
     "compaq331_profile",

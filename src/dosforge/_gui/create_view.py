@@ -391,10 +391,8 @@ class CreateView(ttk.Frame):
         for key, field in self._fields.items():
             field.set_visible(key in always or key in visible)
 
-        # v0.8.0: disabled_fields() is a no-op (geometry-source picker
-        # eliminates the SIZE-disabled state), so the size Entry is
-        # always editable when visible.  Keep explicit normal-state
-        # in case an older state set it readonly via some other path.
+        # The geometry-source picker means only one input is visible at a
+        # time, so the size Entry is always editable when shown.
         self._size_entry.configure(state="normal")
 
         # Live geometry preview directly under the geometry-source

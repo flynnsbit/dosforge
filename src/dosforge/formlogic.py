@@ -238,16 +238,6 @@ def infer_geometry_source(state: FormState) -> GeometrySource:
     return GeometrySource.SIZE
 
 
-def disabled_fields(state: FormState) -> set[str]:
-    # Pre-v0.8.0 returned {SIZE} when bios_drive_type or custom_chs
-    # was set so users couldn't accidentally edit a field whose value
-    # wouldn't win.  v0.8.0 surfaces that precedence as the
-    # FIELD_GEOMETRY_SOURCE picker -- only the picked source's input
-    # is visible, so no field needs the disabled state.  Kept as a
-    # no-op for backward compat with any external callers.
-    return set()
-
-
 def coerce_on_geometry_source_change(state: FormState) -> FormState:
     """Clear the inactive geometry inputs when the user picks a source.
 
