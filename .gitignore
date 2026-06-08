@@ -40,6 +40,8 @@
 !/dosassets/pcdos2/readme.txt
 /dosassets/pcdos3/*
 !/dosassets/pcdos3/readme.txt
+/dosassets/pcdos/*
+!/dosassets/pcdos/readme.txt
 /dosassets/pcdos5/*
 !/dosassets/pcdos5/readme.txt
 /dosassets/pcdos6/*

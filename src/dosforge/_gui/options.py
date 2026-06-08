@@ -74,7 +74,13 @@ BOOT_MODE_OPTIONS = [
     ("MS-DOS 5.0", BootMode.MSDOS5.value),
     ("MS-DOS 6.0", BootMode.MSDOS6.value),
     ("MS-DOS 6.22", BootMode.MSDOS622.value),
-    ("IBM PC-DOS (user-supplied install media)", BootMode.PCDOS.value),
+    # NB: the generic ``--boot-mode pcdos`` (IBM PC-DOS catch-all) is
+    # intentionally hidden from the UI dropdown.  It was redundant with
+    # the four version-specific PC-DOS modes (pcdos3, pcdos7, pcdos2000,
+    # pcdos71) and offered no version-aware size cap or asset readme.
+    # Still accepted via CLI (--boot-mode pcdos) for advanced users
+    # with PC-DOS 3.10/3.20/3.30/4.00/5.00/6.x media; see
+    # dosassets/pcdos/readme.txt for the expected layout.
     ("IBM PC-DOS 3.00 (1984, 360k DSDD)", BootMode.PCDOS3.value),
     ("MS-DOS 3.00 Compaq OEM (1985, 360k DSDD)", BootMode.COMPAQ3.value),
     ("IBM PC-DOS 7.0 (XDF media)", BootMode.PCDOS7.value),
