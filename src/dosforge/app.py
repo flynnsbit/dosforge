@@ -595,12 +595,6 @@ class DosForgeApp(App[None]):
                                     value=MediaType.VHD.value,
                                     id="media-type",
                                 )
-                                yield Label("Disk controller", id="disk-controller-label")
-                                yield SingleClickSelect(
-                                    options=_DISK_CONTROLLER_OPTIONS,
-                                    value="",
-                                    id="disk-controller",
-                                )
                                 yield Label("Output path", id="create-path-label")
                                 with Horizontal(classes="path-row", id="create-path-row"):
                                     yield Input(
@@ -608,6 +602,12 @@ class DosForgeApp(App[None]):
                                         id="create-path",
                                     )
                                     yield Button("...", id="browse-create-path-btn", classes="btn-ghost")
+                                yield Label("Disk controller", id="disk-controller-label")
+                                yield SingleClickSelect(
+                                    options=_DISK_CONTROLLER_OPTIONS,
+                                    value="",
+                                    id="disk-controller",
+                                )
                                 yield Label("Geometry source", id="geometry-source-label")
                                 yield SingleClickSelect(
                                     options=_GEOMETRY_SOURCE_OPTIONS,
