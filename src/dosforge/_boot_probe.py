@@ -1,12 +1,15 @@
 """DOSBox-X-driven boot verification for built DOS disks.
 
-Phase 14H (informal): unit tests and the build-matrix script declare
-"build OK" when ``dosforge create`` exits cleanly, but that doesn't
-guarantee the disk actually boots into a DOS prompt -- the user has
-observed many "OK" builds that fail to reach C:\\> when loaded into
-86Box.  This module closes the gap: given a built VHD or floppy IMG,
-it runs DOSBox-X headless against a *probe copy* and reports whether
-DOS actually got far enough to execute AUTOEXEC.BAT.
+Unit tests and the build-matrix script declare "build OK" when
+``dosforge create`` exits cleanly, but that doesn't guarantee the
+disk actually boots into a DOS prompt -- many "OK" builds fail to
+reach C:\\> when loaded into 86Box.  This module closes that gap:
+given a built VHD or floppy IMG, it runs DOSBox-X headless against
+a *probe copy* and reports whether DOS got far enough to execute
+AUTOEXEC.BAT.
+
+NOTE: test infrastructure only -- not imported by the runtime
+CLI / GUI / TUI surfaces.
 
 Authenticity rule observance
 ----------------------------

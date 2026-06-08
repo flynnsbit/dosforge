@@ -1,3 +1,12 @@
+"""86Box / DOSBox-X serial-output failure-marker matcher.
+
+Reads emulator serial output to determine whether a built disk
+reached the DOS prompt or failed during boot.
+
+NOTE: test infrastructure only -- not imported by the runtime
+CLI / GUI / TUI surfaces.
+"""
+
 from __future__ import annotations
 
 import subprocess

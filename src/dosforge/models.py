@@ -151,10 +151,9 @@ class BootMode(str, Enum):
     # toolchain (COMMAND, SYS, FORMAT, FDISK) plus INSTALL.EXE /
     # SETUP2.EX_ (interactive installer, bypassed by dosforge).
     DRDOS7 = "drdos7"
-    # 4DOS shell overlay (planned, requires --host-dos).  Phase 14F
-    # implementation is pending until 4DOS install media is provided.
-    # When set, dosforge raises a clear "not yet implemented" message
-    # rather than producing a partial build.
+    # 4DOS shell overlay (planned, requires --host-dos).  When set,
+    # dosforge raises a clear "not yet implemented" message until
+    # full 4DOS install media is provided.
     FOURDOS = "4dos"
 
 
@@ -584,13 +583,11 @@ class CreateRequest:
     # represented by ``None`` (the default) — in that case ``size_bytes``
     # is used as today and the footer gets the 16h/63s canonical CHS.
     bios_drive_type: tuple[BIOSVendor, int] | None = None
-    # ---- v0.7.0: controller-first VHD organization --------------------
-    # ``disk_controller`` is the primary way to choose VHD type.  When
-    # left at None, ``effective_disk_controller`` auto-detects from the
-    # boot mode (MFM for compaq2/msdos33/ibm8088+dos33/pcdos, IDE
-    # otherwise).  ``custom_chs`` provides a free-form cyl/head/spt
-    # geometry source.  See the v0.7.0 release notes for migration
-    # from the v0.6.x machine-target flags.
+    # ``disk_controller`` is the primary way to choose VHD type.
+    # When left at None, ``effective_disk_controller`` auto-detects
+    # from the boot mode (MFM for compaq2 / msdos33 / ibm8088+dos33 /
+    # pcdos, IDE otherwise).  ``custom_chs`` provides a free-form
+    # cyl/head/spt geometry source.
     disk_controller: DiskController | None = None
     custom_chs: tuple[int, int, int] | None = None
     # When ``boot_mode == BootMode.FOURDOS``, dosforge first runs the

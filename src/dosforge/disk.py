@@ -1267,10 +1267,10 @@ class DiskManager:
                     "valid for the 4DOS overlay.  Choose a real DOS boot "
                     "mode (msdos71, msdos622, pcdos7, etc.)."
                 )
-            # Initial Phase 14F-full scope: only MSDOS71 is validated as a
-            # working host.  Other host modes are likely to work but
-            # haven't been smoke-tested yet; reject them explicitly so
-            # users get a clear error instead of a half-broken VHD.
+            # Currently only MSDOS71 is validated as a working 4DOS
+            # host.  Other host modes are likely to work but haven't
+            # been smoke-tested; reject them explicitly so users get
+            # a clear error instead of a half-broken VHD.
             _SUPPORTED_4DOS_HOSTS = {BootMode.MSDOS71}
             if request.host_boot_mode not in _SUPPORTED_4DOS_HOSTS:
                 supported = ", ".join(sorted(m.value for m in _SUPPORTED_4DOS_HOSTS))
@@ -2425,10 +2425,10 @@ class DiskManager:
     def _create_and_prepare_fourdos(self, request: CreateRequest) -> None:
         """Build a host DOS VHD/IMG and overlay the 4DOS shell on top.
 
-        Phase 14F-full: 4DOS is a shell overlay; the host DOS owns the
-        VBR / IO.SYS / MSDOS.SYS / COMMAND.COM.  After the host build
-        completes we copy 4DOS.COM (and helpers) to C:\\4DOS\\ and write
-        a CONFIG.SYS that points SHELL= at the 4DOS interpreter.
+        4DOS is a shell overlay; the host DOS owns the VBR /
+        IO.SYS / MSDOS.SYS / COMMAND.COM.  After the host build
+        completes we copy 4DOS.COM (and helpers) to C:\\4DOS\\ and
+        write a CONFIG.SYS that points SHELL= at the 4DOS interpreter.
 
         ``request.host_boot_mode`` selects the underlying DOS.  We
         validate the host choice in :meth:`_validate_create_request`;

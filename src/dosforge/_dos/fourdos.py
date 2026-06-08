@@ -1,4 +1,4 @@
-"""4DOS shell overlay profile (boot_mode='4dos', planned in Phase 14F).
+"""4DOS shell overlay profile (boot_mode='4dos', planned).
 
 4DOS is JP Software's commercial COMMAND.COM replacement that ships
 on its own install diskette.  Unlike every other boot mode, 4DOS is

@@ -227,9 +227,9 @@ def infer_geometry_source(state: FormState) -> GeometrySource:
 
     Precedence (matches ``CreateRequest`` validation order in
     ``disk.py``): custom CHS wins over BIOS preset wins over static
-    size.  Used to migrate pre-v0.8.0 saved states / external
-    scripts that drove the form without setting ``geometry_source``
-    explicitly.
+    size.  Used to initialise the geometry-source picker from saved
+    states or external scripts that drove the form without setting
+    ``geometry_source`` explicitly.
     """
     if state.custom_chs.strip():
         return GeometrySource.CUSTOM_CHS
@@ -448,10 +448,10 @@ def _snap_size_for_boot_mode(state: FormState) -> FormState:
         return state
     fmt = DiskFormat(state.disk_format)
     min_mb = rule.per_format_min_mb.get(fmt)
-    # v0.8.2: cap by the tighter of per-boot-mode max_mb and the
-    # FAT-format's own cap (FAT12=32 MiB, FAT16=2 GiB, FAT32=2 TiB).
-    # v0.8.3: also consider state-dependent caps such as IBM8088's
-    # ibm_dos_version (DOS33=32 MiB, DOS50=504 MiB).
+    # Cap by the tighter of per-boot-mode max_mb, the FAT format's
+    # own cap (FAT12=32 MiB, FAT16=2 GiB, FAT32=2 TiB), and any
+    # state-dependent extra cap (e.g. IBM8088 DOS33=32 MiB vs
+    # DOS50=504 MiB).
     max_mb = _state_aware_max_mb(state, rule, fmt)
     try:
         size_bytes = parse_size(state.size_text)
@@ -627,10 +627,10 @@ def validate_media_step(state: FormState) -> str | None:
             f"{fmt.value} partitions cannot exceed {_render_mb(max_mb)} "
             "(the FAT format's hard cap)."
         )
-    # v0.8.3: FreeDOS auto-download bundle only ships FAT16 boot
-    # assets (BOOTSECT_FAT16.BIN); FAT32 requires the LOCAL source
-    # with BOOTSECT_FAT32.BIN.  Surface the gate at Next rather
-    # than letting the user reach Create.
+    # FreeDOS auto-download bundle ships FAT16 boot assets only
+    # (BOOTSECT_FAT16.BIN); FAT32 requires the LOCAL source with
+    # BOOTSECT_FAT32.BIN.  Surface the gate at Next rather than
+    # letting the user reach Create.
     if (
         boot_mode is BootMode.FREEDOS
         and fmt is DiskFormat.FAT32

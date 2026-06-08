@@ -73,16 +73,16 @@ _LEGACY_DOS_SYSTEM_FILE_NAMES = frozenset(
 def _strict_authentic_enabled() -> bool:
     """Return True when CONFIG.SYS/AUTOEXEC.BAT must come from install media.
 
-    Phase 14B of the DOS authenticity rule: every boot mode's disk
-    must byte-equivalent a real install from that DOS's own install
-    media.  When True (default), missing or partial startup files cause
-    a hard ValidationError instead of silent synthesis, and any
+    DOS authenticity rule: every boot mode's disk must byte-equivalent
+    a real install from that DOS's own install media.  When True
+    (default), missing or partial startup files cause a hard
+    ValidationError instead of silent synthesis, and any
     install-media-shipped CONFIG.SYS/AUTOEXEC.BAT lands byte-verbatim
     on the target partition (no rewrites).
 
-    Opt-out via DOSFORGE_ALLOW_SYNTHESIZED_STARTUP=1 only for legacy
-    workflows where the user genuinely lacks install diskettes and
-    can accept a generic minimal config.
+    Opt-out via DOSFORGE_ALLOW_SYNTHESIZED_STARTUP=1 for workflows
+    where the user genuinely lacks install diskettes and can accept
+    a generic minimal config.
     """
     return os.environ.get("DOSFORGE_ALLOW_SYNTHESIZED_STARTUP", "0").strip() not in (
         "1",
@@ -134,11 +134,11 @@ def materialize_versioned_cache(
     return cache_path
 
 
-# Pre-Phase-14G un-versioned cache filenames that may still exist on a
-# user's machine from a previous dosforge install.  They are no longer
-# read by current code -- the SHA-stamped equivalents replace them --
-# so they are dead bytes consuming disk space.  ``cleanup_legacy_cache_files``
-# deletes them on a best-effort basis the first time a BootInstaller or
+# Un-versioned cache filenames that may still exist on a user's machine
+# from a previous dosforge install.  They are no longer read by current
+# code -- the SHA-stamped equivalents replace them -- so they are dead
+# bytes consuming disk space.  ``cleanup_legacy_cache_files`` deletes
+# them on a best-effort basis the first time a BootInstaller or
 # BootAssetResolver is instantiated against a given cache directory.
 #
 # Keep these as plain filenames, not regexes, so:
@@ -888,10 +888,10 @@ class BootAssetResolver:
         """Graft a FreeDOS FAT16 reference VBR + MBR into ``assets``.
 
         ONLY callable from FreeDOS resolution paths.  Per the DOS
-        authenticity rule (see plan.md Phase 14), FreeDOS code paths
-        must never be invoked for non-FreeDOS boot modes -- doing so
-        would write a FreeDOS-flavoured VBR (OEM 'FRDOS5.1') onto an
-        MS-DOS / PC-DOS / Compaq DOS partition.
+        authenticity rule, FreeDOS code paths must never be invoked
+        for non-FreeDOS boot modes -- doing so would write a
+        FreeDOS-flavoured VBR (OEM 'FRDOS5.1') onto an MS-DOS /
+        PC-DOS / Compaq DOS partition.
 
         The two existing call-sites are both inside _resolve_freedos_*
         functions.  If a future contributor moves this call to a
@@ -2323,12 +2323,12 @@ class BootAssetResolver:
     ) -> None:
         """Resolve CONFIG.SYS / AUTOEXEC.BAT from install media.
 
-        Phase 14B authenticity rule (default): if the install media did
-        not ship CONFIG.SYS / AUTOEXEC.BAT, raise ValidationError.
-        The user must provide them via the asset directory, matching
+        Default DOS authenticity rule: if the install media did not
+        ship CONFIG.SYS / AUTOEXEC.BAT, raise ValidationError.  The
+        user must provide them via the asset directory, matching
         what Microsoft / IBM / Compaq SETUP actually wrote to a real
-        install.  Silent synthesis was producing generic config files
-        that drifted from the original install.
+        install.  Silent synthesis would produce generic config files
+        that drift from the original install.
 
         Opt-out for legacy workflows: set environment variable
         DOSFORGE_ALLOW_SYNTHESIZED_STARTUP=1 to restore the previous
@@ -2336,23 +2336,12 @@ class BootAssetResolver:
         """
         defaults_root.mkdir(parents=True, exist_ok=True)
 
-        # Pre-DOS-5 modes (MS-DOS 3.x, IBM PC-DOS 3.x, Compaq DOS 2.x/3.x)
-        # legitimately did NOT ship CONFIG.SYS / AUTOEXEC.BAT on their
-        # install media -- those files were user-created during
-        # personalization (SETUP.EXE wasn't introduced until DOS 5.0).
-        # The strict-authenticity rule below was designed for the DOS 5+
-        # / PC-DOS 7 era where SETUP did write startup files, and
-        # treating pre-DOS-5 install media as broken just because it
-        # doesn't ship files Microsoft never put there is wrong.
-        # For pre_dos5, always fall through to the synthesis path,
-        # which writes era-appropriate minimal defaults (FILES=30
-        # BUFFERS=20 for CONFIG.SYS; @ECHO OFF + PATH for AUTOEXEC.BAT).
-        # Any user-supplied CONFIG.SYS / AUTOEXEC.BAT dropped into the
-        # asset directory still wins via the synthesis loop's
-        # "if file already exists, keep it" branch.
+        # Pre-DOS-5 modes (MS-DOS 3.x, IBM PC-DOS 3.x, Compaq DOS
+        # 2.x/3.x) never shipped CONFIG.SYS / AUTOEXEC.BAT -- those
+        # files were user-created during personalization (SETUP.EXE
+        # arrived in DOS 5.0).  Skip the strict require and fall
+        # through to synthesis for those modes.
         if _strict_authentic_enabled() and not pre_dos5:
-            # Strict: require BOTH files to be present from the install
-            # media.  Either both are there or we fail loudly.
             missing = [
                 name for name in _OPTIONAL_MSDOS_STARTUP_FILES
                 if name not in files or not files[name].exists()
@@ -2370,10 +2359,9 @@ class BootAssetResolver:
                 )
             return
 
-        # Synthesis path: write era-appropriate defaults for any
-        # missing files.  Always taken for pre_dos5; otherwise only
-        # when the env opt-out (DOSFORGE_ALLOW_SYNTHESIZED_STARTUP=1)
-        # is set.
+        # Synthesis path: write era-appropriate defaults for missing
+        # files (always taken for pre_dos5; otherwise only when the
+        # env opt-out is set).
         for name in _OPTIONAL_MSDOS_STARTUP_FILES:
             if name in files and files[name].exists():
                 continue
@@ -2398,7 +2386,7 @@ class BootAssetResolver:
     ) -> None:
         """Pass install-media startup files through to the target.
 
-        Phase 14B authenticity rule (default): the user's CONFIG.SYS /
+        Default DOS authenticity rule: the user's CONFIG.SYS /
         AUTOEXEC.BAT land BYTE-VERBATIM on the target partition.  No
         rewrites, no PATH normalization, no DEVICE-line stripping.
         What Microsoft SETUP wrote to a real install is what we write.
@@ -2409,11 +2397,10 @@ class BootAssetResolver:
         defaults_root.mkdir(parents=True, exist_ok=True)
 
         if _strict_authentic_enabled():
-            # Strict mode: do NOT rewrite the install-media startup
-            # files.  They land verbatim on the partition.
+            # Install-media files land verbatim on the partition.
             return
 
-        # Legacy normalization path (only used when env opt-out is set):
+        # Normalization path (only used when the env opt-out is set):
         startup_normalizers = {
             "CONFIG.SYS": lambda text: normalize_msdos_config_sys(text, install_dir=install_dir),
             "AUTOEXEC.BAT": lambda text: normalize_msdos_autoexec_bat(text, install_dir=install_dir),

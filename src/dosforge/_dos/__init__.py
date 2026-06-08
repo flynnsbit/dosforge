@@ -1,6 +1,9 @@
 """Per-DOS-version metadata for boot-mode-specific authenticity.
 
-See ``plan.md`` Phase 14 for the authenticity rule this enforces.
+Every boot mode registers a :class:`DosProfile` here so the build
+pipeline can produce images that byte-equivalent a real install
+from that DOS's own install media (BPB OEM stamp, system file
+names, supported filesystems, era flags).
 """
 
 from __future__ import annotations

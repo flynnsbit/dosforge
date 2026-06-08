@@ -1073,13 +1073,13 @@ class DosForgeApp(App[None]):
         )
         self.query_one("#create-btn", Button).label = "Create + format VHD" if is_vhd else "Create + format IMG"
 
-        # v0.8.0 geometry-source picker hierarchy: each value surfaces
-        # only one of the three inputs (static size / BIOS preset /
-        # custom CHS).  When the user picks BIOS preset, mirror the
-        # preset's MB into the size Input as a hidden audit trail
-        # (the size Input is hidden in this branch but
-        # `effective_size_text()` / `build_create_request()` still
-        # read from formlogic.geometry_source-aware code).
+        # Geometry-source picker: each value surfaces only one of the
+        # three inputs (static size / BIOS preset / custom CHS).  When
+        # BIOS preset is active, mirror the preset's MB into the size
+        # Input as a hidden audit trail (the size Input is hidden in
+        # this branch but ``effective_size_text()`` /
+        # ``build_create_request()`` still read the geometry-source
+        # aware code).
         size_input = self.query_one("#create-size", Input)
         if is_vhd and geometry_source is GeometrySource.PRESET and bios_drive_slug:
             try:

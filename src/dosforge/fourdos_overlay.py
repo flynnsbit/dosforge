@@ -1,4 +1,4 @@
-"""4DOS shell overlay installer (Phase 14F-full).
+"""4DOS shell overlay installer.
 
 4DOS is JP Software's commercial COMMAND.COM replacement.  Unlike every
 other boot mode supported by dosforge, 4DOS is an *overlay*: it does not

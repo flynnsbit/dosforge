@@ -193,10 +193,9 @@ class CreateView(ttk.Frame):
                         self.combo_media.build, row=0)
         self._add_field(mb, fl.FIELD_DISK_CONTROLLER, "Disk controller",
                         self.combo_controller.build, row=1)
-        # v0.8.0 hierarchical layout: Geometry source picks ONE of
+        # Hierarchical layout: Geometry source picks ONE of
         # {Static size / BIOS preset / Custom CHS}; only the picked
-        # one's input is visible underneath.  Eliminates the previous
-        # confusion of three competing always-visible geometry fields.
+        # one's input is visible underneath.
         self._add_field(mb, fl.FIELD_GEOMETRY_SOURCE, "Geometry source",
                         self.combo_geometry_source.build, row=2)
         size_field = self._add_field(

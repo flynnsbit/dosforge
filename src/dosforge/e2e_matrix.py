@@ -1,3 +1,13 @@
+"""End-to-end build matrix declarations for the test suite.
+
+Enumerates the per-boot-mode CLI invocations the e2e tests iterate
+over to verify "every supported combination actually builds and
+boots".
+
+NOTE: test infrastructure only -- not imported by the runtime
+CLI / GUI / TUI surfaces.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
