@@ -340,13 +340,13 @@ class DosForgeApp(App[None]):
       max-width: 5;
       /* Explicit longhand margins -- the shorthand 'margin: 0 0 0 1'
          was getting partially-overridden by the global 'Button {
-         margin: 0 1 1 0; }' rule in Textual's CSS cascade, which left
-         a 1-cell gap of empty space to the RIGHT of the '...' button
-         instead of sitting flush against the path-row right edge. */
+         margin: 0 1 1 0; }' rule in Textual's CSS cascade.  Setting
+         margin-left=0 keeps the '...' button flush against the right
+         edge of the Input with no gap. */
       margin-top: 0;
       margin-right: 0;
       margin-bottom: 0;
-      margin-left: 1;
+      margin-left: 0;
       padding: 0;
     }
 
@@ -799,6 +799,15 @@ class DosForgeApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        # Force the Textual dark theme on every platform so the colors
+        # match what we designed the CSS against, regardless of the
+        # user's terminal palette or system light/dark preference.
+        # Falls back silently on older Textual versions that don't
+        # expose `self.theme` as a writable attribute.
+        try:
+            self.theme = "textual-dark"
+        except Exception:
+            pass
         try:
             self.manager.preflight()
             self._set_status("Preflight check passed. Select or create an image to begin.")
