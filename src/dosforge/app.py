@@ -495,6 +495,10 @@ class DosForgeApp(App[None]):
                                             BootMode.PCDOS3.value,
                                         ),
                                         (
+                                            "MS-DOS 3.00 Compaq OEM bootable (1985, 360k MFM)",
+                                            BootMode.COMPAQ3.value,
+                                        ),
+                                        (
                                             "PC-DOS 7.0 bootable (XDF media)",
                                             BootMode.PCDOS7.value,
                                         ),
@@ -970,6 +974,7 @@ class DosForgeApp(App[None]):
             BootMode.PCDOS2000,
             BootMode.PCDOS71,
             BootMode.COMPAQ2,
+            BootMode.COMPAQ3,
             BootMode.COMPAQ331,
         }
         show_dos_profile = boot_controls_active and boot_mode in dos_boot_modes

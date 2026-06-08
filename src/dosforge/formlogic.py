@@ -53,6 +53,7 @@ _DOS_PROFILE_BOOT_MODES = frozenset(
         BootMode.MSDOS622,
         BootMode.PCDOS,
         BootMode.PCDOS3,
+        BootMode.COMPAQ3,
         BootMode.PCDOS7,
         BootMode.PCDOS2000,
         BootMode.PCDOS71,
@@ -205,6 +206,10 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
     # max ~16 MiB partition.  Works on both MFM and IDE controllers but
     # defaults to MFM for 1984-authentic hardware.
     BootMode.PCDOS3: _BootMediaRule(frozenset({DiskFormat.FAT12}), max_mb=16),
+    # Microsoft MS-DOS 3.00 [Compaq OEM] (1985): same constraints as
+    # PCDOS3 -- FAT12 only, 16 MiB cap, defaults to MFM for
+    # 1985-authentic Compaq DeskPro / Portable Plus hardware.
+    BootMode.COMPAQ3: _BootMediaRule(frozenset({DiskFormat.FAT12}), max_mb=16),
 }
 
 
@@ -284,6 +289,17 @@ def coerce_on_boot_change(state: FormState) -> FormState:
             ibm_dos_version=IBMDOSVersion.DOS33.value,
         )
     if boot_mode is BootMode.PCDOS3:
+        return replace(
+            state,
+            media_type=MediaType.VHD.value,
+            disk_controller=DiskController.MFM.value,
+            disk_format=DiskFormat.FAT12.value,
+            size_text="10M",
+            bios_drive_type="phoenix:1",
+            img_system_format=False,
+            ibm_dos_version=IBMDOSVersion.DOS33.value,
+        )
+    if boot_mode is BootMode.COMPAQ3:
         return replace(
             state,
             media_type=MediaType.VHD.value,

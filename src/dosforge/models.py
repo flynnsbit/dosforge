@@ -117,6 +117,16 @@ class BootMode(str, Enum):
     # both IDE and MFM controllers; defaults to MFM since that's the
     # 1984-authentic hardware target.
     PCDOS3 = "pcdos3"
+    # Microsoft MS-DOS 3.00 [Compaq OEM] (1985-04-22) — Compaq-branded
+    # MS-DOS 3.0 sibling of PCDOS3.  Same DOS-3.0 BPB (has
+    # hidden_sectors) so HDD boot works on any standard MFM/IDE BIOS.
+    # FAT12 only, max ~16 MiB partition.  Sources from
+    # ``dosassets/compaq3/Microsoft MS-DOS 3.00 [Compaq OEM] (5.25-360k).7z``
+    # (auto-extracted via py7zr) or pre-extracted ``DISK01.IMG`` (360 KB
+    # DSDD).  Uses IBMBIO.COM / IBMDOS.COM naming (Compaq adopted IBM's
+    # system-file names for the 3.0 release).  Defaults to MFM
+    # controller for 1985-authentic hardware.
+    COMPAQ3 = "compaq3"
     # 4DOS shell overlay (planned, requires --host-dos).  Phase 14F
     # implementation is pending until 4DOS install media is provided.
     # When set, dosforge raises a clear "not yet implemented" message
@@ -602,6 +612,8 @@ class CreateRequest:
         if self.boot_mode is BootMode.PCDOS:
             return DiskController.MFM
         if self.boot_mode is BootMode.PCDOS3:
+            return DiskController.MFM
+        if self.boot_mode is BootMode.COMPAQ3:
             return DiskController.MFM
         if (
             self.boot_mode is BootMode.IBM8088

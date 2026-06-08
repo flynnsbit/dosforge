@@ -205,6 +205,36 @@ def pcdos3_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
     )
 
 
+def compaq3_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    """Microsoft MS-DOS 3.00 [Compaq OEM] install profile.
+
+    ``install_image`` is ``DISK01.IMG`` from the WinWorldPC
+    ``Microsoft MS-DOS 3.00 [Compaq OEM] (5.25-360k)`` archive — a
+    360 KB 5.25" DSDD floppy dated 1985-04-22.  The floppy ships
+    IBMBIO.COM + IBMDOS.COM (hidden+system) + COMMAND.COM +
+    FORMAT.COM + SYS.COM + FDISK.COM + VDISK.SYS + CLOCK.SYS at its
+    root.
+
+    Compaq-branded sibling of PCDOS3; same DOS 3.0 BPB structure
+    (has hidden_sectors) so HDD boot works on any standard MFM/IDE
+    BIOS.  Same FAT12-only + 16 MiB partition cap.  Same IBMBIO /
+    IBMDOS naming (Compaq adopted IBM's system-file names for the
+    3.0 release).
+    """
+    _ = boot_assets_dir
+    return LegacyDosInstallProfile(
+        label="Microsoft MS-DOS 3.00 [Compaq OEM]",
+        install_image=install_image,
+        required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+        install_method="format",
+        timeout_seconds=300.0,
+        # Compaq OEM 3.00's FORMAT.COM behaves like the IBM PC-DOS 3.00
+        # FORMAT.COM (twice-prompt for fixed disks).
+        format_yes_input=b"YYY\r\n\r\n\r\n",
+        supports_fdisk_mbr=False,  # /MBR added in DOS 5.0
+    )
+
+
 def compaq2_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
     """Compaq OEM MS-DOS 2.11 install profile.
 
@@ -1377,6 +1407,7 @@ __all__ = [
     "LegacyDosQemuInstaller",
     "compaq331_profile",
     "compaq2_profile",
+    "compaq3_profile",
     "msdos33_profile",
     "pcdos3_profile",
     "msdos5_profile",

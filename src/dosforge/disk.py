@@ -29,6 +29,7 @@ from .legacy_dos_install import (
     LegacyDosInstallProfile,
     LegacyDosQemuInstaller,
     compaq2_profile,
+    compaq3_profile,
     compaq331_profile,
     msdos33_profile,
     pcdos3_profile,
@@ -173,6 +174,23 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
         ),
         system_file_marker="IBMBIO.COM",
         profile_builder=pcdos3_profile,
+    ),
+    # Microsoft MS-DOS 3.00 [Compaq OEM] (April 1985) — Compaq-branded
+    # sibling of PCDOS3.  Sources from a pre-extracted ``DISK01.IMG``
+    # or the WinWorldPC ``Microsoft MS-DOS 3.00 [Compaq OEM]
+    # (5.25-360k).7z`` archive (auto-extracted via
+    # ``_legacy_dos_archive.extract_legacy_dos_install_archive``).
+    # IBMBIO.COM marker (Compaq adopted IBM system-file names for 3.0).
+    # FAT12 only, max 16 MiB partition.
+    BootMode.COMPAQ3: _LegacyDosInstallDescriptor(
+        label="Microsoft MS-DOS 3.00 [Compaq OEM]",
+        asset_fallback_dirs=("compaq3",),
+        preferred_image_names=(
+            "DISK01.IMG", "Disk01.img", "DISK1.IMG", "Disk1.img",
+            "disk01.img", "disk1.img",
+        ),
+        system_file_marker="IBMBIO.COM",
+        profile_builder=compaq3_profile,
     ),
     BootMode.PCDOS71: _LegacyDosInstallDescriptor(
         label="PC-DOS 7.1",
@@ -379,6 +397,7 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
     """
     if request.boot_mode in (
         BootMode.COMPAQ2,
+        BootMode.COMPAQ3,
         BootMode.COMPAQ331,
         BootMode.MSDOS331,
         BootMode.MSDOS33,
@@ -441,7 +460,7 @@ def _uses_msdos33_filesystem_layout(request: CreateRequest) -> bool:
       0x01 (FAT12, DOS 2.x), and
     - skip mformat (FORMAT C: /S writes its own BPB from scratch).
     """
-    if request.boot_mode in (BootMode.MSDOS33, BootMode.COMPAQ2, BootMode.PCDOS3):
+    if request.boot_mode in (BootMode.MSDOS33, BootMode.COMPAQ2, BootMode.COMPAQ3, BootMode.PCDOS3):
         return True
     if (
         request.boot_mode is BootMode.IBM8088
@@ -1352,6 +1371,25 @@ class DiskManager:
             raise ValidationError(
                 "IBM PC-DOS 3.00 (pcdos3) requires FAT12 (FAT16 was added in PC-DOS 3.10)."
             )
+        # Microsoft MS-DOS 3.00 [Compaq OEM] -- same FAT12-only + 16 MiB cap
+        # as IBM PC-DOS 3.00.
+        if (
+            request.boot_mode is BootMode.COMPAQ3
+            and request.size_bytes > 16 * 1024 * 1024
+        ):
+            raise ValidationError(
+                "Microsoft MS-DOS 3.00 [Compaq OEM] (compaq3) only supports FAT12 "
+                "partitions up to 16 MiB. Use msdos33 (FAT12/FAT16<=32MiB) or "
+                "msdos331 / compaq331 for larger partitions."
+            )
+        if (
+            request.boot_mode is BootMode.COMPAQ3
+            and request.disk_format is not DiskFormat.FAT12
+        ):
+            raise ValidationError(
+                "Microsoft MS-DOS 3.00 [Compaq OEM] (compaq3) requires FAT12 "
+                "(FAT16 was added in DOS 3.10)."
+            )
         legacy_fat16_modes = {
             BootMode.MSDOS331,
             BootMode.MSDOS5,
@@ -1442,6 +1480,7 @@ class DiskManager:
             BootMode.PCDOS2000,
             BootMode.PCDOS71,
             BootMode.COMPAQ2,
+            BootMode.COMPAQ3,
             BootMode.COMPAQ331,
         }
         if request.boot_mode not in boot_dos_modes:
@@ -1964,6 +2003,7 @@ class DiskManager:
             BootMode.MSDOS33,
             BootMode.MSDOS331,
             BootMode.COMPAQ2,
+            BootMode.COMPAQ3,
             BootMode.COMPAQ331,
             BootMode.IBM8088,
             BootMode.MSDOS5,
@@ -2210,6 +2250,7 @@ class DiskManager:
             # FORMAT wrote both MBR and VBR -- that was incorrect.
             if request.boot_mode in (
                 BootMode.COMPAQ2,
+                BootMode.COMPAQ3,
                 BootMode.COMPAQ331,
                 BootMode.MSDOS331,
                 BootMode.MSDOS33,
@@ -2427,9 +2468,11 @@ class DiskManager:
         # rather than re-FORMAT through the QEMU pipeline.
         #
         # * COMPAQ2 — 1984 Compaq MS-DOS 2.11, 360 KB DSDD
+        # * COMPAQ3 — 1985 Microsoft MS-DOS 3.00 (Compaq OEM), 360 KB DSDD
         # * PCDOS3  — 1984 IBM PC-DOS 3.00, 360 KB DSDD
         verbatim_floppy_modes = {
             BootMode.COMPAQ2: ("Compaq DOS 2.11 (compaq2)", FloppyType.F360K),
+            BootMode.COMPAQ3: ("Microsoft MS-DOS 3.00 [Compaq OEM] (compaq3)", FloppyType.F360K),
             BootMode.PCDOS3: ("IBM PC-DOS 3.00 (pcdos3)", FloppyType.F360K),
         }
         if request.boot_mode in verbatim_floppy_modes:
@@ -2485,6 +2528,7 @@ class DiskManager:
                 BootMode.PCDOS3,
                 BootMode.PCDOS7,
                 BootMode.PCDOS2000,
+                BootMode.COMPAQ3,
                 BootMode.COMPAQ331,
             }
             self.boot_installer.make_floppy_bootable(
@@ -2565,12 +2609,12 @@ class DiskManager:
                 )
             if install_image is None:
                 install_image = extract_pcdos7_install_floppy(boot_assets_dir)
-        elif request.boot_mode in (BootMode.COMPAQ2, BootMode.PCDOS3):
-            # COMPAQ2 and PCDOS3 ship as single .7z archives containing
-            # a small (360 KB DSDD) Disk01.img.  Auto-extract via py7zr,
-            # cache the result, and use the bundled IMG as install_image.
-            # Short-circuits to a raw IMG if the user has already
-            # extracted.
+        elif request.boot_mode in (BootMode.COMPAQ2, BootMode.COMPAQ3, BootMode.PCDOS3):
+            # COMPAQ2, COMPAQ3, and PCDOS3 ship as single .7z archives
+            # containing a small (360 KB DSDD) Disk01.img.  Auto-extract
+            # via py7zr, cache the result, and use the bundled IMG as
+            # install_image.  Short-circuits to a raw IMG if the user
+            # has already extracted.
             from ._legacy_dos_archive import extract_legacy_dos_install_archive
 
             install_image = extract_legacy_dos_install_archive(boot_assets_dir)
@@ -3489,6 +3533,7 @@ class DiskManager:
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS3,
+            BootMode.COMPAQ3,
             BootMode.COMPAQ331,
         }:
             return
