@@ -159,3 +159,63 @@ def test_strict_error_mentions_opt_out_workaround(
         )
     msg = str(exc_info.value)
     assert "DOSFORGE_ALLOW_SYNTHESIZED_STARTUP" in msg
+
+
+def test_pre_dos5_skips_strict_require_and_synthesizes(
+    resolver: BootAssetResolver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v0.8.4: Pre-DOS-5 install media (MS-DOS 3.x, IBM PC-DOS 3.x,
+    Compaq DOS 2.x/3.x) legitimately did not ship CONFIG.SYS /
+    AUTOEXEC.BAT -- those files were user-created during personalization.
+    SETUP.EXE wasn't introduced until DOS 5.0.  Strict authenticity
+    mode now skips the require check for pre_dos5=True and falls
+    through to synthesis (era-appropriate FILES=30 / BUFFERS=20)."""
+    monkeypatch.delenv("DOSFORGE_ALLOW_SYNTHESIZED_STARTUP", raising=False)
+
+    defaults_root = tmp_path / "defaults"
+    files: dict[str, Path] = {}
+    # Should NOT raise even though strict mode is on, because pre_dos5=True.
+    resolver._ensure_msdos_startup_files(
+        files,
+        defaults_root=defaults_root,
+        install_dir="C:\\DOS",
+        pre_dos5=True,
+        boot_mode_label="MS-DOS 3.30",
+    )
+    assert "CONFIG.SYS" in files
+    assert "AUTOEXEC.BAT" in files
+    assert files["CONFIG.SYS"].exists()
+    assert files["AUTOEXEC.BAT"].exists()
+    # Synthesized CONFIG.SYS uses the pre-DOS-5 minimal subset
+    # (no DOS=HIGH, no HIMEM device, no LASTDRIVE).
+    config_text = files["CONFIG.SYS"].read_bytes()
+    assert b"FILES=30" in config_text
+    assert b"BUFFERS=20" in config_text
+    assert b"DOS=HIGH" not in config_text  # DOS 3.x doesn't understand DOS=HIGH
+
+
+def test_pre_dos5_preserves_user_supplied_startup_files(
+    resolver: BootAssetResolver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the user dropped their own CONFIG.SYS / AUTOEXEC.BAT into the
+    asset dir, the synthesis loop's 'if already exists, keep it' branch
+    must preserve them even in pre_dos5 mode."""
+    monkeypatch.delenv("DOSFORGE_ALLOW_SYNTHESIZED_STARTUP", raising=False)
+
+    user_config = tmp_path / "user-config.sys"
+    user_auto = tmp_path / "user-autoexec.bat"
+    _touch(user_config, b"FILES=99\r\nBUFFERS=99\r\n")
+    _touch(user_auto, b"@ECHO Hello world\r\n")
+    files = {"CONFIG.SYS": user_config, "AUTOEXEC.BAT": user_auto}
+
+    resolver._ensure_msdos_startup_files(
+        files,
+        defaults_root=tmp_path / "defaults",
+        install_dir="C:\\DOS",
+        pre_dos5=True,
+        boot_mode_label="MS-DOS 3.30",
+    )
+    # User-supplied paths kept exactly -- synthesis didn't overwrite.
+    assert files["CONFIG.SYS"] == user_config
+    assert files["AUTOEXEC.BAT"] == user_auto
+    assert b"FILES=99" in files["CONFIG.SYS"].read_bytes()

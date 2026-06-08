@@ -2336,7 +2336,21 @@ class BootAssetResolver:
         """
         defaults_root.mkdir(parents=True, exist_ok=True)
 
-        if _strict_authentic_enabled():
+        # Pre-DOS-5 modes (MS-DOS 3.x, IBM PC-DOS 3.x, Compaq DOS 2.x/3.x)
+        # legitimately did NOT ship CONFIG.SYS / AUTOEXEC.BAT on their
+        # install media -- those files were user-created during
+        # personalization (SETUP.EXE wasn't introduced until DOS 5.0).
+        # The strict-authenticity rule below was designed for the DOS 5+
+        # / PC-DOS 7 era where SETUP did write startup files, and
+        # treating pre-DOS-5 install media as broken just because it
+        # doesn't ship files Microsoft never put there is wrong.
+        # For pre_dos5, always fall through to the synthesis path,
+        # which writes era-appropriate minimal defaults (FILES=30
+        # BUFFERS=20 for CONFIG.SYS; @ECHO OFF + PATH for AUTOEXEC.BAT).
+        # Any user-supplied CONFIG.SYS / AUTOEXEC.BAT dropped into the
+        # asset directory still wins via the synthesis loop's
+        # "if file already exists, keep it" branch.
+        if _strict_authentic_enabled() and not pre_dos5:
             # Strict: require BOTH files to be present from the install
             # media.  Either both are there or we fail loudly.
             missing = [
@@ -2356,7 +2370,10 @@ class BootAssetResolver:
                 )
             return
 
-        # Legacy synthesis path (only used when env opt-out is set):
+        # Synthesis path: write era-appropriate defaults for any
+        # missing files.  Always taken for pre_dos5; otherwise only
+        # when the env opt-out (DOSFORGE_ALLOW_SYNTHESIZED_STARTUP=1)
+        # is set.
         for name in _OPTIONAL_MSDOS_STARTUP_FILES:
             if name in files and files[name].exists():
                 continue
