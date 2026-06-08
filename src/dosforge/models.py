@@ -137,6 +137,20 @@ class BootMode(str, Enum):
     # already bootable with the SYS-installable DR-DOS kernel.
     # FAT12 and FAT16 supported, max 32 MiB FAT16 partition.
     DRDOS6 = "drdos6"
+    # Caldera DR-DOS 7.03 (January 1999) — final retail DR-DOS
+    # release (later versions were Caldera/OpenDOS/free-DRDOS forks).
+    # IBMBIO.COM + IBMDOS.COM + COMMAND.COM naming.  BPB OEM stamp
+    # is "DRDOS  7".  Supports FAT16B (BIGDOS, >32 MiB FAT16
+    # partitions up to 2 GiB) -- dosforge currently wires the FAT16
+    # path with a 2 GiB cap; FAT32 LBA support could land in a
+    # follow-up.  Sources from
+    # ``dosassets/drdos7/Caldera DR-DOS 7.03 (01-07-1999)
+    # (3.5-1.44mb).7z`` -- 5 x 1.44 MB floppies (Installation +
+    # Utilities 1-5).  Disk1 ships at root with IBMBIO.COM +
+    # IBMDOS.COM (hidden+system, DR-DOS 7 kernel) + the full DR-DOS
+    # toolchain (COMMAND, SYS, FORMAT, FDISK) plus INSTALL.EXE /
+    # SETUP2.EX_ (interactive installer, bypassed by dosforge).
+    DRDOS7 = "drdos7"
     # 4DOS shell overlay (planned, requires --host-dos).  Phase 14F
     # implementation is pending until 4DOS install media is provided.
     # When set, dosforge raises a clear "not yet implemented" message

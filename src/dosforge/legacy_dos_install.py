@@ -278,6 +278,48 @@ def drdos6_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
     )
 
 
+def drdos7_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    """Caldera DR-DOS 7.03 install profile.
+
+    ``install_image`` is ``Installation & Utilities 1.img`` from
+    the WinWorldPC ``Caldera DR-DOS 7.03 (01-07-1999) (3.5-1.44mb)``
+    archive -- a 1.44 MB 3.5" HD floppy dated 1999-01-07.  Disk1
+    ships at root:
+
+    * IBMBIO.COM + IBMDOS.COM (hidden+system, DR-DOS 7 kernel,
+      ``DRDOS  7`` BPB OEM stamp)
+    * COMMAND.COM (DR-DOS 7 shell)
+    * SYS.COM, FORMAT.COM, FDISK.COM (DR-DOS 7 utilities)
+    * INSTALL.EXE + SETUP2.EX_ + LOADER.COM + PNUNPACK.EXE
+      (interactive installer + Personal NetWare unpacker --
+      dosforge bypasses the wizard via scripted AUTOEXEC.BAT
+      that runs FORMAT C: /S directly)
+    * HIMEM.SYS, ANSI.SYS, DRMOUSE.COM, EMM386 etc.
+
+    DR-DOS 7.03 supports FAT16B / BIGDOS (>32 MiB FAT16 partitions
+    up to 2 GiB) as well as FAT32 LBA, but the current dosforge
+    wiring exposes only the FAT16 path with a 2 GiB cap.  FAT32
+    LBA support is left as a follow-up (would need a separate
+    ``drdos7_fat32_profile`` mirror of ``pcdos71_profile``).
+    """
+    _ = boot_assets_dir
+    return LegacyDosInstallProfile(
+        label="Caldera DR-DOS 7.03",
+        install_image=install_image,
+        required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+        install_method="format",
+        timeout_seconds=300.0,
+        # DR-DOS 7.03 FORMAT.COM prompts (same as DR-DOS 6):
+        #   "Enter volume label (11 characters, ENTER for none)?"
+        #   "Proceed with format (Y/N)?"
+        # Empty label + Y handles both.
+        format_yes_input=b"\r\nY\r\n\r\n",
+        # DR-DOS 7 FDISK has /MBR; dosforge writes its own generic
+        # MBR (the VBR is what makes the partition bootable).
+        supports_fdisk_mbr=False,
+    )
+
+
 def compaq2_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
     """Compaq OEM MS-DOS 2.11 install profile.
 
@@ -1452,6 +1494,7 @@ __all__ = [
     "compaq2_profile",
     "compaq3_profile",
     "drdos6_profile",
+    "drdos7_profile",
     "msdos33_profile",
     "pcdos3_profile",
     "msdos5_profile",

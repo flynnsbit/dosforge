@@ -1,24 +1,37 @@
-Novell / Caldera DR-DOS 7.x install assets
-==========================================
+Caldera DR-DOS 7.03 install assets
+==================================
 
-Staging area for the DR-DOS 7.x line, including Novell DOS 7
-(1994), Caldera OpenDOS 7.01 (1997 — open source release), and
-Caldera DR-DOS 7.03.
+Staging area for Caldera DR-DOS 7.03 (January 1999) — the final
+retail DR-DOS release.  Includes FAT16B / BIGDOS support (>32 MiB
+FAT16 partitions up to 2 GiB) and the DR-DOS multitasker (TASKMGR).
 
-OpenDOS 7.01 and DR-DOS 7.03 are licensed for redistribution under
-the OpenDOS license, but their archives are still typically pulled
-from a third party (WinWorldPC) rather than this repo, so the
-install media stays gitignored.
+Boot mode: ``--boot-mode drdos7``
 
-Expected files: 3.5" 1.44 MiB install diskettes.
+Expected layout: 5 × 3.5" HD diskettes (1.44 MB each), shipped
+inside ``Caldera DR-DOS 7.03 (01-07-1999) (3.5-1.44mb).7z`` from
+WinWorldPC.  dosforge auto-extracts the .7z if present and uses
+``Installation & Utilities 1.img`` as the install floppy.
 
-Status: dosforge does not yet ship a boot-mode=drdos7. Drop install
-media here so it's ready when support lands. Until then the tool
-will report "no install images found" if anyone points it at this
-folder.
+Disk1 ships at root (dated 1999-01-07):
+  - IBMBIO.COM, IBMDOS.COM (hidden + system, DR-DOS 7 kernel)
+  - COMMAND.COM, SYS.COM, FORMAT.COM, FDISK.COM
+  - HIMEM.SYS, ANSI.SYS, DRMOUSE.COM
+  - INSTALL.EXE + SETUP2.EX_ + LOADER.COM + PNUNPACK.EXE
+    (interactive Setup wizard -- dosforge bypasses it via scripted
+    AUTOEXEC.BAT that runs FORMAT C: /S directly inside QEMU)
+  - SETVER.EXE, UNFORMAT.COM, DOSBOOK.EX_ (extensive utilities)
 
-Source (WinWorldPC): "Novell DOS 7" / "Caldera OpenDOS 7.01" /
-"Caldera DR-DOS 7.03".
+Constraints:
+  - FAT12 (floppy) or FAT16 / FAT16B up to 2 GiB
+  - BPB OEM stamp is "DRDOS  7" -- DR-DOS 7 BPB carries
+    hidden_sectors, boots on any standard IDE/MFM BIOS
+  - FAT32 LBA support not yet wired (DR-DOS 7.03 supports it,
+    but dosforge currently exposes FAT16 only; FAT32 would need
+    a separate ``drdos7_fat32_profile`` mirror of pcdos71)
 
-This folder tracks readme.txt only; the install media itself is
-gitignored.
+Source (WinWorldPC):
+  "Caldera DR-DOS 7.03 (01-07-1999) (3.5-1.44mb).7z"
+
+This folder tracks readme.txt + the .7z install archive; raw
+extracted images are gitignored.
+

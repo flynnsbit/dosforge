@@ -76,6 +76,7 @@ BOOT_MODE_OPTIONS = [
     ("Compaq DOS 2.11 (5.25-360k floppy IMG or 10 MiB MFM VHD)", BootMode.COMPAQ2.value),
     ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
     ("Digital Research DR DOS 6.0 (1991, 720k DSDD)", BootMode.DRDOS6.value),
+    ("Caldera DR-DOS 7.03 (1999, 1.44 MB, FAT16 BIGDOS)", BootMode.DRDOS7.value),
 ]
 
 FREEDOS_SOURCE_OPTIONS = [

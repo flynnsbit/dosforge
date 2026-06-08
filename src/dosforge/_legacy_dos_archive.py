@@ -50,6 +50,10 @@ DEFAULT_INSTALL_IMAGE_NAMES: tuple[str, ...] = (
     "144US1.IMG",
     "install.img",
     "INSTALL.IMG",
+    # Caldera DR-DOS 7.03 ships "Installation & Utilities 1.img" as
+    # the bootable disk 1.
+    "Installation & Utilities 1.img",
+    "INSTALLATION & UTILITIES 1.IMG",
 )
 
 

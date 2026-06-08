@@ -60,6 +60,7 @@ _DOS_PROFILE_BOOT_MODES = frozenset(
         BootMode.COMPAQ2,
         BootMode.COMPAQ331,
         BootMode.DRDOS6,
+        BootMode.DRDOS7,
     }
 )
 
@@ -216,6 +217,10 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
     # Max ~32 MiB FAT16 partition.  Works on both MFM and IDE
     # controllers; no special MFM auto-snap (1991 mainstream hardware).
     BootMode.DRDOS6: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16}), max_mb=32),
+    # Caldera DR-DOS 7.03 (1999): supports FAT16B (BIGDOS) up to
+    # 2 GiB FAT16, plus FAT12 for floppies.  FAT32 LBA support is
+    # left as a follow-up.  Works on IDE controllers.
+    BootMode.DRDOS7: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16}), max_mb=2048),
 }
 
 
