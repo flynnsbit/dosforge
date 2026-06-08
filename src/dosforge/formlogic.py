@@ -286,8 +286,29 @@ def apply_ibm_default_size(state: FormState, *, force: bool) -> FormState:
     return state
 
 
+def default_boot_assets_for(boot_mode: BootMode) -> str:
+    """Return the canonical ``dosassets/<subdir>`` name for a boot mode.
+
+    Used to pre-populate the Boot assets directory Input in both TUI
+    and GUI when the user picks a boot mode in Step 1.  The user can
+    still edit the field after to point at a custom directory or full
+    path; this just gives a predictable default that matches
+    dosforge's ``dosassets/<mode>/`` convention.
+
+    Empty string for ``BootMode.NONE`` since data-disk-only builds
+    have no boot assets.
+    """
+    if boot_mode is BootMode.NONE:
+        return ""
+    return boot_mode.value
+
+
 def coerce_on_boot_change(state: FormState) -> FormState:
     boot_mode = BootMode(state.boot_mode)
+    # Snap the Boot assets path FIRST so every early-return branch
+    # below inherits the right default (dataclass.replace preserves
+    # boot_assets when later replace() calls only touch other fields).
+    state = replace(state, boot_assets=default_boot_assets_for(boot_mode))
     if boot_mode is BootMode.COMPAQ2:
         return replace(
             state,

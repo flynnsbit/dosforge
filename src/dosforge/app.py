@@ -530,6 +530,16 @@ class DosForgeApp(App[None]):
                                     value=BootMode.NONE.value,
                                     id="boot-mode",
                                 )
+                                yield Label("Boot assets directory or install image", id="boot-assets-label")
+                                with Horizontal(classes="path-row", id="boot-assets-row"):
+                                    yield Input(
+                                        placeholder=(
+                                            "Boot assets: bare name like 'msdos33' "
+                                            "(looks in ./dosassets/), or full path"
+                                        ),
+                                        id="boot-assets",
+                                    )
+                                    yield Button("...", id="browse-boot-assets-btn", classes="btn-ghost")
                                 yield Label("FreeDOS source", id="freedos-source-label")
                                 yield SingleClickSelect(
                                     options=[
@@ -624,19 +634,9 @@ class DosForgeApp(App[None]):
                             # Step 3: Assets & payload
                             with Container(id="step-3", classes="wizard-step"):
                                 yield Label(
-                                    "Step 3 — Boot assets and payload",
+                                    "Step 3 — Payload and extras",
                                     classes="wizard-step-title",
                                 )
-                                yield Label("Boot assets directory or install image", id="boot-assets-label")
-                                with Horizontal(classes="path-row", id="boot-assets-row"):
-                                    yield Input(
-                                        placeholder=(
-                                            "Boot assets: bare name like 'msdos33' "
-                                            "(looks in ./dosassets/), or full path"
-                                        ),
-                                        id="boot-assets",
-                                    )
-                                    yield Button("...", id="browse-boot-assets-btn", classes="btn-ghost")
                                 yield Label("Custom payload directory (optional)", id="custom-payload-label")
                                 with Horizontal(classes="path-row", id="custom-payload-row"):
                                     yield Input(
@@ -1955,6 +1955,8 @@ class DosForgeApp(App[None]):
             self.query_one("#create-size", Input).value = snapped.size_text
         if snapped.bios_drive_type != state.bios_drive_type:
             self.query_one("#bios-drive-type", Select).value = snapped.bios_drive_type
+        if snapped.boot_assets != state.boot_assets:
+            self.query_one("#boot-assets", Input).value = snapped.boot_assets
         self._clear_status()
 
     def _apply_format_snap(self) -> None:

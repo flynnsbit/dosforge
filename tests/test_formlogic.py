@@ -160,6 +160,64 @@ def test_coerce_uncheck_system_format_clears_boot():
     assert new.boot_mode == BootMode.NONE.value
 
 
+@pytest.mark.parametrize(
+    "boot_mode,expected",
+    [
+        (BootMode.NONE, ""),
+        (BootMode.FREEDOS, "freedos"),
+        (BootMode.MSDOS33, "msdos33"),
+        (BootMode.MSDOS622, "msdos622"),
+        (BootMode.PCDOS, "pcdos"),
+        (BootMode.PCDOS3, "pcdos3"),
+        (BootMode.PCDOS71, "pcdos71"),
+        (BootMode.COMPAQ2, "compaq2"),
+        (BootMode.COMPAQ3, "compaq3"),
+        (BootMode.DRDOS6, "drdos6"),
+        (BootMode.DRDOS7, "drdos7"),
+        (BootMode.IBM8088, "ibm8088"),
+        (BootMode.MSDOS71, "msdos71"),
+    ],
+)
+def test_default_boot_assets_for_each_mode(boot_mode, expected):
+    """default_boot_assets_for pre-populates the dosassets/<mode>/ subdir
+    name for the Boot assets Input.  NONE → empty (no boot)."""
+    assert f.default_boot_assets_for(boot_mode) == expected
+
+
+def test_coerce_boot_change_snaps_boot_assets_to_mode_value():
+    """coerce_on_boot_change overwrites boot_assets on every mode change,
+    matching the snap pattern used for media_type/disk_format/etc."""
+    # Start with custom path, pick MSDOS5 -> snaps to 'msdos5'.
+    new = f.coerce_on_boot_change(
+        _state(boot_mode=BootMode.MSDOS5.value, boot_assets="/tmp/my-custom-path")
+    )
+    assert new.boot_assets == "msdos5"
+
+    # Pick PCDOS -> snaps to 'pcdos' (the generic catch-all dir).
+    new = f.coerce_on_boot_change(
+        _state(boot_mode=BootMode.PCDOS.value, boot_assets="msdos5")
+    )
+    assert new.boot_assets == "pcdos"
+
+    # Pick NONE -> empty (no boot, no assets needed).
+    new = f.coerce_on_boot_change(
+        _state(boot_mode=BootMode.NONE.value, boot_assets="freedos")
+    )
+    assert new.boot_assets == ""
+
+
+def test_coerce_boot_change_snaps_boot_assets_in_early_return_branches():
+    """The early-return branches (COMPAQ2, PCDOS3, COMPAQ3) must also
+    snap boot_assets, since they bypass the trailing snap chain."""
+    for mode in (BootMode.COMPAQ2, BootMode.PCDOS3, BootMode.COMPAQ3):
+        new = f.coerce_on_boot_change(
+            _state(boot_mode=mode.value, boot_assets="/tmp/stale")
+        )
+        assert new.boot_assets == mode.value, (
+            f"early-return branch for {mode.value} dropped the boot_assets snap"
+        )
+
+
 def test_summary_has_expected_rows():
     rows = dict(f.build_summary(_state(size_text="256M")))
     assert "VHD" in rows["Media"]

@@ -149,8 +149,14 @@ class CreateView(ttk.Frame):
         bb.columnconfigure(0, weight=1)
         self._add_field(bb, fl.FIELD_BOOT_MODE, "Boot OS",
                         self.combo_boot.build, row=0)
+        self._add_field(
+            bb, fl.FIELD_BOOT_ASSETS, "Boot assets directory",
+            lambda p: ttk.Entry(p, textvariable=self.var_boot_assets),
+            row=1,
+            browse_command=self._browse_boot_assets,
+        )
         self._add_field(bb, fl.FIELD_FREEDOS_SOURCE, "FreeDOS source",
-                        self.combo_freedos.build, row=1)
+                        self.combo_freedos.build, row=2)
         self._add_field(
             bb, fl.FIELD_FETCH_FREEDOS, "",
             lambda p: ttk.Button(
@@ -159,7 +165,7 @@ class CreateView(ttk.Frame):
                 command=self._fetch_freedos,
                 takefocus=False,
             ),
-            row=2,
+            row=3,
         )
         self._add_field(
             bb, fl.FIELD_FETCH_PCDOS71, "",
@@ -169,12 +175,12 @@ class CreateView(ttk.Frame):
                 command=self._fetch_pcdos71,
                 takefocus=False,
             ),
-            row=3,
+            row=4,
         )
         self._add_field(bb, fl.FIELD_DOS_PROFILE, "DOS install profile",
-                        self.combo_profile.build, row=4)
+                        self.combo_profile.build, row=5)
         self._add_field(bb, fl.FIELD_IBM_DOS_VERSION, "IBM DOS version",
-                        self.combo_ibm.build, row=5)
+                        self.combo_ibm.build, row=6)
 
         # ── Card: Media & geometry ─────────────────────────────────────
         media_card = Card(body, theme, title="Media & geometry")
@@ -212,29 +218,23 @@ class CreateView(ttk.Frame):
             row=7,
         )
 
-        # ── Card: Assets & payload ─────────────────────────────────────
-        assets_card = Card(body, theme, title="Assets & payload")
+        # ── Card: Payload and extras ──────────────────────────────────
+        assets_card = Card(body, theme, title="Payload and extras")
         assets_card.grid(row=row, column=0, sticky="ew", pady=(0, 12))
         row += 1
         ab = assets_card.body
         ab.columnconfigure(0, weight=1)
         self._add_field(
-            ab, fl.FIELD_BOOT_ASSETS, "Boot assets directory",
-            lambda p: ttk.Entry(p, textvariable=self.var_boot_assets),
-            row=0,
-            browse_command=self._browse_boot_assets,
-        )
-        self._add_field(
             ab, fl.FIELD_CUSTOM_PAYLOAD, "Custom payload directory",
             lambda p: ttk.Entry(p, textvariable=self.var_payload),
-            row=1,
+            row=0,
             browse_command=self._browse_payload,
             help_text="Files copied into the image root after preparation.",
         )
         self._add_field(
             ab, fl.FIELD_FREEDOS_URL, "FreeDOS download URL (optional)",
             lambda p: ttk.Entry(p, textvariable=self.var_freedos_url),
-            row=2,
+            row=1,
         )
 
         # ── Card: Summary + Create ────────────────────────────────────
