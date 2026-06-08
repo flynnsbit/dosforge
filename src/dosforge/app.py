@@ -1427,6 +1427,7 @@ class DosForgeApp(App[None]):
             self._set_status("Select a .vhd/.img/.ima file first.", error=True)
             return
 
+        self._set_status(f"Mounting {self.selected_image.name}…")
         mounted_records: list[object] = []
         if not self._run_with_sudo_reauth(lambda: mounted_records.append(self.manager.mount_vhd(self.selected_image))):
             return
@@ -1444,7 +1445,7 @@ class DosForgeApp(App[None]):
         self.query_one("#unmount-input", Input).value = mountpoint_text
         self.query_one("#open-input", Input).value = mountpoint_text
         self._refresh_mounts()
-        self._set_status(f"Mounted {record.vhd_path} to {record.mount_point} and opened in Files.")
+        self._set_status(f"✓ Mounted {record.vhd_path} to {record.mount_point} and opened in Files.")
 
     def _handle_unmount(self) -> None:
         mountpoint_text = self.query_one("#unmount-input", Input).value.strip()
@@ -1452,6 +1453,7 @@ class DosForgeApp(App[None]):
             self._set_status("Enter a mounted path to unmount.", error=True)
             return
 
+        self._set_status(f"Unmounting {mountpoint_text}…")
         unmounted_records: list[object] = []
         if not self._run_with_sudo_reauth(
             lambda: unmounted_records.append(self.manager.unmount(Path(mountpoint_text)))
@@ -1463,19 +1465,20 @@ class DosForgeApp(App[None]):
         record = unmounted_records[0]
 
         self._refresh_mounts()
-        self._set_status(f"Unmounted {record.mount_point} and disconnected {record.nbd_device}.")
+        self._set_status(f"✓ Unmounted {record.mount_point} and disconnected {record.nbd_device}.")
 
     def _handle_open(self) -> None:
         path_text = self.query_one("#open-input", Input).value.strip()
         if not path_text:
             self._set_status("Enter a path to open in the file manager.", error=True)
             return
+        self._set_status(f"Opening {path_text} in file manager…")
         try:
             self.manager.open_in_files(Path(path_text))
         except DosForgeError as exc:
             self._set_status(str(exc), error=True)
             return
-        self._set_status(f"Opened in Files: {path_text}")
+        self._set_status(f"✓ Opened in Files: {path_text}")
 
     def _handle_image_ls(self) -> None:
         """List the root directory of the currently selected image via mtools.
@@ -1488,6 +1491,7 @@ class DosForgeApp(App[None]):
         image = self._selected_image_for_image_ops()
         if image is None:
             return
+        self._set_status(f"Reading directory listing from {image.name}…")
         from . import image_ops
 
         try:
@@ -1520,6 +1524,7 @@ class DosForgeApp(App[None]):
             )
             return
 
+        self._set_status(f"Extracting {image.name}:{dos_path}…")
         from . import image_ops
 
         # Default destination: image directory, DOS basename.
@@ -1530,7 +1535,7 @@ class DosForgeApp(App[None]):
         except DosForgeError as exc:
             self._set_status(str(exc), error=True)
             return
-        self._set_status(f"Extracted {image.name}:{dos_path} -> {written}")
+        self._set_status(f"✓ Extracted {image.name}:{dos_path} -> {written}")
 
     def _selected_image_for_image_ops(self) -> Path | None:
         """Resolve the image targeted by `ls` / `extract` from the form state.
@@ -1554,16 +1559,55 @@ class DosForgeApp(App[None]):
         return None
 
     def _handle_fetch_freedos(self) -> None:
+        """Kick off FreeDOS download on a worker thread + spin until done.
+
+        The download is ~5-15 MB and takes 5-30 s depending on
+        bandwidth; running it on the UI thread would freeze the TUI.
+        ``_fetch_freedos_worker`` runs in the background and reports
+        completion via :meth:`_on_fetch_freedos_done`.
+        """
         url_text = self.query_one("#freedos-url", Input).value.strip()
         try:
-            target = self.manager.fetch_freedos_assets(download_url=(url_text or None))
-        except DosForgeError as exc:
-            self._set_status(str(exc), error=True)
-            return
+            btn = self.query_one("#fetch-freedos-btn", Button)
+            btn.disabled = True
+        except Exception:
+            pass
+        self._start_spinner(
+            f"Downloading FreeDOS assets (this can take 5-30 s)…"
+            + (f" from {url_text}" if url_text else "")
+        )
+        self._fetch_freedos_worker(url_text or None)
 
+    @work(thread=True, exclusive=True, group="fetch-freedos")
+    def _fetch_freedos_worker(self, download_url: str | None) -> None:
+        try:
+            target = self.manager.fetch_freedos_assets(download_url=download_url)
+        except Exception as exc:  # noqa: BLE001
+            self.call_from_thread(self._on_fetch_freedos_done, None, exc)
+            return
+        self.call_from_thread(self._on_fetch_freedos_done, target, None)
+
+    def _on_fetch_freedos_done(self, target: Path | None, error: Exception | None) -> None:
+        elapsed = time.monotonic() - self._spinner_started_at
+        self._stop_spinner()
+        try:
+            self.query_one("#fetch-freedos-btn", Button).disabled = False
+        except Exception:
+            pass
+        if error is not None:
+            self._set_status(
+                f"FreeDOS fetch failed after {elapsed:0.1f}s: {error}",
+                error=True,
+            )
+            return
+        if target is None:
+            self._set_status("FreeDOS fetch produced no target path.", error=True)
+            return
         self.query_one("#boot-assets", Input).value = str(target)
         self.query_one("#freedos-source", Select).value = FreeDOSSource.LOCAL.value
-        self._set_status(f"Downloaded and extracted FreeDOS assets to {target}")
+        self._set_status(
+            f"✓ Downloaded and extracted FreeDOS assets to {target} in {elapsed:0.1f}s"
+        )
 
     def _handle_fetch_pcdos71(self) -> None:
         """Download + verify + stage IBM PC-DOS 7.1 assets from the SGTK.
@@ -1576,29 +1620,66 @@ class DosForgeApp(App[None]):
         """
         from .pcdos71_fetch import fetch_pcdos71_assets
 
-        # Progress is surfaced via the status bar with a friendly
-        # label per stage. Free-form lines from inside _download /
-        # _extract are summarized; only the stage transitions update
-        # the bar to avoid spamming the UI.
-        stage_labels = {
-            "locating_sevenzip": "Locating 7-Zip…",
-            "downloading_sgtk": "Downloading IBM SGTK from archive.org…",
-            "extracting_sgtk": "Extracting SGTK with 7-Zip…",
-            "locating_dos_files": "Locating PC-DOS 7.1 system files in extract…",
-            "staging_files": "Verifying SHA-256s and staging files…",
-            "done": "Done.",
-        }
+        # Stage labels mirror PROGRESS_STAGES in pcdos71_fetch.
+        # The worker calls back via _on_fetch_pcdos71_progress so
+        # status updates land on the UI thread.
+        _ = fetch_pcdos71_assets  # keep the import live (worker imports below)
+        try:
+            btn = self.query_one("#fetch-pcdos71-btn", Button)
+            btn.disabled = True
+        except Exception:
+            pass
+        self._start_spinner("PC-DOS 7.1 fetch: starting…")
+        self._fetch_pcdos71_worker()
+
+    _PCDOS71_STAGE_LABELS = {
+        "preflight": "Checking dependencies…",
+        "locating_sevenzip": "Locating 7-Zip…",
+        "downloading_sgtk": "Downloading IBM SGTK from archive.org…",
+        "extracting_sgtk": "Extracting SGTK with 7-Zip…",
+        "locating_dos_files": "Locating PC-DOS 7.1 system files in extract…",
+        "staging_files": "Verifying SHA-256s and staging files…",
+        "hydrating_pcdos2000": "Hydrating C:\\DOS\\ with PC-DOS 2000 utilities…",
+        "done": "Done.",
+    }
+
+    @work(thread=True, exclusive=True, group="fetch-pcdos71")
+    def _fetch_pcdos71_worker(self) -> None:
+        from .pcdos71_fetch import fetch_pcdos71_assets
 
         def _progress(line: str) -> None:
-            label = stage_labels.get(line)
+            # Marshal stage updates onto the UI thread; ignore
+            # free-form download/extraction chatter to avoid spam.
+            label = self._PCDOS71_STAGE_LABELS.get(line)
             if label:
-                self._set_status(f"PC-DOS 7.1 fetch: {label}")
+                self.call_from_thread(
+                    self._on_fetch_pcdos71_progress, label
+                )
 
-        self._set_status("PC-DOS 7.1 fetch: starting…")
         try:
             result = fetch_pcdos71_assets(progress=_progress)
-        except DosForgeError as exc:
-            self._set_status(str(exc), error=True)
+        except Exception as exc:  # noqa: BLE001
+            self.call_from_thread(self._on_fetch_pcdos71_done, None, exc)
+            return
+        self.call_from_thread(self._on_fetch_pcdos71_done, result, None)
+
+    def _on_fetch_pcdos71_progress(self, label: str) -> None:
+        # Update the spinner message so the elapsed-time counter
+        # keeps incrementing while the stage label changes.
+        self._spinner_message = f"PC-DOS 7.1 fetch: {label}"
+
+    def _on_fetch_pcdos71_done(self, result, error: Exception | None) -> None:
+        elapsed = time.monotonic() - self._spinner_started_at
+        self._stop_spinner()
+        try:
+            self.query_one("#fetch-pcdos71-btn", Button).disabled = False
+        except Exception:
+            pass
+        if error is not None:
+            self._set_status(
+                f"PC-DOS 7.1 fetch failed after {elapsed:0.1f}s: {error}",
+                error=True,
+            )
             return
 
         if result.vfd_filename is None:
@@ -1622,12 +1703,13 @@ class DosForgeApp(App[None]):
         elif result.pcdos2000_error:
             extra = f"; PC-DOS 2000 hydration skipped: {result.pcdos2000_error}"
         self._set_status(
-            f"PC-DOS 7.1 assets ready at {result.target_dir} "
+            f"✓ PC-DOS 7.1 assets ready in {elapsed:0.1f}s at {result.target_dir} "
             f"({result.staged_count}/{result.total_count} DOS files + "
             f"{result.vfd_filename}){extra}."
         )
 
     def _handle_privilege_diagnostics(self) -> None:
+        self._set_status("Running privilege diagnostics…")
         ok, summary = self.manager.privilege_diagnostics_summary()
         label = "[OK]" if ok else "[ERROR]"
         self.query_one("#status", Static).update(f"{label} {summary}")
