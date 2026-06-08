@@ -147,7 +147,7 @@ class CreateView(ttk.Frame):
         row += 1
         bb = boot_card.body
         bb.columnconfigure(0, weight=1)
-        self._add_field(bb, fl.FIELD_BOOT_MODE, "Boot mode",
+        self._add_field(bb, fl.FIELD_BOOT_MODE, "Boot OS",
                         self.combo_boot.build, row=0)
         self._add_field(bb, fl.FIELD_FREEDOS_SOURCE, "FreeDOS source",
                         self.combo_freedos.build, row=1)

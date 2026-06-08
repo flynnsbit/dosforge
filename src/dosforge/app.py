@@ -474,53 +474,56 @@ class DosForgeApp(App[None]):
                                     "Step 1 — Boot OS",
                                     classes="wizard-step-title",
                                 )
-                                yield Label("Boot mode", id="boot-mode-label")
+                                yield Label("Boot OS", id="boot-mode-label")
                                 yield SingleClickSelect(
                                     options=[
                                         ("None (data disk only)", BootMode.NONE.value),
-                                        ("FreeDOS bootable", BootMode.FREEDOS.value),
-                                        ("MS-DOS 7.10 / Win95 OSR2 bootable (FAT16/FAT32, 4.00.1111)", BootMode.MSDOS71.value),
+                                        ("FreeDOS", BootMode.FREEDOS.value),
+                                        ("MS-DOS 7.10 / Win95 OSR2 (4.00.1111, FAT16/FAT32)", BootMode.MSDOS71.value),
                                         (
-                                            "IBM PC 8088/V20 (DOS 3.3 / 5.0)",
+                                            "IBM PC 8088/V20 (DOS 3.3 or 5.0)",
                                             BootMode.IBM8088.value,
                                         ),
-                                        ("MS-DOS 3.3 bootable", BootMode.MSDOS33.value),
-                                        ("MS-DOS 3.31 bootable", BootMode.MSDOS331.value),
-                                        ("MS-DOS 5.0 bootable", BootMode.MSDOS5.value),
-                                        ("MS-DOS 6.0 bootable", BootMode.MSDOS6.value),
-                                        ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
-                                        ("PC-DOS bootable", BootMode.PCDOS.value),
+                                        ("MS-DOS 3.30", BootMode.MSDOS33.value),
+                                        ("MS-DOS 3.31", BootMode.MSDOS331.value),
+                                        ("MS-DOS 5.0", BootMode.MSDOS5.value),
+                                        ("MS-DOS 6.0", BootMode.MSDOS6.value),
+                                        ("MS-DOS 6.22", BootMode.MSDOS622.value),
                                         (
-                                            "IBM PC-DOS 3.00 bootable (1984, 360k MFM)",
+                                            "IBM PC-DOS (user-supplied install media)",
+                                            BootMode.PCDOS.value,
+                                        ),
+                                        (
+                                            "IBM PC-DOS 3.00 (1984, 360k DSDD)",
                                             BootMode.PCDOS3.value,
                                         ),
                                         (
-                                            "MS-DOS 3.00 Compaq OEM bootable (1985, 360k MFM)",
+                                            "MS-DOS 3.00 Compaq OEM (1985, 360k DSDD)",
                                             BootMode.COMPAQ3.value,
                                         ),
                                         (
-                                            "PC-DOS 7.0 bootable (XDF media)",
+                                            "IBM PC-DOS 7.0 (XDF media)",
                                             BootMode.PCDOS7.value,
                                         ),
                                         (
-                                            "IBM PC-DOS 2000 bootable (6-floppy set)",
+                                            "IBM PC-DOS 2000 (6-floppy set)",
                                             BootMode.PCDOS2000.value,
                                         ),
                                         (
-                                            "PC-DOS 7.1 bootable (FAT32)",
+                                            "IBM PC-DOS 7.1 (FAT32)",
                                             BootMode.PCDOS71.value,
                                         ),
                                         (
-                                            "Compaq DOS 2.11 (360k floppy or 10 MiB MFM VHD)",
+                                            "Compaq DOS 2.11 (1984, 360k DSDD or 10 MiB MFM VHD)",
                                             BootMode.COMPAQ2.value,
                                         ),
-                                        ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
+                                        ("Compaq DOS 3.31", BootMode.COMPAQ331.value),
                                         (
                                             "Digital Research DR DOS 6.0 (1991, 720k DSDD)",
                                             BootMode.DRDOS6.value,
                                         ),
                                         (
-                                            "Caldera DR-DOS 7.03 (1999, 1.44 MB, FAT16 BIGDOS)",
+                                            "Caldera DR-DOS 7.03 (1999, FAT16 BIGDOS)",
                                             BootMode.DRDOS7.value,
                                         ),
                                     ],
