@@ -31,6 +31,7 @@ from .legacy_dos_install import (
     compaq2_profile,
     compaq3_profile,
     compaq331_profile,
+    drdos6_profile,
     msdos33_profile,
     pcdos3_profile,
     msdos5_profile,
@@ -253,6 +254,24 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
         system_file_marker="IO.SYS",
         profile_builder=msdos622_profile,
     ),
+    # Digital Research DR DOS 6.0 (October 1991) — DR-DOS competitor
+    # to MS-DOS 5.0.  Sources from a pre-extracted ``disk01.img`` or
+    # the WinWorldPC ``Digital Research DR DOS 6.0 (10-16-1991)
+    # (3.5-720k) (alt).7z`` archive (auto-extracted via
+    # ``_legacy_dos_archive.extract_legacy_dos_install_archive``).
+    # IBMBIO.COM marker (DR-DOS reuses IBM-style system file names,
+    # though the binaries differ from any MS-DOS / PC-DOS release).
+    # 4 x 720 KB DSDD floppies.  FAT12 (<=16 MiB) and FAT16 (<=32 MiB).
+    BootMode.DRDOS6: _LegacyDosInstallDescriptor(
+        label="Digital Research DR DOS 6.0",
+        asset_fallback_dirs=("drdos6",),
+        preferred_image_names=(
+            "disk01.img", "DISK01.IMG", "Disk01.img", "disk1.img",
+            "DISK1.IMG", "Disk1.img",
+        ),
+        system_file_marker="IBMBIO.COM",
+        profile_builder=drdos6_profile,
+    ),
     BootMode.PCDOS7: _LegacyDosInstallDescriptor(
         label="IBM PC-DOS 7.0",
         asset_fallback_dirs=("pcdos7",),
@@ -410,6 +429,7 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
         BootMode.PCDOS7,
         BootMode.PCDOS2000,
         BootMode.PCDOS71,
+        BootMode.DRDOS6,
     ):
         return True
     if request.boot_mode is BootMode.IBM8088:
@@ -1482,6 +1502,7 @@ class DiskManager:
             BootMode.COMPAQ2,
             BootMode.COMPAQ3,
             BootMode.COMPAQ331,
+            BootMode.DRDOS6,
         }
         if request.boot_mode not in boot_dos_modes:
             return
@@ -2014,6 +2035,7 @@ class DiskManager:
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.PCDOS71,
+            BootMode.DRDOS6,
         ):
             raise ValidationError(
                 "This boot mode is not yet supported on this platform. "
@@ -2150,6 +2172,7 @@ class DiskManager:
             BootMode.PCDOS,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
+            BootMode.DRDOS6,
         )
         msdos5_layout = (
             request.boot_mode in format_from_scratch_modes
@@ -2264,6 +2287,7 @@ class DiskManager:
                 BootMode.PCDOS2000,
                 BootMode.PCDOS71,
                 BootMode.IBM8088,
+                BootMode.DRDOS6,
             ):
                 self.boot_installer.write_mbr_only(
                     disk_device=str(target_path),
@@ -2283,6 +2307,7 @@ class DiskManager:
                             BootMode.MSDOS622,
                             BootMode.PCDOS7,
                             BootMode.PCDOS2000,
+                            BootMode.DRDOS6,
                         )
                         or (
                             request.boot_mode is BootMode.PCDOS71
@@ -2530,6 +2555,7 @@ class DiskManager:
                 BootMode.PCDOS2000,
                 BootMode.COMPAQ3,
                 BootMode.COMPAQ331,
+                BootMode.DRDOS6,
             }
             self.boot_installer.make_floppy_bootable(
                 image_path=target_path,
@@ -2609,12 +2635,13 @@ class DiskManager:
                 )
             if install_image is None:
                 install_image = extract_pcdos7_install_floppy(boot_assets_dir)
-        elif request.boot_mode in (BootMode.COMPAQ2, BootMode.COMPAQ3, BootMode.PCDOS3):
-            # COMPAQ2, COMPAQ3, and PCDOS3 ship as single .7z archives
-            # containing a small (360 KB DSDD) Disk01.img.  Auto-extract
-            # via py7zr, cache the result, and use the bundled IMG as
-            # install_image.  Short-circuits to a raw IMG if the user
-            # has already extracted.
+        elif request.boot_mode in (BootMode.COMPAQ2, BootMode.COMPAQ3, BootMode.PCDOS3, BootMode.DRDOS6):
+            # COMPAQ2, COMPAQ3, PCDOS3, and DRDOS6 ship as single .7z
+            # archives containing one or more raw .img floppies.
+            # Auto-extract via py7zr, cache the result, and use the
+            # first bootable IMG (disk01.img) as install_image.
+            # Short-circuits to a raw IMG if the user has already
+            # extracted.
             from ._legacy_dos_archive import extract_legacy_dos_install_archive
 
             install_image = extract_legacy_dos_install_archive(boot_assets_dir)
@@ -3535,6 +3562,7 @@ class DiskManager:
             BootMode.PCDOS3,
             BootMode.COMPAQ3,
             BootMode.COMPAQ331,
+            BootMode.DRDOS6,
         }:
             return
         source_floppy = self._floppy_type_for_size(source_size_bytes)

@@ -515,6 +515,10 @@ class DosForgeApp(App[None]):
                                             BootMode.COMPAQ2.value,
                                         ),
                                         ("Compaq DOS 3.31 bootable", BootMode.COMPAQ331.value),
+                                        (
+                                            "Digital Research DR DOS 6.0 (1991, 720k DSDD)",
+                                            BootMode.DRDOS6.value,
+                                        ),
                                     ],
                                     value=BootMode.NONE.value,
                                     id="boot-mode",
@@ -976,6 +980,7 @@ class DosForgeApp(App[None]):
             BootMode.COMPAQ2,
             BootMode.COMPAQ3,
             BootMode.COMPAQ331,
+            BootMode.DRDOS6,
         }
         show_dos_profile = boot_controls_active and boot_mode in dos_boot_modes
         show_ibm_dos_version = boot_controls_active and boot_mode is BootMode.IBM8088

@@ -235,6 +235,49 @@ def compaq3_profile(install_image: Path, boot_assets_dir: Path | None = None) ->
     )
 
 
+def drdos6_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    """Digital Research DR DOS 6.0 install profile.
+
+    ``install_image`` is ``disk01.img`` from the WinWorldPC
+    ``Digital Research DR DOS 6.0 (10-16-1991) (3.5-720k) (alt)``
+    archive -- a 720 KB 3.5" DSDD floppy dated 1991-10-16.  Disk1
+    ships at root:
+
+    * IBMBIO.COM + IBMDOS.COM (hidden+system, DR-DOS kernel bytes
+      -- structurally compatible with the PC-DOS naming but the
+      actual binaries differ from any MS-DOS / PC-DOS release)
+    * COMMAND.COM (DR-DOS shell)
+    * SYS.COM, FORMAT.COM, FDISK.COM
+    * INSTALL.EXE (DR-DOS's interactive installer -- we bypass it
+      by feeding FORMAT C: /S directly through our scripted
+      AUTOEXEC.BAT, same way we drive MS-DOS 5.0 / 6.22)
+    * HIDOS.SYS, EMM386.SYS, SSTORDRV.SYS (DR-DOS drivers)
+
+    BPB OEM stamp is ``IBM  3.3``, so DR-DOS 6 carries a DOS 3.3-class
+    BPB (hidden_sectors present) and boots on any standard MFM / IDE
+    BIOS without Compaq-specific extensions.  Supports both FAT12
+    (<=16 MiB) and FAT16 (<=32 MiB).
+    """
+    _ = boot_assets_dir
+    return LegacyDosInstallProfile(
+        label="Digital Research DR DOS 6.0",
+        install_image=install_image,
+        required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+        install_method="format",
+        timeout_seconds=300.0,
+        # DR-DOS 6.0 FORMAT.COM prompts:
+        #   "Enter volume label (11 characters, ENTER for none)?"
+        #   "Proceed with format (Y/N)?"
+        # An empty volume label + Y handles both.
+        format_yes_input=b"\r\nY\r\n\r\n",
+        # DR-DOS 6 FDISK has /MBR but we let dosforge write its own
+        # generic MBR (DR-DOS FDISK /MBR writes a DR-DOS-flavored MBR
+        # that's not necessary for boot -- the VBR is what FORMAT C: /S
+        # produces).
+        supports_fdisk_mbr=False,
+    )
+
+
 def compaq2_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
     """Compaq OEM MS-DOS 2.11 install profile.
 
@@ -1408,6 +1451,7 @@ __all__ = [
     "compaq331_profile",
     "compaq2_profile",
     "compaq3_profile",
+    "drdos6_profile",
     "msdos33_profile",
     "pcdos3_profile",
     "msdos5_profile",

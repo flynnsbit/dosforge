@@ -4319,6 +4319,7 @@ class BootInstaller:
             BootMode.COMPAQ2,
             BootMode.COMPAQ3,
             BootMode.COMPAQ331,
+            BootMode.DRDOS6,
         }:
             return
 
@@ -4405,6 +4406,7 @@ class BootInstaller:
             BootMode.COMPAQ2,
             BootMode.COMPAQ3,
             BootMode.COMPAQ331,
+            BootMode.DRDOS6,
         }
         if boot_mode in strict_modes:
             non_label_entries = [entry for entry in entries if not bool(entry["is_volume_label"])]

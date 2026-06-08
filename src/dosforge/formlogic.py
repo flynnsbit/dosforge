@@ -59,6 +59,7 @@ _DOS_PROFILE_BOOT_MODES = frozenset(
         BootMode.PCDOS71,
         BootMode.COMPAQ2,
         BootMode.COMPAQ331,
+        BootMode.DRDOS6,
     }
 )
 
@@ -210,6 +211,11 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
     # PCDOS3 -- FAT12 only, 16 MiB cap, defaults to MFM for
     # 1985-authentic Compaq DeskPro / Portable Plus hardware.
     BootMode.COMPAQ3: _BootMediaRule(frozenset({DiskFormat.FAT12}), max_mb=16),
+    # Digital Research DR DOS 6.0 (1991): supports FAT12 and FAT16
+    # (DR-DOS 6 carries an IBM-3.3-class BPB with hidden_sectors).
+    # Max ~32 MiB FAT16 partition.  Works on both MFM and IDE
+    # controllers; no special MFM auto-snap (1991 mainstream hardware).
+    BootMode.DRDOS6: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16}), max_mb=32),
 }
 
 

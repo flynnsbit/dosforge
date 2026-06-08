@@ -127,6 +127,16 @@ class BootMode(str, Enum):
     # system-file names for the 3.0 release).  Defaults to MFM
     # controller for 1985-authentic hardware.
     COMPAQ3 = "compaq3"
+    # Digital Research DR DOS 6.0 (October 1991) — DR-DOS competitor
+    # to MS-DOS 5.0.  IBMBIO.COM + IBMDOS.COM + COMMAND.COM naming
+    # (same convention as PC-DOS, but different binary bytes).  Has
+    # DOS 3.3-class BPB (OEM stamp "IBM  3.3"), works on both IDE
+    # and MFM controllers.  Sources from
+    # ``dosassets/drdos6/Digital Research DR DOS 6.0 (10-16-1991)
+    # (3.5-720k) (alt).7z`` -- 4 x 720 KB DSDD floppies, disk01
+    # already bootable with the SYS-installable DR-DOS kernel.
+    # FAT12 and FAT16 supported, max 32 MiB FAT16 partition.
+    DRDOS6 = "drdos6"
     # 4DOS shell overlay (planned, requires --host-dos).  Phase 14F
     # implementation is pending until 4DOS install media is provided.
     # When set, dosforge raises a clear "not yet implemented" message
