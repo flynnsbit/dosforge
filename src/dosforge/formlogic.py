@@ -311,7 +311,7 @@ def geometry_preview_text(state: FormState) -> str:
         rule = None
         fmt = None
     if rule is not None and fmt is not None:
-        max_mb = _effective_max_mb(rule, fmt)
+        max_mb = _state_aware_max_mb(state, rule, fmt)
         if max_mb is not None:
             suffix = f" (max {_render_mb(max_mb)} for {fmt.value})"
     return f"-> {size_mb} MB (geometry auto-derived from size){suffix}"
@@ -354,10 +354,24 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
     BootMode.FREEDOS: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16, DiskFormat.FAT32})),
     BootMode.MSDOS71: _BootMediaRule(frozenset({DiskFormat.FAT16, DiskFormat.FAT32})),
     BootMode.PCDOS71: _BootMediaRule(frozenset({DiskFormat.FAT16, DiskFormat.FAT32}), preferred_format=DiskFormat.FAT32, per_format_min_mb={DiskFormat.FAT32: 1024}),
-    BootMode.IBM8088: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16}), max_mb=32),
+    # IBM 8088/V20: cap shifts by ibm_dos_version (DOS33=32 MiB,
+    # DOS50=504 MiB).  The dynamic cap is applied via
+    # _state_aware_max_mb so the rule itself only enforces the
+    # FAT format restriction.  ``max_mb=None`` here lets the
+    # state-aware helper drive both the live snap and the
+    # validate_media_step gate without being clamped by a stale
+    # 32 MiB floor.
+    BootMode.IBM8088: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16})),
     BootMode.MSDOS33: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16}), max_mb=32),
-    BootMode.MSDOS331: _BootMediaRule(frozenset({DiskFormat.FAT16})),
-    BootMode.COMPAQ331: _BootMediaRule(frozenset({DiskFormat.FAT16})),
+    # MS-DOS 3.31 Microsoft kernel only reads BPB.total_sectors_16
+    # (uint16) -- same 32 MiB cap as MS-DOS 3.30.  Compaq DOS 3.31
+    # (compaq331) has a FAT16B-capable kernel that lifts the cap to
+    # ~504 MiB.
+    BootMode.MSDOS331: _BootMediaRule(frozenset({DiskFormat.FAT16}), max_mb=32),
+    # Compaq DOS 3.31 FAT16B (BIGDOS) supports partitions up to
+    # ~504 MiB (the Compaq-specific FORMAT cap; matches
+    # COMPAQ331_MAX_BYTES in size.py).
+    BootMode.COMPAQ331: _BootMediaRule(frozenset({DiskFormat.FAT16}), max_mb=504),
     BootMode.MSDOS5: _BootMediaRule(frozenset({DiskFormat.FAT16})),
     BootMode.MSDOS6: _BootMediaRule(frozenset({DiskFormat.FAT16})),
     BootMode.MSDOS622: _BootMediaRule(frozenset({DiskFormat.FAT16})),
@@ -387,6 +401,33 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
 
 def boot_media_rule(boot_mode: BootMode) -> _BootMediaRule | None:
     return _BOOT_MODE_MEDIA_RULES.get(boot_mode)
+
+
+def _state_aware_max_mb(state: FormState, rule: "_BootMediaRule", fmt: DiskFormat) -> int | None:
+    """Return the effective size cap taking state-dependent extras into account.
+
+    Some boot modes have a cap that depends on a secondary field
+    (e.g. IBM8088's cap shifts from 32 MiB to 504 MiB when
+    ibm_dos_version flips from DOS33 to DOS50).  Returns the
+    tighter of the rule cap, the FAT-format cap, and any
+    state-dependent extra cap.
+    """
+    base = _effective_max_mb(rule, fmt)
+    try:
+        boot_mode = BootMode(state.boot_mode)
+    except ValueError:
+        return base
+    # IBM 8088/V20 mode: DOS33 -> 32 MiB, DOS50 -> 504 MiB.
+    if boot_mode is BootMode.IBM8088:
+        try:
+            ver = IBMDOSVersion(state.ibm_dos_version)
+        except ValueError:
+            ver = IBMDOSVersion.DOS33
+        ibm_cap = 32 if ver is IBMDOSVersion.DOS33 else 504
+        if base is None:
+            return ibm_cap
+        return min(base, ibm_cap)
+    return base
 
 
 def _snap_format_for_boot_mode(state: FormState, *, force_preferred: bool) -> FormState:
@@ -419,11 +460,9 @@ def _snap_size_for_boot_mode(state: FormState) -> FormState:
     min_mb = rule.per_format_min_mb.get(fmt)
     # v0.8.2: cap by the tighter of per-boot-mode max_mb and the
     # FAT-format's own cap (FAT12=32 MiB, FAT16=2 GiB, FAT32=2 TiB).
-    # Closes the previous gap where modes without an explicit
-    # per-boot-mode cap (FreeDOS, MSDOS622, MSDOS71, ...) let the
-    # user overshoot the FAT format's natural limit and only
-    # surfaced the error at Create-click time.
-    max_mb = _effective_max_mb(rule, fmt)
+    # v0.8.3: also consider state-dependent caps such as IBM8088's
+    # ibm_dos_version (DOS33=32 MiB, DOS50=504 MiB).
+    max_mb = _state_aware_max_mb(state, rule, fmt)
     try:
         size_bytes = parse_size(state.size_text)
     except DosForgeError:
@@ -577,17 +616,45 @@ def validate_media_step(state: FormState) -> str | None:
                 f"Increase the size to {_render_mb(min_mb)} or pick FAT16 for smaller drives."
             )
         return f"{boot_mode.value} {fmt.value} partitions must be at least {_render_mb(min_mb)}."
-    # Enforce the tighter of per-boot-mode max_mb and the FAT format
-    # cap so the user gets a clear error at Next instead of waiting
-    # for Create to fail.
-    max_mb = _effective_max_mb(rule, fmt)
+    # Enforce the tighter of per-boot-mode max_mb, FAT format cap,
+    # and any state-dependent extra cap so the user gets a clear
+    # error at Next instead of waiting for Create to fail.
+    max_mb = _state_aware_max_mb(state, rule, fmt)
     if max_mb is not None and size_bytes > max_mb * 1024 * 1024:
         if rule.max_mb is not None and rule.max_mb <= max_mb:
             return f"{boot_mode.value} partitions cannot exceed {_render_mb(rule.max_mb)}."
+        if boot_mode is BootMode.IBM8088:
+            try:
+                ver = IBMDOSVersion(state.ibm_dos_version)
+            except ValueError:
+                ver = IBMDOSVersion.DOS33
+            ver_label = "MS-DOS 3.3" if ver is IBMDOSVersion.DOS33 else "MS-DOS 5.0"
+            return (
+                f"IBM 8088/V20 + {ver_label} partitions cannot exceed "
+                f"{_render_mb(max_mb)}."
+            )
         return (
             f"{fmt.value} partitions cannot exceed {_render_mb(max_mb)} "
             "(the FAT format's hard cap)."
         )
+    # v0.8.3: FreeDOS auto-download bundle only ships FAT16 boot
+    # assets (BOOTSECT_FAT16.BIN); FAT32 requires the LOCAL source
+    # with BOOTSECT_FAT32.BIN.  Surface the gate at Next rather
+    # than letting the user reach Create.
+    if (
+        boot_mode is BootMode.FREEDOS
+        and fmt is DiskFormat.FAT32
+    ):
+        try:
+            source = FreeDOSSource(state.freedos_source)
+        except ValueError:
+            source = FreeDOSSource.AUTO
+        if source is FreeDOSSource.AUTO:
+            return (
+                "FreeDOS auto-download bundle ships FAT16 boot assets only. "
+                "For FAT32, switch FreeDOS source to 'Local FreeDOS assets' "
+                "(needs BOOTSECT_FAT32.BIN in your dosassets/freedos/ folder)."
+            )
     return None
 
 
@@ -607,7 +674,13 @@ def build_time_hint_for_boot_mode(boot_mode: BootMode) -> str | None:
 
 def coerce_on_ibm_version_change(state: FormState) -> FormState:
     if _is_vhd(state):
-        return apply_ibm_default_size(state, force=False)
+        # Re-snap to the new ibm_dos_version's cap (DOS33=32 MiB,
+        # DOS50=504 MiB) -- _snap_size_for_boot_mode reads
+        # ibm_dos_version through _state_aware_max_mb so changing the
+        # version now clamps size DOWN (if user goes 504->32) or
+        # leaves room to grow (if user goes 32->504).
+        state = apply_ibm_default_size(state, force=False)
+        return _snap_size_for_boot_mode(state)
     return state
 
 

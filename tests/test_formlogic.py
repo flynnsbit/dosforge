@@ -296,6 +296,122 @@ def test_geometry_preview_includes_max_cap_for_size_mode():
     assert "fat16" in text.lower()
 
 
+def test_msdos331_capped_at_32mib():
+    """v0.8.3: MSDOS331 (Microsoft, not Compaq) is FAT16-only AND
+    capped at 32 MiB (uint16 total_sectors_16)."""
+    state = _state(
+        boot_mode=BootMode.MSDOS331.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="100M",
+    )
+    snapped = f.coerce_on_format_change(state)
+    assert snapped.size_text == "32M"
+    err = f.validate_media_step(_state(
+        boot_mode=BootMode.MSDOS331.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="100M",
+    ))
+    assert err is not None
+    assert "32" in err
+
+
+def test_compaq331_capped_at_504mib():
+    """v0.8.3: COMPAQ331 supports FAT16B up to ~504 MiB (Compaq's
+    FORMAT cap)."""
+    state = _state(
+        boot_mode=BootMode.COMPAQ331.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="1G",
+    )
+    snapped = f.coerce_on_format_change(state)
+    assert snapped.size_text == "504M"
+    # 400M is fine (under 504)
+    state = _state(
+        boot_mode=BootMode.COMPAQ331.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="400M",
+    )
+    snapped = f.coerce_on_format_change(state)
+    assert snapped.size_text == "400M"
+
+
+def test_freedos_auto_fat32_rejected_at_next():
+    """v0.8.3: FreeDOS auto-download bundle ships FAT16 boot assets
+    only.  validate_media_step now catches FAT32 + AUTO at Next."""
+    state = _state(
+        boot_mode=BootMode.FREEDOS.value,
+        disk_format=DiskFormat.FAT32.value,
+        freedos_source=FreeDOSSource.AUTO.value,
+        size_text="128M",
+    )
+    err = f.validate_media_step(state)
+    assert err is not None
+    assert "fat16" in err.lower() or "fat32" in err.lower()
+    assert "local" in err.lower()
+
+
+def test_freedos_local_fat32_allowed():
+    """LOCAL FreeDOS supports FAT32 (user supplies BOOTSECT_FAT32.BIN)."""
+    state = _state(
+        boot_mode=BootMode.FREEDOS.value,
+        disk_format=DiskFormat.FAT32.value,
+        freedos_source=FreeDOSSource.LOCAL.value,
+        size_text="128M",
+    )
+    err = f.validate_media_step(state)
+    assert err is None
+
+
+def test_ibm8088_dos33_capped_at_32mib():
+    """IBM8088 + DOS33 caps at 32 MiB (unchanged from earlier)."""
+    state = _state(
+        boot_mode=BootMode.IBM8088.value,
+        ibm_dos_version=IBMDOSVersion.DOS33.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="100M",
+    )
+    snapped = f.coerce_on_format_change(state)
+    assert snapped.size_text == "32M"
+
+
+def test_ibm8088_dos50_allows_up_to_504mib():
+    """v0.8.3: IBM8088 + DOS50 lifts the cap to 504 MiB (matching
+    validate_size_for_ibm_dos in size.py)."""
+    state = _state(
+        boot_mode=BootMode.IBM8088.value,
+        ibm_dos_version=IBMDOSVersion.DOS50.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="1G",
+    )
+    snapped = f.coerce_on_format_change(state)
+    # Clamps to 504M (DOS50 cap)
+    assert snapped.size_text == "504M"
+    # 200M is fine under DOS50
+    state = _state(
+        boot_mode=BootMode.IBM8088.value,
+        ibm_dos_version=IBMDOSVersion.DOS50.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="200M",
+    )
+    snapped = f.coerce_on_format_change(state)
+    assert snapped.size_text == "200M"
+
+
+def test_ibm8088_version_change_resnaps_size_down():
+    """Switching IBM DOS version from DOS50 (504 MiB cap) to DOS33
+    (32 MiB cap) must clamp the current size down."""
+    state = _state(
+        boot_mode=BootMode.IBM8088.value,
+        ibm_dos_version=IBMDOSVersion.DOS50.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="200M",
+    )
+    # Simulate user flipping DOS version to DOS33
+    state = dataclasses.replace(state, ibm_dos_version=IBMDOSVersion.DOS33.value)
+    snapped = f.coerce_on_ibm_version_change(state)
+    assert snapped.size_text == "32M"
+
+
 def test_request_requires_path():
     with pytest.raises(DosForgeError):
         f.build_create_request(dataclasses.replace(f.default_state(), output_path=""))
