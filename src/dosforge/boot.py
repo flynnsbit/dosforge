@@ -279,6 +279,20 @@ _BUILTIN_MSDOS_MBR_BOOT_CODE_B64 = (
 _BUILTIN_FAT16_BOOT_SECTOR_B64 = (
     "6zyQRlJET1M1LjEAAgQEAAIAAgAA+MgAEQAMAAAIAAAAHAMAgAApJXrCXE5PIE5BTUUgICAgRkFUMTYgICD6/DHAjti9AHy44B+OwInuie+5AAHzpepefOAfAABgAI7YjtCNZqD7iFYkx0bAEADHRsIBAIxexsdGxKBji3Yci34eA3YOg9cAiXbSiX7UikYQmPdmFgHGEdeJdtaJftiLXguxBdPri0YRMdL391ABxoPXAIl22ol+3ItG1otW2F/EXlrolQDEflq5CwC+8X1X86ZfJotFGnQLg8cgJoA9AHXncmVQxF5ai34Wi0bSi1bU6GcAWB4Hjl5cvwAgq4nGi1ZcAfZzA4DGEI7arYP4+HLrMcCrDh/EXlq+ACCtCcB1BYjT/25aSEiLfg2B5/8A9+cDRtoTVtzoIADr4LQOzRBerFY8AHX1w+j1/0Vycm9yIQAw5M0TzRbNGVaJRsiJVsqMhp7niZ6c5+jU/y4AtEG7qlWKViSE0nQZzRNyFdHpgdtUqnUNjXbAiV7MiV7OtELrJotOyItWyopGGPZmGpH38ZL2dhiJ0YjGhunQydDJCOFBxF7EuAECilYkzRNyiItGC1e+oGPEvpznicHzpF+xBNPoAYae54NGyAGDVsoAT3WLxJ6c517DAAAAAAAAAABLRVJORUwgIFNZUwAAVao="
 )
+# FreeDOS FAT32 LBA boot sector (FRDOS5.1 OEM, EB 58 90 jmp opcode).
+# Source: built from FDOS/kernel boot/boot32lb.asm via NASM 2.16.01.
+# Used as the BUILTIN fallback for ``_write_fat32_boot_template``
+# when no real FreeDOS FAT32 reference VHD is available on the
+# host. Without this, the fallback was an mkfs.fat "This is not a
+# bootable disk" stub which is silently downgraded to the FAT16
+# boot sector by ``_resolve_freedos_from_directory`` -- the
+# combination of a FAT16 EB 3C 90 jmp opcode + FAT32 BPB is what
+# produces the "blinking cursor after Verifying DMI Pool Data"
+# hang. See dosassets/freedos/BOOTSECT_FAT32.BIN for the canonical
+# bundled copy (this is its base64 form, identical bytes).
+_BUILTIN_FAT32_BOOT_SECTOR_B64 = (
+    "61iQRlJET1M1LjEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEZBVDMyICAg/PopwI7YvQB8uOAfjsCJ7onvuQAB86XqenzgHwAAYACO2I7QjWbg+4hWQL7Gfej5AGYxwGaJRkSLRg5mA0YcZolGSGaJRkxmi0YQZvduJGYBRky4AAI7Rgt0CAHA/wY2fevzZotGLGZQ6JYAck/EXnbovAAx/7kLAL7xffOmdBWDxyCD5+A7fgt160p14GZY6DYA69Im/3UJJv91D2ZYKdtmUOhcAHIN6IUASnX6ZljoFgDr7IpWQIjT/252vu596GcAMOTNFs0ZBldTicfB5wJQi0YLSCHHWGbB6AdmA0ZIuwAijsMp22Y7RkR0B2aJRkToOwAmgGUDDyZmiwVbXwfDZj34//8PcxhmSGZIZg+2Vg3+ykJmUmb34mZaZgNGTMP5wzHbtA7NEKw8AHX1w1JWV2ZQiedqAGoAZlAGU2oBahCJ5opWQLRCzROJ/GZYcwhQMOTNE1jr2WZAA14LcweMwoDGEI7CX15aw0xvYWRpbmcgRnJlZURPUyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABObyBLRVJORUwgIFNZUwAAVao="
+)
 # FAT12 floppy boot sector extracted from the upstream FreeDOS 1.4 1.44MB
 # boot floppy at codercowboy/freedosbootdisks (OEM "FreeDOS ", 1.44M BPB at
 # 18 spt / 2 heads / media 0xF0). The boot code walks 12-bit FAT entries
@@ -1014,14 +1028,40 @@ class BootAssetResolver:
 
     def _seed_builtin_fat16_boot_records(self) -> None:
         # Seed the FreeDOS reference boot sector (we keep the FreeDOS
-        # VBR template for FreeDOS chain-loads) but pair it with the
+        # VBR template for FreeDOS chain-loads) but pair it with an
         # MS-DOS-compatible MBR so the same MBR works across every
         # boot mode (incl. FreeDOS).  This avoids the "VBR has illegal
         # signature" error users hit when chain-loading non-FreeDOS
         # VBRs through the older FreeDOS-derived MBR.
-        mbr_code = base64.b64decode(_BUILTIN_MSDOS_MBR_BOOT_CODE_B64)
+        #
+        # Prefer the host's syslinux MBR (typically
+        # ``/usr/lib/syslinux/bios/mbr.bin``) over the 440-byte
+        # base64 builtin because the embedded version is a tiny
+        # CHS-only loader (~71 instruction bytes) that breaks on
+        # 86Box / VHD setups where the BIOS-presented geometry
+        # disagrees with the partition table's CHS encoding -- the
+        # CHS INT 13h read targets the wrong sector, fails, and the
+        # MBR drops to INT 18h leaving a blinking cursor after
+        # "Verifying DMI Pool Data".  syslinux's MBR uses INT 13h
+        # extensions (LBA) and is geometry-agnostic.
+        mbr_code = self._resolve_fat16_mbr_boot_code_bytes()
         boot_sector = base64.b64decode(_BUILTIN_FAT16_BOOT_SECTOR_B64)
         self._save_cached_fat16_boot_records(mbr_code=mbr_code, boot_sector=boot_sector)
+
+    def _resolve_fat16_mbr_boot_code_bytes(self) -> bytes:
+        for candidate in DEFAULT_MBR_BOOT_CODE_CANDIDATES:
+            try:
+                if not candidate.exists() or not candidate.is_file():
+                    continue
+                data = candidate.read_bytes()
+            except OSError:
+                continue
+            if len(data) < 440:
+                continue
+            if not any(data[:440]):
+                continue
+            return data[:440]
+        return base64.b64decode(_BUILTIN_MSDOS_MBR_BOOT_CODE_B64)[:440]
 
     def _save_cached_fat16_boot_records(self, *, mbr_code: bytes, boot_sector: bytes) -> None:
         if len(mbr_code) < 440 or len(boot_sector) < 512:
@@ -1049,6 +1089,17 @@ class BootAssetResolver:
             return None
         if not any(mbr_code):
             return None
+        # Reject a stale cached copy of the embedded 71-byte CHS-only
+        # MBR (see ``_seed_builtin_fat16_boot_records`` for why this
+        # breaks 86Box boots).  Returning None here forces
+        # ``_apply_freedos_reference_boot_records`` to call
+        # ``_seed_builtin_fat16_boot_records`` again, which now
+        # prefers the syslinux MBR when available.
+        builtin_mbr = base64.b64decode(_BUILTIN_MSDOS_MBR_BOOT_CODE_B64)[:440]
+        if mbr_code == builtin_mbr:
+            preferred = self._resolve_fat16_mbr_boot_code_bytes()
+            if preferred != mbr_code:
+                return None
         return (boot_path, mbr_path)
 
     def _resolve_msdos71(self, request: CreateRequest) -> BootAssets:
@@ -2931,12 +2982,29 @@ class BootAssetResolver:
     ) -> None:
         if destination.exists() and destination.stat().st_size >= 512:
             current = destination.read_bytes()[:512]
-            if self._looks_like_freedos_fat32_boot_sector(current):
+            if self._looks_like_freedos_fat16_boot_sector(current):
+                # Shouldn't happen — existing file claims FAT32 but is
+                # actually a FAT16 boot sector.  Overwrite.
+                pass
+            elif self._looks_like_freedos_fat32_boot_sector(current):
                 return
 
         local_source = self._find_local_freedos_fat32_boot_sector(search_roots or ())
         if local_source is not None:
             destination.write_bytes(local_source)
+            return
+
+        # Built-in FreeDOS FAT32 boot sector (boot32lb, OEM "FRDOS5.1",
+        # EB 58 90 jmp opcode).  Used when no host-side reference VHD is
+        # available.  This must come BEFORE the mkfs.fat fallback below,
+        # because mkfs.fat's first 512 bytes are a "This is not a
+        # bootable disk" stub which ``_resolve_freedos_from_directory``
+        # silently downgrades to the FAT16 boot sector for FAT32
+        # partitions -- producing the "blinking cursor after Verifying
+        # DMI Pool Data" hang.
+        builtin = base64.b64decode(_BUILTIN_FAT32_BOOT_SECTOR_B64)
+        if len(builtin) >= 512 and self._looks_like_freedos_fat32_boot_sector(builtin[:512]):
+            destination.write_bytes(builtin[:512])
             return
 
         image_path = self.cache_root / "fat32-template.img"

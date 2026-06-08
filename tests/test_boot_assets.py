@@ -8,6 +8,9 @@ import pytest
 
 from dosforge.boot import (
     _BUILTIN_FAT16_BOOT_SECTOR_B64,
+    _BUILTIN_FAT32_BOOT_SECTOR_B64,
+    _BUILTIN_MSDOS_MBR_BOOT_CODE_B64,
+    DEFAULT_MBR_BOOT_CODE_CANDIDATES,
     BootAssetResolver,
     normalize_freedos_autoexec_bat,
     normalize_freedos_config_sys,
@@ -2099,6 +2102,98 @@ def test_write_fat32_boot_template_prefers_local_freedos_vhd(tmp_path: Path) -> 
     assert b"FRDOS5.1" in data
     assert b"KERNEL  SYS" in data
     assert b"This is not a bootable disk" not in data
+
+
+def test_write_fat32_boot_template_seeds_builtin_when_no_local_source(tmp_path: Path) -> None:
+    """Regression for v0.9.3 FreeDOS FAT32 hang: without a local VHD
+    source, dosforge previously fell back to the mkfs.fat stub, whose
+    OEM string ``mkfs.fat`` failed the FreeDOS validator and triggered
+    a silent FAT16-on-FAT32 boot sector swap (jmp ``EB 3C 90`` over a
+    FAT32 BPB), producing a blinking cursor in 86Box.  The builtin
+    boot32lb fallback must produce a real FreeDOS FAT32 sector."""
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    destination = tmp_path / "BOOTSECT_FAT32.BIN"
+    resolver._write_fat32_boot_template(destination, search_roots=())
+
+    data = destination.read_bytes()
+    assert len(data) == 512
+    assert data[0:3] == b"\xeb\x58\x90", (
+        f"FAT32 jmp opcode must be EB 58 90, got {data[0:3].hex()}"
+    )
+    assert data[3:11] == b"FRDOS5.1", (
+        f"FAT32 OEM must be FRDOS5.1, got {data[3:11]!r}"
+    )
+    assert data[510:512] == b"\x55\xaa"
+    assert b"KERNEL  SYS" in data
+
+
+def test_seed_builtin_fat16_boot_records_prefers_syslinux_mbr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for v0.9.3 FreeDOS FAT16 'Verifying DMI Pool Data'
+    hang: the embedded 71-byte CHS-only MBR breaks on 86Box where BIOS
+    geometry diverges from the partition table's CHS encoding.  The
+    syslinux LBA-aware MBR must be preferred when available."""
+    syslinux_mbr_payload = (b"\xfa\x31\xc0\x8e\xd0\xbc\xe0\x7b\xfb\xfc\x8e\xd8" + b"S" * 428)
+    fake_syslinux = tmp_path / "syslinux-mbr.bin"
+    fake_syslinux.write_bytes(syslinux_mbr_payload)
+    monkeypatch.setattr(
+        "dosforge.boot.DEFAULT_MBR_BOOT_CODE_CANDIDATES",
+        (fake_syslinux,),
+    )
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    resolver._seed_builtin_fat16_boot_records()
+    cached_mbr = resolver._cached_fat16_mbr_boot_code_path().read_bytes()
+
+    builtin_mbr = base64.b64decode(_BUILTIN_MSDOS_MBR_BOOT_CODE_B64)[:440]
+    assert cached_mbr == syslinux_mbr_payload[:440]
+    assert cached_mbr != builtin_mbr, (
+        "Should not seed builtin 71-byte MBR when syslinux mbr.bin is available"
+    )
+
+
+def test_seed_builtin_fat16_boot_records_falls_back_to_builtin_without_syslinux(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On hosts without syslinux installed (e.g. Windows), the builtin
+    71-byte MBR must still be seeded as a last-resort fallback."""
+    monkeypatch.setattr("dosforge.boot.DEFAULT_MBR_BOOT_CODE_CANDIDATES", ())
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    resolver._seed_builtin_fat16_boot_records()
+    cached_mbr = resolver._cached_fat16_mbr_boot_code_path().read_bytes()
+
+    builtin_mbr = base64.b64decode(_BUILTIN_MSDOS_MBR_BOOT_CODE_B64)[:440]
+    assert cached_mbr == builtin_mbr
+
+
+def test_load_cached_fat16_boot_records_invalidates_stale_builtin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for v0.9.3: existing users who already had the
+    71-byte builtin cached must get their cache invalidated when
+    syslinux becomes available, so the next build picks up the
+    LBA-aware MBR instead of reusing the stale stub."""
+    syslinux_mbr_payload = b"\xfa\x31\xc0\x8e\xd0" + b"X" * 435
+    fake_syslinux = tmp_path / "syslinux-mbr.bin"
+    fake_syslinux.write_bytes(syslinux_mbr_payload)
+    monkeypatch.setattr(
+        "dosforge.boot.DEFAULT_MBR_BOOT_CODE_CANDIDATES",
+        (fake_syslinux,),
+    )
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    # Plant the stale 71-byte builtin in the cache by hand.
+    resolver._save_cached_fat16_boot_records(
+        mbr_code=base64.b64decode(_BUILTIN_MSDOS_MBR_BOOT_CODE_B64),
+        boot_sector=base64.b64decode(_BUILTIN_FAT16_BOOT_SECTOR_B64),
+    )
+    loaded = resolver._load_cached_fat16_boot_record_paths()
+    assert loaded is None, (
+        "Stale 71-byte builtin MBR must be rejected so the cache is"
+        " re-seeded from the syslinux source on the next build."
+    )
 
 
 def test_resolve_freedos_from_image_prefers_core_binaries_when_available(
