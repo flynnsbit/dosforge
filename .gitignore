@@ -103,3 +103,9 @@ vendor/windows/licenses/
 /dosforge-gui.cmd
 
 /session.save
+
+# Personal scratch notes (markdown + nano autosave) kept in the
+# working tree but never committed.
+/testing-notes.md
+/testing-notes.md.save
+*.md.save
