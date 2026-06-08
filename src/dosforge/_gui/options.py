@@ -65,6 +65,7 @@ BOOT_MODE_OPTIONS = [
     ("MS-DOS 3.3 bootable", BootMode.MSDOS33.value),
     ("MS-DOS 3.31 bootable", BootMode.MSDOS331.value),
     ("MS-DOS 5.0 bootable", BootMode.MSDOS5.value),
+    ("MS-DOS 6.0 bootable", BootMode.MSDOS6.value),
     ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
     ("PC-DOS bootable", BootMode.PCDOS.value),
     ("IBM PC-DOS 3.00 bootable (1984, 360k MFM)", BootMode.PCDOS3.value),

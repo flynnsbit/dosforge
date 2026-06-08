@@ -307,6 +307,31 @@ def msdos622_profile(install_image: Path, boot_assets_dir: Path | None = None) -
     )
 
 
+def msdos6_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    """MS-DOS 6.0 install profile.
+
+    MS-DOS 6.0 (1993-03-10) shipped just before the DoubleSpace
+    lawsuit forced Microsoft to ship 6.20 / 6.21 / 6.22 with
+    DriveSpace.  Same install pipeline as msdos5 / msdos622: Disk1.img
+    has IO.SYS + MSDOS.SYS + COMMAND.COM + FORMAT.COM + FDISK.COM
+    + SYS.COM at its root.  FORMAT C: /S writes an authentic
+    ``MSDOS5.0`` OEM VBR (yes, 6.0 still stamps 5.0 — Microsoft only
+    bumped the OEM string in 6.22).
+    """
+    _ = boot_assets_dir
+    return LegacyDosInstallProfile(
+        label="MS-DOS 6.0",
+        install_image=install_image,
+        required_system_files=("IO.SYS", "MSDOS.SYS", "COMMAND.COM"),
+        install_method="format",
+        timeout_seconds=300.0,
+        # MS-DOS 6.0 FDISK supports /MBR (added in DOS 5.0).
+        supports_fdisk_mbr=True,
+        # Same two-prompt sequence as 5.0 / 6.22.
+        format_yes_input=b"Y\r\nY\r\n\r\n",
+    )
+
+
 def pcdos7_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
     """IBM PC-DOS 7.0 install profile.
 
@@ -1355,6 +1380,7 @@ __all__ = [
     "msdos33_profile",
     "pcdos3_profile",
     "msdos5_profile",
+    "msdos6_profile",
     "msdos622_profile",
     "pcdos7_profile",
     "pcdos2000_profile",

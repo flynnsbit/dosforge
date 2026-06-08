@@ -1,23 +1,25 @@
-MS-DOS 6.00 / 6.20 / 6.21 install assets (pre-6.22)
-====================================================
+MS-DOS 6.00 install assets
+==========================
 
-Staging area for the pre-6.22 MS-DOS 6.x line:
-  6.00 — initial release, includes DoubleSpace
-  6.20 — DoubleSpace bug fixes
-  6.21 — DoubleSpace removed (Stac Electronics lawsuit)
+Staging area for MS-DOS 6.00 (March 1993) — the first DoubleSpace
+release in the MS-DOS 6.x line.  Predecessor of 6.20 / 6.21 / 6.22.
 
-MS-DOS 6.22 (with DriveSpace replacing DoubleSpace) has its own
-folder (dosassets/msdos622/).
+Boot mode: ``--boot-mode msdos6``
 
-Expected files: 3.5" 1.44 MiB install diskettes (Disk1.img +
-Disk2.img + Disk3.img typical layout).
+Expected layout: 3 × 3.5" 1.44 MiB install diskettes
+(``DISK1.IMG`` + ``DISK2.IMG`` + ``DISK3.IMG``).  Disk1 ships
+IO.SYS + MSDOS.SYS + COMMAND.COM + FORMAT.COM + FDISK.COM +
+SYS.COM at its root.  dosforge auto-extracts the .7z below if
+present and runs FORMAT C: /S inside QEMU (same pipeline as
+``--boot-mode msdos5`` / ``--boot-mode msdos622``).
 
-Status: dosforge does not yet ship a boot-mode for pre-6.22 MS-DOS.
-Drop install media here so it's ready when support lands. Until
-then the tool will report "no install images found" if anyone
-points it at this folder.
+Source (WinWorldPC):
+  "Microsoft MS-DOS 6.0 Plus Enhanced Tools (3.5).7z"
+  3-disk set, ~3.85 MB compressed.
 
-Source (WinWorldPC): "Microsoft MS-DOS 6.00 / 6.20 / 6.21".
+MS-DOS 6.22 (DriveSpace, post-Stac lawsuit) has its own folder
+(dosassets/msdos622/) with its own boot mode (``--boot-mode msdos622``).
 
-This folder tracks readme.txt only; the install media itself is
-gitignored.
+This folder tracks readme.txt + the .7z install archive; raw
+extracted images are gitignored.
+

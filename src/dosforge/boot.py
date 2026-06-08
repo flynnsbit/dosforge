@@ -632,6 +632,8 @@ class BootAssetResolver:
             return self._resolve_msdos5(request)
         if request.boot_mode is BootMode.MSDOS622:
             return self._resolve_msdos622(request)
+        if request.boot_mode is BootMode.MSDOS6:
+            return self._resolve_msdos6(request)
         if request.boot_mode is BootMode.PCDOS:
             return self._resolve_pcdos(request)
         if request.boot_mode is BootMode.PCDOS7:
@@ -1137,6 +1139,17 @@ class BootAssetResolver:
             cache_tag="msdos622",
             prefer_install_image_boot_sector=True,
             default_asset_dirs=("msdos622",),
+            install_profile=request.msdos_install_profile,
+        )
+
+    def _resolve_msdos6(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="MS-DOS 6.0",
+            version_subdir_name="msdos6",
+            cache_tag="msdos6",
+            prefer_install_image_boot_sector=True,
+            default_asset_dirs=("msdos6", "dos6", "dos60"),
             install_profile=request.msdos_install_profile,
         )
 
@@ -4296,6 +4309,7 @@ class BootInstaller:
             BootMode.MSDOS33,
             BootMode.MSDOS331,
             BootMode.MSDOS5,
+            BootMode.MSDOS6,
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS3,
@@ -4380,6 +4394,7 @@ class BootInstaller:
             BootMode.MSDOS33,
             BootMode.MSDOS331,
             BootMode.MSDOS5,
+            BootMode.MSDOS6,
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS3,

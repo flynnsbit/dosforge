@@ -487,6 +487,7 @@ class DosForgeApp(App[None]):
                                         ("MS-DOS 3.3 bootable", BootMode.MSDOS33.value),
                                         ("MS-DOS 3.31 bootable", BootMode.MSDOS331.value),
                                         ("MS-DOS 5.0 bootable", BootMode.MSDOS5.value),
+                                        ("MS-DOS 6.0 bootable", BootMode.MSDOS6.value),
                                         ("MS-DOS 6.22 bootable", BootMode.MSDOS622.value),
                                         ("PC-DOS bootable", BootMode.PCDOS.value),
                                         (
@@ -961,6 +962,7 @@ class DosForgeApp(App[None]):
             BootMode.MSDOS33,
             BootMode.MSDOS331,
             BootMode.MSDOS5,
+            BootMode.MSDOS6,
             BootMode.MSDOS622,
             BootMode.PCDOS,
             BootMode.PCDOS3,

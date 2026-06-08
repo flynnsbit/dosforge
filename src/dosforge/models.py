@@ -78,6 +78,13 @@ class BootMode(str, Enum):
     MSDOS33 = "msdos33"
     MSDOS331 = "msdos331"
     MSDOS5 = "msdos5"
+    # Microsoft MS-DOS 6.0 (March 1993).  Released between MS-DOS 5.0
+    # and 6.22.  Identical install pipeline to MS-DOS 5.0 / 6.22:
+    # FORMAT C: /S inside QEMU from Disk1.img.  Files dated
+    # 1993-03-10.  FAT16 only; works on IDE controllers.  OEM VBR
+    # string is still ``MSDOS5.0`` (Microsoft only bumped the OEM
+    # stamp to ``MSDOS6.22`` in 6.22).
+    MSDOS6 = "msdos6"
     MSDOS622 = "msdos622"
     PCDOS = "pcdos"
     PCDOS7 = "pcdos7"
