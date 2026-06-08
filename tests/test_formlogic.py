@@ -222,6 +222,80 @@ def test_geometry_preview_text_empty_for_img():
     assert f.geometry_preview_text(state) == ""
 
 
+def test_format_cap_clamps_freedos_fat16_to_2gib():
+    """v0.8.2: FreeDOS doesn't pin its own max_mb in the per-boot-mode
+    rule, but the FAT16 backend cap (2 GiB) now feeds into the snap
+    so the UI clamps live instead of waiting for Create to fail."""
+    state = _state(
+        boot_mode=BootMode.FREEDOS.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="5G",
+    )
+    snapped = f.coerce_on_format_change(state)
+    # 2G = 2048 MiB
+    assert snapped.size_text == "2G"
+
+
+def test_format_cap_clamps_msdos622_fat16_to_2gib():
+    state = _state(
+        boot_mode=BootMode.MSDOS622.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="4G",
+    )
+    snapped = f.coerce_on_format_change(state)
+    assert snapped.size_text == "2G"
+
+
+def test_format_cap_does_not_loosen_tighter_per_mode_cap():
+    """IBM8088 has per-mode max_mb=32; the FAT16 backend cap (2048)
+    must NOT loosen this -- the tighter cap wins."""
+    state = _state(
+        boot_mode=BootMode.IBM8088.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="500M",
+    )
+    snapped = f.coerce_on_format_change(state)
+    assert snapped.size_text == "32M"
+
+
+def test_format_cap_clamps_freedos_fat32_to_2tib():
+    state = _state(
+        boot_mode=BootMode.FREEDOS.value,
+        disk_format=DiskFormat.FAT32.value,
+        size_text="5T",
+    )
+    snapped = f.coerce_on_format_change(state)
+    # 2 TiB = 2048 GiB rendered as "2048G"
+    assert snapped.size_text == "2048G"
+
+
+def test_validate_media_step_rejects_oversized_fat16_freedos():
+    """Step 2 -> Step 3 'Next' click surfaces the FAT16 cap error
+    before the user wastes time on Step 3 + Create."""
+    state = _state(
+        boot_mode=BootMode.FREEDOS.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="3G",
+    )
+    err = f.validate_media_step(state)
+    assert err is not None
+    assert "fat16" in err.lower()
+    assert "2g" in err.lower() or "2048" in err.lower()
+
+
+def test_geometry_preview_includes_max_cap_for_size_mode():
+    """Preview line shows the effective cap so the user sees the
+    ceiling at a glance: '-> 512 MB (...) (max 2G for fat16)'."""
+    state = _state(
+        boot_mode=BootMode.MSDOS622.value,
+        disk_format=DiskFormat.FAT16.value,
+        size_text="512M",
+    )
+    text = f.geometry_preview_text(state)
+    assert "max" in text.lower()
+    assert "fat16" in text.lower()
+
+
 def test_request_requires_path():
     with pytest.raises(DosForgeError):
         f.build_create_request(dataclasses.replace(f.default_state(), output_path=""))

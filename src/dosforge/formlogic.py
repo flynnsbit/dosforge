@@ -20,7 +20,40 @@ from .models import (
     lookup_bios_drive_type,
     parse_bios_drive_slug,
 )
-from .size import parse_size
+from .size import (
+    FAT12_MAX_BYTES,
+    FAT16_MAX_BYTES,
+    FAT32_MAX_BYTES,
+    parse_size,
+)
+
+
+# Per-FAT-format effective caps (bytes -> MiB).  Used as a default
+# upper bound when a boot mode doesn't pin its own ``max_mb`` (e.g.
+# FreeDOS / MSDOS622 / MSDOS71) so the UI clamps to "what FAT16
+# can actually hold" instead of letting the user pick 5 GiB FAT16
+# and hitting the error only at Create-click time.
+_FAT_FORMAT_MAX_MB: dict[DiskFormat, int] = {
+    DiskFormat.FAT12: FAT12_MAX_BYTES // (1024 * 1024),
+    DiskFormat.FAT16: FAT16_MAX_BYTES // (1024 * 1024),
+    DiskFormat.FAT32: FAT32_MAX_BYTES // (1024 * 1024),
+}
+
+
+def _effective_max_mb(rule: "_BootMediaRule", fmt: DiskFormat) -> int | None:
+    """Compute the tightest applicable size cap for a (rule, format) pair.
+
+    Per-boot-mode ``rule.max_mb`` wins when it's tighter than the
+    FAT-format-derived cap; otherwise the FAT-format cap (FAT12=32 MiB,
+    FAT16=2 GiB, FAT32=2 TiB) applies so the UI never lets the user
+    overshoot what the chosen filesystem can actually hold.
+    """
+    fmt_cap = _FAT_FORMAT_MAX_MB.get(fmt)
+    if rule.max_mb is None:
+        return fmt_cap
+    if fmt_cap is None:
+        return rule.max_mb
+    return min(rule.max_mb, fmt_cap)
 
 FIELD_MEDIA_TYPE = "media-type"
 FIELD_DISK_CONTROLLER = "disk-controller"
@@ -267,7 +300,21 @@ def geometry_preview_text(state: FormState) -> str:
     except Exception:
         return ""
     size_mb = size_bytes // 1024 // 1024
-    return f"-> {size_mb} MB (geometry auto-derived from size)"
+    # Append the effective cap so the user sees at a glance the
+    # ceiling for the current boot mode + FAT format combination
+    # (e.g. "max 2048 MB for FAT16" on FreeDOS / MSDOS622).
+    suffix = ""
+    try:
+        rule = _BOOT_MODE_MEDIA_RULES.get(BootMode(state.boot_mode))
+        fmt = DiskFormat(state.disk_format)
+    except ValueError:
+        rule = None
+        fmt = None
+    if rule is not None and fmt is not None:
+        max_mb = _effective_max_mb(rule, fmt)
+        if max_mb is not None:
+            suffix = f" (max {_render_mb(max_mb)} for {fmt.value})"
+    return f"-> {size_mb} MB (geometry auto-derived from size){suffix}"
 
 
 def effective_size_text(state: FormState) -> str:
@@ -370,17 +417,23 @@ def _snap_size_for_boot_mode(state: FormState) -> FormState:
         return state
     fmt = DiskFormat(state.disk_format)
     min_mb = rule.per_format_min_mb.get(fmt)
-    max_mb = rule.max_mb
+    # v0.8.2: cap by the tighter of per-boot-mode max_mb and the
+    # FAT-format's own cap (FAT12=32 MiB, FAT16=2 GiB, FAT32=2 TiB).
+    # Closes the previous gap where modes without an explicit
+    # per-boot-mode cap (FreeDOS, MSDOS622, MSDOS71, ...) let the
+    # user overshoot the FAT format's natural limit and only
+    # surfaced the error at Create-click time.
+    max_mb = _effective_max_mb(rule, fmt)
     try:
         size_bytes = parse_size(state.size_text)
     except DosForgeError:
         if min_mb is not None:
             return replace(state, size_text=_render_mb(min_mb))
         if max_mb is not None:
-            return replace(state, size_text=f"{max_mb}M")
+            return replace(state, size_text=_render_mb(max_mb))
         return state
     if max_mb is not None and size_bytes > max_mb * 1024 * 1024:
-        return replace(state, size_text=f"{max_mb}M")
+        return replace(state, size_text=_render_mb(max_mb))
     if min_mb is not None and size_bytes < min_mb * 1024 * 1024:
         return replace(state, size_text=_render_mb(min_mb))
     return state
@@ -524,8 +577,17 @@ def validate_media_step(state: FormState) -> str | None:
                 f"Increase the size to {_render_mb(min_mb)} or pick FAT16 for smaller drives."
             )
         return f"{boot_mode.value} {fmt.value} partitions must be at least {_render_mb(min_mb)}."
-    if rule.max_mb is not None and size_bytes > rule.max_mb * 1024 * 1024:
-        return f"{boot_mode.value} partitions cannot exceed {_render_mb(rule.max_mb)}."
+    # Enforce the tighter of per-boot-mode max_mb and the FAT format
+    # cap so the user gets a clear error at Next instead of waiting
+    # for Create to fail.
+    max_mb = _effective_max_mb(rule, fmt)
+    if max_mb is not None and size_bytes > max_mb * 1024 * 1024:
+        if rule.max_mb is not None and rule.max_mb <= max_mb:
+            return f"{boot_mode.value} partitions cannot exceed {_render_mb(rule.max_mb)}."
+        return (
+            f"{fmt.value} partitions cannot exceed {_render_mb(max_mb)} "
+            "(the FAT format's hard cap)."
+        )
     return None
 
 
