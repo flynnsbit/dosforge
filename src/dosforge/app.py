@@ -338,7 +338,15 @@ class DosForgeApp(App[None]):
       width: 5;
       min-width: 5;
       max-width: 5;
-      margin: 0 0 0 1;
+      /* Explicit longhand margins -- the shorthand 'margin: 0 0 0 1'
+         was getting partially-overridden by the global 'Button {
+         margin: 0 1 1 0; }' rule in Textual's CSS cascade, which left
+         a 1-cell gap of empty space to the RIGHT of the '...' button
+         instead of sitting flush against the path-row right edge. */
+      margin-top: 0;
+      margin-right: 0;
+      margin-bottom: 0;
+      margin-left: 1;
       padding: 0;
     }
 
