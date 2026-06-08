@@ -13,6 +13,7 @@ from .models import (
     DiskFormat,
     FloppyType,
     FreeDOSSource,
+    GeometrySource,
     IBMDOSVersion,
     MSDOSInstallProfile,
     MediaType,
@@ -23,6 +24,7 @@ from .size import parse_size
 
 FIELD_MEDIA_TYPE = "media-type"
 FIELD_DISK_CONTROLLER = "disk-controller"
+FIELD_GEOMETRY_SOURCE = "geometry-source"
 FIELD_CUSTOM_CHS = "custom-chs"
 FIELD_OUTPUT_PATH = "create-path"
 FIELD_SIZE = "create-size"
@@ -69,6 +71,7 @@ _DOS_PROFILE_BOOT_MODES = frozenset(
 class FormState:
     media_type: str = MediaType.VHD.value
     disk_controller: str = ""
+    geometry_source: str = GeometrySource.SIZE.value
     custom_chs: str = ""
     output_path: str = ""
     size_text: str = "512M"
@@ -139,7 +142,17 @@ def visible_fields(state: FormState) -> set[str]:
 
     visible: set[str] = set()
     if is_vhd:
-        visible.update({FIELD_SIZE, FIELD_FORMAT, FIELD_DISK_CONTROLLER, FIELD_BIOS_DRIVE, FIELD_CUSTOM_CHS})
+        visible.update({FIELD_FORMAT, FIELD_DISK_CONTROLLER, FIELD_GEOMETRY_SOURCE})
+        # Each geometry source surfaces ONE input. The other two stay
+        # hidden so the user sees a clear "pick a source, fill its
+        # field" hierarchy instead of three competing controls.
+        source = _safe_geometry_source(state)
+        if source is GeometrySource.SIZE:
+            visible.add(FIELD_SIZE)
+        elif source is GeometrySource.PRESET:
+            visible.add(FIELD_BIOS_DRIVE)
+        elif source is GeometrySource.CUSTOM_CHS:
+            visible.add(FIELD_CUSTOM_CHS)
     else:
         visible.update({FIELD_FLOPPY, FIELD_IMG_SYSTEM_FORMAT})
     if boot_active:
@@ -161,19 +174,120 @@ def visible_fields(state: FormState) -> set[str]:
     return visible
 
 
+def _safe_geometry_source(state: FormState) -> GeometrySource:
+    """Coerce ``state.geometry_source`` to a known enum value.
+
+    Falls back to SIZE for unknown values so an out-of-date saved
+    state never breaks the UI.  See also ``infer_geometry_source``
+    which initializes the field from legacy non-geometry-source
+    states (e.g. external scripts that set bios_drive_type or
+    custom_chs directly).
+    """
+    try:
+        return GeometrySource(state.geometry_source)
+    except ValueError:
+        return GeometrySource.SIZE
+
+
+def infer_geometry_source(state: FormState) -> GeometrySource:
+    """Pick the geometry source that matches the existing state.
+
+    Precedence (matches ``CreateRequest`` validation order in
+    ``disk.py``): custom CHS wins over BIOS preset wins over static
+    size.  Used to migrate pre-v0.8.0 saved states / external
+    scripts that drove the form without setting ``geometry_source``
+    explicitly.
+    """
+    if state.custom_chs.strip():
+        return GeometrySource.CUSTOM_CHS
+    if state.bios_drive_type and _bios_spec(state) is not None:
+        return GeometrySource.PRESET
+    return GeometrySource.SIZE
+
+
 def disabled_fields(state: FormState) -> set[str]:
-    disabled: set[str] = set()
-    if _is_vhd(state) and ((state.bios_drive_type and _bios_spec(state) is not None) or state.custom_chs.strip()):
-        disabled.add(FIELD_SIZE)
-    return disabled
+    # Pre-v0.8.0 returned {SIZE} when bios_drive_type or custom_chs
+    # was set so users couldn't accidentally edit a field whose value
+    # wouldn't win.  v0.8.0 surfaces that precedence as the
+    # FIELD_GEOMETRY_SOURCE picker -- only the picked source's input
+    # is visible, so no field needs the disabled state.  Kept as a
+    # no-op for backward compat with any external callers.
+    return set()
+
+
+def coerce_on_geometry_source_change(state: FormState) -> FormState:
+    """Clear the inactive geometry inputs when the user picks a source.
+
+    SIZE       -> clear bios_drive_type + custom_chs.
+    PRESET     -> clear custom_chs; size_text stays as a fallback.
+    CUSTOM_CHS -> clear bios_drive_type.
+    """
+    source = _safe_geometry_source(state)
+    if source is GeometrySource.SIZE:
+        return replace(state, bios_drive_type="", custom_chs="")
+    if source is GeometrySource.PRESET:
+        return replace(state, custom_chs="")
+    if source is GeometrySource.CUSTOM_CHS:
+        return replace(state, bios_drive_type="")
+    return state
+
+
+def geometry_preview_text(state: FormState) -> str:
+    """Render a one-line preview of the effective VHD geometry.
+
+    Used by the TUI / GUI to show a live cyl x head x spt + MB
+    summary directly under the geometry-source picker, so the user
+    sees what they'll get before clicking Create.  Returns '' when
+    no preview is meaningful (IMG mode, empty / invalid inputs).
+    """
+    if not _is_vhd(state):
+        return ""
+    source = _safe_geometry_source(state)
+    if source is GeometrySource.PRESET:
+        spec = _bios_spec(state)
+        if spec is None:
+            return ""
+        size_mb = spec.cylinders * spec.heads * spec.sectors_per_track * 512 // 1024 // 1024
+        return f"-> {size_mb} MB ({spec.cylinders} cyl x {spec.heads} head x {spec.sectors_per_track} spt)"
+    if source is GeometrySource.CUSTOM_CHS:
+        try:
+            chs = _parse_chs_text(state.custom_chs)
+        except DosForgeError:
+            return ""
+        if chs is None:
+            return ""
+        cyl, heads, spt = chs
+        size_mb = cyl * heads * spt * 512 // 1024 // 1024
+        return f"-> {size_mb} MB ({cyl} cyl x {heads} head x {spt} spt)"
+    text = state.size_text.strip()
+    if not text:
+        return ""
+    try:
+        size_bytes = parse_size(text)
+    except Exception:
+        return ""
+    size_mb = size_bytes // 1024 // 1024
+    return f"-> {size_mb} MB (geometry auto-derived from size)"
 
 
 def effective_size_text(state: FormState) -> str:
-    if FIELD_SIZE in disabled_fields(state):
+    """Return the size string the form will actually submit to disk.py.
+
+    Uses the geometry-source picker (v0.8.0+) to pick the active
+    input: BIOS preset -> derived from CHS, custom CHS -> derived
+    from the CYL,HEAD,SPT triplet, plain size -> the size_text Input
+    as-is.
+    """
+    source = _safe_geometry_source(state)
+    if source is GeometrySource.PRESET:
         spec = _bios_spec(state)
         if spec is not None:
             return f"{spec.size_mb}M"
-        chs = _parse_chs_text(state.custom_chs)
+    elif source is GeometrySource.CUSTOM_CHS:
+        try:
+            chs = _parse_chs_text(state.custom_chs)
+        except DosForgeError:
+            chs = None
         if chs is not None:
             cyl, heads, spt = chs
             return f"{cyl * heads * spt * 512 // 1024 // 1024}M"
@@ -274,7 +388,15 @@ def _snap_size_for_boot_mode(state: FormState) -> FormState:
 
 def coerce_on_media_change(state: FormState) -> FormState:
     if MediaType(state.media_type) is MediaType.IMG:
-        return replace(state, img_system_format=False, boot_mode=BootMode.NONE.value, disk_controller="", custom_chs="")
+        return replace(
+            state,
+            img_system_format=False,
+            boot_mode=BootMode.NONE.value,
+            disk_controller="",
+            custom_chs="",
+            bios_drive_type="",
+            geometry_source=GeometrySource.SIZE.value,
+        )
     return state
 
 
@@ -317,6 +439,8 @@ def coerce_on_boot_change(state: FormState) -> FormState:
             disk_format=DiskFormat.FAT12.value,
             size_text="10M",
             bios_drive_type="phoenix:1",
+            geometry_source=GeometrySource.PRESET.value,
+            custom_chs="",
             img_system_format=False,
             ibm_dos_version=IBMDOSVersion.DOS33.value,
         )
@@ -328,6 +452,8 @@ def coerce_on_boot_change(state: FormState) -> FormState:
             disk_format=DiskFormat.FAT12.value,
             size_text="10M",
             bios_drive_type="phoenix:1",
+            geometry_source=GeometrySource.PRESET.value,
+            custom_chs="",
             img_system_format=False,
             ibm_dos_version=IBMDOSVersion.DOS33.value,
         )
@@ -339,6 +465,8 @@ def coerce_on_boot_change(state: FormState) -> FormState:
             disk_format=DiskFormat.FAT12.value,
             size_text="10M",
             bios_drive_type="phoenix:1",
+            geometry_source=GeometrySource.PRESET.value,
+            custom_chs="",
             img_system_format=False,
             ibm_dos_version=IBMDOSVersion.DOS33.value,
         )
@@ -352,6 +480,16 @@ def coerce_on_boot_change(state: FormState) -> FormState:
         state = replace(state, disk_controller="")
         if _is_vhd(state) and boot_mode is BootMode.IBM8088:
             state = apply_ibm_default_size(state, force=True)
+    # Default geometry source for the non-early-return branches is
+    # SIZE -- those branches snap size_text but not bios_drive_type
+    # or custom_chs, so the user lands on the simple static-size
+    # input.  Clear any stale preset / CHS so the state matches.
+    state = replace(
+        state,
+        geometry_source=GeometrySource.SIZE.value,
+        bios_drive_type="",
+        custom_chs="",
+    )
     state = _snap_format_for_boot_mode(state, force_preferred=True)
     return _snap_size_for_boot_mode(state)
 

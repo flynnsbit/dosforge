@@ -13,6 +13,7 @@ from dosforge.models import (
     DiskFormat,
     FloppyType,
     FreeDOSSource,
+    GeometrySource,
     IBMDOSVersion,
     MediaType,
     iter_bios_drive_types,
@@ -29,8 +30,13 @@ def test_default_vhd_visibility():
     assert f.FIELD_SIZE in vis
     assert f.FIELD_FORMAT in vis
     assert f.FIELD_DISK_CONTROLLER in vis
-    assert f.FIELD_BIOS_DRIVE in vis
-    assert f.FIELD_CUSTOM_CHS in vis
+    assert f.FIELD_GEOMETRY_SOURCE in vis
+    # v0.8.0 hierarchy: BIOS preset + custom CHS inputs only show
+    # when the geometry-source picker selects them.  Default state
+    # has geometry_source=SIZE so the static-size Input is visible
+    # and the other two stay hidden.
+    assert f.FIELD_BIOS_DRIVE not in vis
+    assert f.FIELD_CUSTOM_CHS not in vis
     assert f.FIELD_BOOT_MODE in vis
     assert f.FIELD_CUSTOM_PAYLOAD in vis
     assert f.FIELD_FLOPPY not in vis
@@ -43,6 +49,7 @@ def test_img_visibility_hides_vhd_only_controls():
     assert f.FIELD_SIZE not in vis
     assert f.FIELD_DISK_CONTROLLER not in vis
     assert f.FIELD_BIOS_DRIVE not in vis
+    assert f.FIELD_GEOMETRY_SOURCE not in vis
     assert f.FIELD_BOOT_MODE not in vis
 
 
@@ -71,16 +78,148 @@ def _first_bios_slug() -> str:
     return spec.slug
 
 
-def test_bios_preset_disables_and_fills_size():
-    state = _state(bios_drive_type=_first_bios_slug())
-    assert f.FIELD_SIZE in f.disabled_fields(state)
+def test_geometry_source_preset_shows_bios_drive_hides_size_and_chs():
+    """v0.8.0: picking 'BIOS preset' surfaces only the bios_drive
+    Input.  Size + custom CHS inputs are hidden so the user sees a
+    single source-of-truth."""
+    state = _state(
+        geometry_source=GeometrySource.PRESET.value,
+        bios_drive_type=_first_bios_slug(),
+    )
+    vis = f.visible_fields(state)
+    assert f.FIELD_BIOS_DRIVE in vis
+    assert f.FIELD_SIZE not in vis
+    assert f.FIELD_CUSTOM_CHS not in vis
+    # effective_size_text still returns the preset's size in MB.
     assert f.effective_size_text(state).endswith("M")
 
 
-def test_custom_chs_disables_and_fills_size():
-    state = _state(custom_chs="306,4,17")
-    assert f.FIELD_SIZE in f.disabled_fields(state)
+def test_geometry_source_custom_chs_shows_chs_hides_others():
+    """Picking 'Custom CHS' surfaces only the custom_chs Input."""
+    state = _state(
+        geometry_source=GeometrySource.CUSTOM_CHS.value,
+        custom_chs="306,4,17",
+    )
+    vis = f.visible_fields(state)
+    assert f.FIELD_CUSTOM_CHS in vis
+    assert f.FIELD_SIZE not in vis
+    assert f.FIELD_BIOS_DRIVE not in vis
     assert f.effective_size_text(state) == "10M"
+
+
+def test_disabled_fields_returns_empty_in_v080():
+    """disabled_fields() is a no-op in v0.8.0 -- the geometry-source
+    picker eliminates the need for the SIZE-disabled state by only
+    showing one input at a time.  Kept as no-op for backward compat."""
+    state = _state(bios_drive_type=_first_bios_slug())
+    assert f.disabled_fields(state) == set()
+    state = _state(custom_chs="306,4,17")
+    assert f.disabled_fields(state) == set()
+
+
+def test_infer_geometry_source_custom_chs_wins_over_preset():
+    """infer_geometry_source migrates pre-v0.8.0 / external states:
+    custom CHS wins over BIOS preset wins over static size."""
+    # custom_chs wins
+    state = _state(custom_chs="306,4,17", bios_drive_type=_first_bios_slug())
+    assert f.infer_geometry_source(state) is GeometrySource.CUSTOM_CHS
+    # bios preset wins over plain size
+    state = _state(bios_drive_type=_first_bios_slug())
+    assert f.infer_geometry_source(state) is GeometrySource.PRESET
+    # bare state falls back to size
+    assert f.infer_geometry_source(_state()) is GeometrySource.SIZE
+
+
+def test_coerce_geometry_source_size_clears_preset_and_chs():
+    """Switching back to 'Static size' clears the inactive inputs
+    so the state matches what's visible."""
+    state = _state(
+        geometry_source=GeometrySource.SIZE.value,
+        bios_drive_type=_first_bios_slug(),
+        custom_chs="306,4,17",
+    )
+    snapped = f.coerce_on_geometry_source_change(state)
+    assert snapped.bios_drive_type == ""
+    assert snapped.custom_chs == ""
+
+
+def test_coerce_geometry_source_preset_clears_custom_chs():
+    state = _state(
+        geometry_source=GeometrySource.PRESET.value,
+        custom_chs="306,4,17",
+    )
+    snapped = f.coerce_on_geometry_source_change(state)
+    assert snapped.custom_chs == ""
+
+
+def test_coerce_geometry_source_custom_chs_clears_preset():
+    state = _state(
+        geometry_source=GeometrySource.CUSTOM_CHS.value,
+        bios_drive_type=_first_bios_slug(),
+    )
+    snapped = f.coerce_on_geometry_source_change(state)
+    assert snapped.bios_drive_type == ""
+
+
+def test_coerce_boot_change_compaq2_snaps_geometry_source_to_preset():
+    """COMPAQ2 / PCDOS3 / COMPAQ3 snap a Phoenix Type 1 preset, so
+    geometry_source must also flip to PRESET so the right input is
+    visible in Step 2."""
+    for mode in (BootMode.COMPAQ2, BootMode.PCDOS3, BootMode.COMPAQ3):
+        snapped = f.coerce_on_boot_change(_state(boot_mode=mode.value))
+        assert snapped.geometry_source == GeometrySource.PRESET.value
+        assert snapped.bios_drive_type == "phoenix:1"
+        assert snapped.custom_chs == ""
+
+
+def test_coerce_boot_change_default_snaps_geometry_source_to_size():
+    """All non-preset boot modes snap geometry_source=SIZE and clear
+    any stale BIOS preset / custom CHS so the state matches the
+    visible static-size input."""
+    snapped = f.coerce_on_boot_change(
+        _state(
+            boot_mode=BootMode.MSDOS622.value,
+            bios_drive_type=_first_bios_slug(),
+            custom_chs="306,4,17",
+        )
+    )
+    assert snapped.geometry_source == GeometrySource.SIZE.value
+    assert snapped.bios_drive_type == ""
+    assert snapped.custom_chs == ""
+
+
+def test_geometry_preview_text_for_size():
+    state = _state(size_text="128M")
+    text = f.geometry_preview_text(state)
+    assert "128 MB" in text
+    assert "auto-derived" in text
+
+
+def test_geometry_preview_text_for_preset():
+    state = _state(
+        geometry_source=GeometrySource.PRESET.value,
+        bios_drive_type="phoenix:1",
+    )
+    text = f.geometry_preview_text(state)
+    assert "10 MB" in text
+    assert "306" in text
+    assert "spt" in text
+
+
+def test_geometry_preview_text_for_custom_chs():
+    state = _state(
+        geometry_source=GeometrySource.CUSTOM_CHS.value,
+        custom_chs="306,4,17",
+    )
+    text = f.geometry_preview_text(state)
+    assert "10 MB" in text
+    assert "306" in text
+
+
+def test_geometry_preview_text_empty_for_img():
+    """IMG mode has no VHD geometry, so the preview is empty."""
+    state = _state(media_type=MediaType.IMG.value)
+    assert f.geometry_preview_text(state) == ""
 
 
 def test_request_requires_path():

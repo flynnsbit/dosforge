@@ -99,6 +99,7 @@ class CreateView(ttk.Frame):
         # Combobox holders (widgets built lazily via factories below).
         self.combo_media = _Combo(opt.MEDIA_TYPE_OPTIONS, self._on_media_change)
         self.combo_controller = _Combo(opt.DISK_CONTROLLER_OPTIONS, self._on_change)
+        self.combo_geometry_source = _Combo(opt.GEOMETRY_SOURCE_OPTIONS, self._on_geometry_source_change)
         self.combo_bios = _Combo(opt.BIOS_DRIVE_TYPE_OPTIONS, self._on_change)
         self.combo_format = _Combo(opt.DISK_FORMAT_OPTIONS, self._on_format_change)
         self.combo_floppy = _Combo(opt.FLOPPY_OPTIONS, self._on_change)
@@ -192,20 +193,32 @@ class CreateView(ttk.Frame):
                         self.combo_media.build, row=0)
         self._add_field(mb, fl.FIELD_DISK_CONTROLLER, "Disk controller",
                         self.combo_controller.build, row=1)
+        # v0.8.0 hierarchical layout: Geometry source picks ONE of
+        # {Static size / BIOS preset / Custom CHS}; only the picked
+        # one's input is visible underneath.  Eliminates the previous
+        # confusion of three competing always-visible geometry fields.
+        self._add_field(mb, fl.FIELD_GEOMETRY_SOURCE, "Geometry source",
+                        self.combo_geometry_source.build, row=2)
         size_field = self._add_field(
             mb, fl.FIELD_SIZE, "Size (e.g. 512M, 32M, 1G)",
             lambda p: ttk.Entry(p, textvariable=self.var_size),
-            row=2,
+            row=3,
         )
         self._size_entry = size_field.control
-        self._add_field(mb, fl.FIELD_BIOS_DRIVE, "Geometry preset",
-                        self.combo_bios.build, row=3)
-        self._add_field(mb, fl.FIELD_CUSTOM_CHS, "Custom CHS",
-                        lambda p: ttk.Entry(p, textvariable=self.var_custom_chs), row=4)
+        self._add_field(mb, fl.FIELD_BIOS_DRIVE, "BIOS preset",
+                        self.combo_bios.build, row=4)
+        self._add_field(mb, fl.FIELD_CUSTOM_CHS, "Custom CHS (CYL,HEAD,SPT)",
+                        lambda p: ttk.Entry(p, textvariable=self.var_custom_chs), row=5)
+        # Live preview: cyl x head x spt + MB.  Updates on every
+        # change via _sync -> _refresh_geometry_preview.
+        self._geometry_preview_label = ttk.Label(
+            mb, text="", style="Muted.TLabel"
+        )
+        self._geometry_preview_label.grid(row=6, column=0, sticky="w", pady=(0, 4))
         self._add_field(mb, fl.FIELD_FORMAT, "Filesystem",
-                        self.combo_format.build, row=5)
+                        self.combo_format.build, row=7)
         self._add_field(mb, fl.FIELD_FLOPPY, "Floppy size",
-                        self.combo_floppy.build, row=6)
+                        self.combo_floppy.build, row=8)
         self._add_field(
             mb, fl.FIELD_IMG_SYSTEM_FORMAT, "",
             lambda p: ttk.Checkbutton(
@@ -215,7 +228,7 @@ class CreateView(ttk.Frame):
                 command=self._on_img_sysfmt_change,
                 takefocus=False,
             ),
-            row=7,
+            row=9,
         )
 
         # ── Card: Payload and extras ──────────────────────────────────
@@ -273,6 +286,7 @@ class CreateView(ttk.Frame):
         return fl.FormState(
             media_type=self.combo_media.get_value(),
             disk_controller=self.combo_controller.get_value(),
+            geometry_source=self.combo_geometry_source.get_value(),
             custom_chs=self.var_custom_chs.get(),
             output_path=self.var_path.get(),
             size_text=self.var_size.get(),
@@ -302,6 +316,7 @@ class CreateView(ttk.Frame):
     def _write_state_inner(self, state: fl.FormState) -> None:
         self.combo_media.set_value(state.media_type)
         self.combo_controller.set_value(state.disk_controller)
+        self.combo_geometry_source.set_value(state.geometry_source)
         self.var_custom_chs.set(state.custom_chs)
         self.var_path.set(state.output_path)
         self.var_size.set(state.size_text)
@@ -350,6 +365,11 @@ class CreateView(ttk.Frame):
     def _on_format_change(self) -> None:
         self._coerce(fl.coerce_on_format_change)
 
+    def _on_geometry_source_change(self) -> None:
+        """Clear inactive geometry inputs and refresh the layout when
+        the user picks a different geometry source."""
+        self._coerce(fl.coerce_on_geometry_source_change)
+
     def _on_ibm_change(self) -> None:
         self._coerce(fl.coerce_on_ibm_version_change)
 
@@ -362,7 +382,6 @@ class CreateView(ttk.Frame):
             return
         state = self._read_state()
         visible = fl.visible_fields(state)
-        disabled = fl.disabled_fields(state)
         always = {
             fl.FIELD_OUTPUT_PATH,
             fl.FIELD_VOLUME_LABEL,
@@ -372,11 +391,25 @@ class CreateView(ttk.Frame):
         for key, field in self._fields.items():
             field.set_visible(key in always or key in visible)
 
-        if fl.FIELD_SIZE in disabled:
-            self.var_size.set(fl.effective_size_text(state))
-            self._size_entry.configure(state="readonly")
-        else:
-            self._size_entry.configure(state="normal")
+        # v0.8.0: disabled_fields() is a no-op (geometry-source picker
+        # eliminates the SIZE-disabled state), so the size Entry is
+        # always editable when visible.  Keep explicit normal-state
+        # in case an older state set it readonly via some other path.
+        self._size_entry.configure(state="normal")
+
+        # Live geometry preview directly under the geometry-source
+        # picker; empty for IMG mode or invalid inputs.
+        try:
+            preview_text = fl.geometry_preview_text(state)
+            self._geometry_preview_label.configure(text=preview_text)
+            # Hide the label entirely when there's nothing to show
+            # (IMG mode, empty inputs) so we don't leave dead space.
+            if preview_text:
+                self._geometry_preview_label.grid()
+            else:
+                self._geometry_preview_label.grid_remove()
+        except Exception:
+            pass
 
         self._refresh_summary(state)
 

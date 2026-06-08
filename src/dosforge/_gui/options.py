@@ -13,6 +13,7 @@ from ..models import (
     DiskFormat,
     FloppyType,
     FreeDOSSource,
+    GeometrySource,
     IBMDOSVersion,
     MSDOSInstallProfile,
     DiskController,
@@ -29,6 +30,12 @@ DISK_CONTROLLER_OPTIONS = [
     ("Auto-detect from boot mode", ""),
     ("IDE (AT-class)", DiskController.IDE.value),
     ("MFM (XT-class, ST-225 era)", DiskController.MFM.value),
+]
+
+GEOMETRY_SOURCE_OPTIONS = [
+    ("Static size (auto geometry)", GeometrySource.SIZE.value),
+    ("BIOS preset (Phoenix / AMI type table)", GeometrySource.PRESET.value),
+    ("Custom CHS (cylinders, heads, sectors)", GeometrySource.CUSTOM_CHS.value),
 ]
 
 

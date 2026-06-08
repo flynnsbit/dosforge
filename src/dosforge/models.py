@@ -238,6 +238,23 @@ class BIOSVendor(str, Enum):
     AMI     = "ami"
 
 
+class GeometrySource(str, Enum):
+    """Which input governs the VHD's effective on-disk geometry.
+
+    Added in v0.8.0 to make the Step 2 (Media) controls hierarchical:
+    the user picks a geometry source first, then sees only the
+    relevant input(s) underneath.  The backend already supported the
+    same 3-way precedence implicitly through ``disabled_fields()``
+    and the ``CreateRequest`` validation chain (custom CHS wins over
+    BIOS preset, BIOS preset wins over static size); this enum just
+    exposes that precedence as a top-level UI control.
+    """
+
+    SIZE = "size"             # static-size text Input
+    PRESET = "preset"         # BIOS preset dropdown
+    CUSTOM_CHS = "custom_chs"  # custom CYL/HEAD/SPT
+
+
 @dataclass(frozen=True, slots=True)
 class BIOSDriveSpec:
     vendor: BIOSVendor

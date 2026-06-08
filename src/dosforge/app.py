@@ -44,6 +44,7 @@ from .models import (
     DiskFormat,
     FloppyType,
     FreeDOSSource,
+    GeometrySource,
     IBMDOSVersion,
     MSDOSInstallProfile,
     DiskController,
@@ -147,6 +148,12 @@ _DISK_CONTROLLER_OPTIONS = [
     ("Auto-detect from boot mode", ""),
     ("IDE (AT-class)", DiskController.IDE.value),
     ("MFM (XT-class, ST-225 era)", DiskController.MFM.value),
+]
+
+_GEOMETRY_SOURCE_OPTIONS = [
+    ("Static size (auto geometry)", GeometrySource.SIZE.value),
+    ("BIOS preset (Phoenix / AMI type table)", GeometrySource.PRESET.value),
+    ("Custom CHS (cylinders, heads, sectors)", GeometrySource.CUSTOM_CHS.value),
 ]
 
 _BIOS_CUSTOM_VALUE = ""
@@ -601,13 +608,19 @@ class DosForgeApp(App[None]):
                                         id="create-path",
                                     )
                                     yield Button("...", id="browse-create-path-btn", classes="btn-ghost")
+                                yield Label("Geometry source", id="geometry-source-label")
+                                yield SingleClickSelect(
+                                    options=_GEOMETRY_SOURCE_OPTIONS,
+                                    value=GeometrySource.SIZE.value,
+                                    id="geometry-source",
+                                )
                                 yield Label("Static size", id="create-size-label")
                                 yield Input(
                                     value="512M",
                                     placeholder="Static size (for example: 512M)",
                                     id="create-size",
                                 )
-                                yield Label("BIOS preset (locks size to exact CHS)", id="bios-drive-type-label")
+                                yield Label("BIOS preset (Phoenix / AMI type table)", id="bios-drive-type-label")
                                 yield SingleClickSelect(
                                     options=_BIOS_DRIVE_TYPE_OPTIONS,
                                     value=_BIOS_CUSTOM_VALUE,
@@ -618,6 +631,12 @@ class DosForgeApp(App[None]):
                                     placeholder="CYL,HEAD,SPT (for example 306,4,17)",
                                     id="custom-chs",
                                 )
+                                # Live geometry preview (auto-updated by
+                                # _sync_create_form_visibility -> _refresh_geometry_preview).
+                                # Shows the effective MB + cyl/head/spt
+                                # so the user sees what they'll get before
+                                # clicking Create.
+                                yield Static("", id="geometry-preview")
                                 yield Label("Filesystem", id="create-format-label")
                                 yield SingleClickSelect(
                                     options=[
@@ -936,12 +955,20 @@ class DosForgeApp(App[None]):
                 self.query_one("#boot-mode", Select).value = BootMode.NONE.value
                 self.query_one("#disk-controller", Select).value = ""
                 self.query_one("#custom-chs", Input).value = ""
+                self.query_one("#bios-drive-type", Select).value = _BIOS_CUSTOM_VALUE
+                self.query_one("#geometry-source", Select).value = GeometrySource.SIZE.value
             self._sync_create_form_visibility()
             return
         if event.select.id == "disk-controller":
             self._sync_create_form_visibility()
             return
         if event.select.id == "bios-drive-type":
+            self._sync_create_form_visibility()
+            return
+        if event.select.id == "geometry-source":
+            # User picked a different geometry source -- clear the
+            # inactive inputs so the state matches what's visible.
+            self._apply_geometry_source_snap()
             self._sync_create_form_visibility()
             return
         if event.select.id == "boot-mode":
@@ -974,6 +1001,22 @@ class DosForgeApp(App[None]):
             if not event.value:
                 self.query_one("#boot-mode", Select).value = BootMode.NONE.value
             self._sync_create_form_visibility()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Refresh the live geometry preview as the user types.
+
+        Only the inputs that feed ``geometry_preview_text`` trigger a
+        re-sync; everything else lets the natural event flow run so
+        we don't thrash on every keystroke.
+        """
+        if len(self.query("#create-path")) == 0:
+            return
+        if event.input.id in ("create-size", "custom-chs"):
+            try:
+                preview = self.query_one("#geometry-preview", Static)
+                preview.update(fl.geometry_preview_text(self._current_form_state()))
+            except Exception:
+                pass
 
     def _sync_create_form_visibility(self) -> None:
         if len(self.query("#create-path")) == 0:
@@ -1016,23 +1059,27 @@ class DosForgeApp(App[None]):
         show_freedos_url = show_freedos and freedos_source is FreeDOSSource.AUTO
 
         bios_drive_slug = cast(str, self.query_one("#bios-drive-type", Select).value)
-        bios_drive_active = bool(bios_drive_slug)
+        geometry_source_value = cast(str, self.query_one("#geometry-source", Select).value)
+        try:
+            geometry_source = GeometrySource(geometry_source_value)
+        except ValueError:
+            geometry_source = GeometrySource.SIZE
 
         self.query_one("#create-title", Label).update("Create fixed-size VHD" if is_vhd else "Create floppy IMG")
         self.query_one("#create-path", Input).placeholder = (
             "Path (for example: ~/vhd/disk.vhd)" if is_vhd else "Path (for example: ~/floppy/disk.img)"
         )
         self.query_one("#create-btn", Button).label = "Create + format VHD" if is_vhd else "Create + format IMG"
-        # Size + format are user-controlled only for generic VHD targets
-        # with no fixed-geometry preset. MartyPC presets and BIOS Type N
-        # presets both lock size to an exact CHS, so the size input is
-        # hidden / read-only for those.
+
+        # v0.8.0 geometry-source picker hierarchy: each value surfaces
+        # only one of the three inputs (static size / BIOS preset /
+        # custom CHS).  When the user picks BIOS preset, mirror the
+        # preset's MB into the size Input as a hidden audit trail
+        # (the size Input is hidden in this branch but
+        # `effective_size_text()` / `build_create_request()` still
+        # read from formlogic.geometry_source-aware code).
         size_input = self.query_one("#create-size", Input)
-        size_input.display = is_vhd
-        custom_chs_active = bool(self.query_one("#custom-chs", Input).value.strip())
-        if is_vhd and bios_drive_active:
-            # Surface the BIOS preset's size in the input box, read-only,
-            # so the user can see what they'll get.
+        if is_vhd and geometry_source is GeometrySource.PRESET and bios_drive_slug:
             try:
                 vendor, type_id = parse_bios_drive_slug(bios_drive_slug)
                 spec = lookup_bios_drive_type(vendor, type_id)
@@ -1040,11 +1087,7 @@ class DosForgeApp(App[None]):
                 spec = None
             if spec is not None:
                 size_input.value = f"{spec.size_mb}M"
-                size_input.disabled = True
-            else:
-                size_input.disabled = False
-        else:
-            size_input.disabled = custom_chs_active
+        size_input.disabled = False  # legacy disabled-state retired in v0.8.0
 
         # Pair each widget with its Label so the label hides too when the
         # widget hides. Otherwise you get orphan labels like "Floppy size"
@@ -1062,12 +1105,21 @@ class DosForgeApp(App[None]):
 
         _toggle("create-format", "create-format-label", is_vhd)
         _toggle("disk-controller", "disk-controller-label", is_vhd)
-        _toggle("bios-drive-type", "bios-drive-type-label", is_vhd)
-        _toggle("custom-chs", "custom-chs-label", is_vhd)
-        # Hide the "Static size" label whenever the size input is hidden
-        # (MartyPC fixed-geometry targets).
+        _toggle("geometry-source", "geometry-source-label", is_vhd)
+        # Conditional geometry inputs -- only one is visible at a time,
+        # driven by the geometry-source Select.
+        show_size_input = is_vhd and geometry_source is GeometrySource.SIZE
+        show_bios_preset = is_vhd and geometry_source is GeometrySource.PRESET
+        show_custom_chs = is_vhd and geometry_source is GeometrySource.CUSTOM_CHS
+        _toggle("create-size", "create-size-label", show_size_input)
+        _toggle("bios-drive-type", "bios-drive-type-label", show_bios_preset)
+        _toggle("custom-chs", "custom-chs-label", show_custom_chs)
+        # Live geometry preview (always visible in VHD mode, even when
+        # the input is empty -- empty preview just renders as blank).
         try:
-            self.query_one("#create-size-label").display = is_vhd
+            preview = self.query_one("#geometry-preview", Static)
+            preview.display = is_vhd
+            preview.update(fl.geometry_preview_text(self._current_form_state()))
         except Exception:
             pass
         _toggle("floppy-type", "floppy-type-label", not is_vhd)
@@ -1932,6 +1984,7 @@ class DosForgeApp(App[None]):
         return fl.FormState(
             media_type=cast(str, self.query_one("#media-type", Select).value),
             disk_controller=cast(str, self.query_one("#disk-controller", Select).value),
+            geometry_source=cast(str, self.query_one("#geometry-source", Select).value),
             custom_chs=self.query_one("#custom-chs", Input).value,
             output_path=self.query_one("#create-path", Input).value,
             size_text=self.query_one("#create-size", Input).value,
@@ -1972,8 +2025,27 @@ class DosForgeApp(App[None]):
             self.query_one("#create-size", Input).value = snapped.size_text
         if snapped.bios_drive_type != state.bios_drive_type:
             self.query_one("#bios-drive-type", Select).value = snapped.bios_drive_type
+        if snapped.custom_chs != state.custom_chs:
+            self.query_one("#custom-chs", Input).value = snapped.custom_chs
+        if snapped.geometry_source != state.geometry_source:
+            self.query_one("#geometry-source", Select).value = snapped.geometry_source
         if snapped.boot_assets != state.boot_assets:
             self.query_one("#boot-assets", Input).value = snapped.boot_assets
+        self._clear_status()
+
+    def _apply_geometry_source_snap(self) -> None:
+        """Clear the inactive geometry inputs when the user changes source.
+
+        Mirrors :func:`formlogic.coerce_on_geometry_source_change` so
+        only the picked source's field is populated, matching what's
+        visible in the wizard.
+        """
+        state = self._current_form_state()
+        snapped = fl.coerce_on_geometry_source_change(state)
+        if snapped.bios_drive_type != state.bios_drive_type:
+            self.query_one("#bios-drive-type", Select).value = snapped.bios_drive_type
+        if snapped.custom_chs != state.custom_chs:
+            self.query_one("#custom-chs", Input).value = snapped.custom_chs
         self._clear_status()
 
     def _apply_format_snap(self) -> None:
