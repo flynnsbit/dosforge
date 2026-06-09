@@ -81,22 +81,76 @@ from dosforge.models import (  # noqa: E402
 # their range; we pick a size that's large enough to exercise the
 # format but small enough to keep the smoke run fast.
 # ---------------------------------------------------------------------------
+# Per-boot-mode VHD sizing.  Most modes can boot from any size in
+# their range; we pick a size that's large enough to exercise the
+# format but small enough to keep the smoke run fast.
+#
+# IMPORTANT: dosforge's MFM-controller auto-detect snaps size_bytes
+# to XT-class Type 1 (10 MiB) BEFORE format validation runs, so any
+# mode that defaults to MFM controller will fail FAT16 ≥16 MiB unless
+# we pass an explicit --bios-drive-type ≥ 16 MiB.  See
+# disk.py:_validate_mfm_request + _xt_class_geometry.
+# ---------------------------------------------------------------------------
 _DEFAULT_SIZE: dict[tuple[BootMode, DiskFormat], str] = {
     # Legacy DOS modes with hard caps
     (BootMode.IBM8088, DiskFormat.FAT16): "32M",      # max 32M @ DOS33; works for DOS50 too
     (BootMode.MSDOS33, DiskFormat.FAT16): "32M",
     (BootMode.MSDOS33, DiskFormat.FAT12): "10M",      # MFM Type 1 only
-    (BootMode.MSDOS331, DiskFormat.FAT16): "128M",
+    (BootMode.MSDOS331, DiskFormat.FAT16): "32M",     # capped at 32 MiB
     (BootMode.COMPAQ331, DiskFormat.FAT16): "128M",
-    (BootMode.COMPAQ2, DiskFormat.FAT16): "10M",      # Xebec Type 1 only
-    (BootMode.COMPAQ3, DiskFormat.FAT16): "10M",      # Xebec Type 1 only
     (BootMode.PCDOS, DiskFormat.FAT16): "32M",
-    (BootMode.PCDOS3, DiskFormat.FAT16): "32M",
+    (BootMode.PCDOS7, DiskFormat.FAT16): "128M",
+    # PC-DOS 7.1 FORMAT32 requires ≥1 GiB for FAT32 (FAT16 still OK at 32M).
+    (BootMode.PCDOS71, DiskFormat.FAT16): "32M",
+    (BootMode.PCDOS71, DiskFormat.FAT32): "1G",
+    (BootMode.DRDOS6, DiskFormat.FAT16): "32M",       # 32 MiB cap (DR DOS 6.0)
+    (BootMode.DRDOS7, DiskFormat.FAT16): "128M",      # FAT16B / BIGDOS up to 2 GiB
 }
 _VHD_DEFAULT_BY_FORMAT: dict[DiskFormat, str] = {
     DiskFormat.FAT12: "10M",
     DiskFormat.FAT16: "128M",
     DiskFormat.FAT32: "256M",
+}
+
+# Modes whose VHD path snaps to MFM Type 1 (10 MiB) unless we override
+# with a larger ami:N type.  ami:45 ≈ 68 MiB (16 heads, 17 spt, 512 cyl)
+# and accommodates FAT16 ≥16 MiB.
+_FORCE_BIOS_DRIVE_TYPE: dict[BootMode, str] = {
+    BootMode.IBM8088: "ami:45",
+    BootMode.PCDOS: "ami:45",
+    BootMode.MSDOS33: "ami:45",
+}
+
+# Boot modes whose IMG (floppy) output path is NOT implemented in
+# dosforge -- BootAssetResolver.resolve() raises "Unsupported boot
+# mode" or _LegacyDosInstallDescriptor requires a hard-disk target.
+# Script pre-skips these instead of running into a guaranteed
+# "Unsupported boot mode" exit code.
+_IMG_UNSUPPORTED_MODES: set[BootMode] = {
+    BootMode.DRDOS6,
+    BootMode.DRDOS7,
+    BootMode.MSDOS6,    # no static install template; needs VHD QEMU loop
+    BootMode.MSDOS71,   # OSR2; requires local boot assets, not a CLI-only path
+    BootMode.PCDOS,
+    BootMode.PCDOS2000,
+    BootMode.PCDOS3,
+    BootMode.COMPAQ3,
+}
+
+# Per-mode dosassets/<dir>/ install-media probe.  Map of boot mode
+# -> list of (subdir, [filename glob fragments]) the resolver needs
+# to satisfy this boot mode at build time.  If the listed file(s)
+# are absent the case is skipped with status SKIP-asset rather than
+# producing a FAIL log.
+_REQUIRED_ASSET_GLOBS: dict[BootMode, list[str]] = {
+    BootMode.COMPAQ2: ["compaq2/*.7z", "compaq2/*.zip", "compaq2/*.IMG", "compaq2/*.img"],
+    BootMode.COMPAQ3: ["compaq3/*.7z", "compaq3/*.zip", "compaq3/*.IMG", "compaq3/*.img"],
+    BootMode.DRDOS6: ["drdos6/*.7z", "drdos6/*.zip", "drdos6/*.IMG", "drdos6/*.img"],
+    BootMode.DRDOS7: ["drdos7/*.7z", "drdos7/*.zip", "drdos7/*.IMG", "drdos7/*.img"],
+    BootMode.PCDOS: ["pcdos/*.IMG", "pcdos/*.img", "pcdos/*.7z", "pcdos/*.zip"],
+    BootMode.PCDOS3: ["pcdos3/*.IMG", "pcdos3/*.img", "pcdos3/*.7z", "pcdos3/*.zip"],
+    BootMode.MSDOS6: ["msdos6/*.IMG", "msdos6/*.img", "msdos6/*.7z", "msdos6/*.zip"],
+    BootMode.PCDOS2000: ["pcdos2000/*.IMG", "pcdos2000/*.img", "pcdos2000/*.7z", "pcdos2000/*.zip"],
 }
 
 
@@ -241,6 +295,7 @@ _DEFAULT_FLOPPY: dict[BootMode, FloppyType] = {
     BootMode.PCDOS: FloppyType.F360K,
     BootMode.PCDOS3: FloppyType.F360K,
     BootMode.COMPAQ2: FloppyType.F360K,
+    BootMode.COMPAQ3: FloppyType.F360K,
 }
 
 
@@ -327,13 +382,24 @@ def _build_argv(
         if case.boot_mode is BootMode.FREEDOS:
             argv += ["--freedos-source", "auto"]
 
-    # Per-mode controller hints
-    if case.media_type is MediaType.VHD and case.boot_mode in {
-        BootMode.COMPAQ2,
-        BootMode.COMPAQ3,
-        BootMode.IBM8088,
-    }:
-        argv += ["--disk-controller", "mfm"]
+    # 4DOS is a shell overlay -- it needs a host DOS to live on top
+    # of.  Default to MS-DOS 7.10 (Win95 OSR2) for the largest
+    # surface area; user can override per-case if needed.
+    if case.boot_mode is BootMode.FOURDOS:
+        argv += ["--host-boot-mode", BootMode.MSDOS71.value]
+
+    # IBM8088 defaults to DOS 3.3 (FAT12, ≤32 MiB, MFM Type 1).
+    # For the FAT16 VHD case we need DOS 5.0 + an AT-class BIOS preset
+    # so the matrix tests the dos50 install path.
+    if case.boot_mode is BootMode.IBM8088 and case.media_type is MediaType.VHD:
+        argv += ["--ibm-dos-version", "dos50"]
+
+    # MFM auto-detect snaps size to XT Type 1 (10 MiB).  Override
+    # with a larger ami:N type for modes that need FAT16 ≥ 16 MiB.
+    if case.media_type is MediaType.VHD:
+        bios_type = _FORCE_BIOS_DRIVE_TYPE.get(case.boot_mode)
+        if bios_type:
+            argv += ["--bios-drive-type", bios_type]
 
     # Install profile
     if case.boot_mode is not BootMode.NONE:
@@ -353,10 +419,41 @@ class BuildResult:
     returncode: int
     duration_s: float
     log_path: Path
+    skip_reason: str | None = None  # None = ran; non-None = pre-skipped
 
     @property
     def passed(self) -> bool:
+        if self.skip_reason is not None:
+            return False
         return self.returncode == 0 and self.out_path.exists()
+
+    @property
+    def skipped(self) -> bool:
+        return self.skip_reason is not None
+
+
+def _check_skip_reason(case: E2ECase) -> str | None:
+    """Return a human-readable skip reason if dosforge cannot build
+    this case in the current environment, else None.  Pre-skipping
+    keeps the FAIL count honest (it's reserved for actual regressions)
+    and surfaces user-action-required items in the manifest."""
+    # IMG dispatcher gap for certain boot modes.
+    if case.media_type is MediaType.IMG and case.boot_mode in _IMG_UNSUPPORTED_MODES:
+        return f"IMG floppy build path is not implemented for {case.boot_mode.value}"
+
+    # Per-mode install media probe (dosassets/<mode>/).
+    globs = _REQUIRED_ASSET_GLOBS.get(case.boot_mode)
+    if globs:
+        assets_root = _REPO_ROOT / "dosassets"
+        for g in globs:
+            if any(assets_root.glob(g)):
+                break
+        else:
+            return (
+                f"Local install media missing -- drop a WinWorldPC/IBM "
+                f"archive into dosassets/{case.boot_mode.value}/"
+            )
+    return None
 
 
 def _run_case(
@@ -377,6 +474,10 @@ def _run_case(
 
     out_path = subdir / f"{case.id}.{ext}"
     log_path = log_root / f"{case.id}.log"
+
+    skip_reason = _check_skip_reason(case)
+    if skip_reason is not None:
+        return BuildResult(case, out_path, [], 0, 0.0, log_path, skip_reason=skip_reason)
 
     argv = _build_argv(case, dosforge, out_path)
     if argv is None:
@@ -418,7 +519,7 @@ def _write_manifest(
 
     # VHD table
     vhd = sorted(
-        [r for r in results if r.case.media_type is MediaType.VHD],
+        [r for r in results if r.case.media_type is MediaType.VHD and not r.skipped],
         key=lambda r: (r.case.boot_mode.value, r.case.disk_format.value if r.case.disk_format else ""),
     )
     if vhd:
@@ -442,7 +543,7 @@ def _write_manifest(
 
     # IMG table
     img = sorted(
-        [r for r in results if r.case.media_type is MediaType.IMG],
+        [r for r in results if r.case.media_type is MediaType.IMG and not r.skipped],
         key=lambda r: (r.case.boot_mode.value, r.case.floppy_type.value if r.case.floppy_type else ""),
     )
     if img:
@@ -464,13 +565,29 @@ def _write_manifest(
         lines.append("")
 
     # Build failures
-    failed = [r for r in results if not r.passed]
+    failed = [r for r in results if not r.passed and not r.skipped]
     if failed:
         lines.append("## Build failures (do NOT boot — investigate first)")
         lines.append("")
         for r in failed:
             log_rel = r.log_path.relative_to(out_root)
             lines.append(f"- `{r.case.id}` → exit {r.returncode}, log: `{log_rel}`")
+        lines.append("")
+
+    # Pre-skipped (user action required, or unsupported by builder)
+    pre_skipped = [r for r in results if r.skipped]
+    if pre_skipped:
+        lines.append("## Skipped — user action required or unsupported")
+        lines.append("")
+        lines.append(
+            "These cases were pre-skipped before invoking dosforge, "
+            "either because the boot mode's code path doesn't support "
+            "the requested media type or because local install assets "
+            "are missing.  Address the reason and re-run."
+        )
+        lines.append("")
+        for r in pre_skipped:
+            lines.append(f"- `{r.case.id}` — {r.skip_reason}")
         lines.append("")
 
     if skipped:
@@ -495,13 +612,15 @@ def _write_manifest(
 
 def _write_summary(out_root: Path, results: list[BuildResult]) -> None:
     passed = sum(1 for r in results if r.passed)
-    failed = len(results) - passed
+    skipped = sum(1 for r in results if r.skipped)
+    failed = len(results) - passed - skipped
     total_s = sum(r.duration_s for r in results)
     lines = [
         f"dosforge v{DOSFORGE_VERSION} smoke matrix build summary",
         "=" * 60,
         f"Total cases : {len(results)}",
         f"Built OK    : {passed}",
+        f"Skipped     : {skipped}",
         f"Failed      : {failed}",
         f"Total time  : {total_s:.1f}s",
         "",
@@ -509,8 +628,14 @@ def _write_summary(out_root: Path, results: list[BuildResult]) -> None:
     if failed:
         lines.append("Failures:")
         for r in results:
-            if not r.passed:
+            if not r.passed and not r.skipped:
                 lines.append(f"  - {r.case.id}  exit={r.returncode}  log={r.log_path}")
+    if skipped:
+        lines.append("")
+        lines.append("Skipped (user action required):")
+        for r in results:
+            if r.skipped:
+                lines.append(f"  - {r.case.id}  {r.skip_reason}")
     (out_root / "SUMMARY.txt").write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -606,9 +731,14 @@ def main() -> int:
         results.append(result)
         if args.dry_run:
             continue
-        status = "✅ PASS" if result.passed else f"❌ FAIL exit={result.returncode}"
+        if result.skipped:
+            status = f"⏭️  SKIP  ({result.skip_reason})"
+        elif result.passed:
+            status = "✅ PASS"
+        else:
+            status = f"❌ FAIL exit={result.returncode}"
         print(f"    {status}  ({result.duration_s:.1f}s)  → {result.out_path}")
-        if not result.passed and args.stop_on_failure:
+        if not result.passed and not result.skipped and args.stop_on_failure:
             print("\n--stop-on-failure: aborting", file=sys.stderr)
             break
 
@@ -619,11 +749,16 @@ def main() -> int:
     manifest = _write_manifest(out_root, results, skipped)
     _write_summary(out_root, results)
     passed = sum(1 for r in results if r.passed)
+    skipped_n = sum(1 for r in results if r.skipped)
+    failed_n = len(results) - passed - skipped_n
     print()
-    print(f"Built {passed}/{len(results)} successfully.")
+    print(
+        f"Built {passed}/{len(results)} successfully "
+        f"({skipped_n} skipped, {failed_n} failed)."
+    )
     print(f"Manifest: {manifest}")
     print(f"Summary:  {out_root / 'SUMMARY.txt'}")
-    return 0 if passed == len(results) else 1
+    return 0 if failed_n == 0 else 1
 
 
 if __name__ == "__main__":

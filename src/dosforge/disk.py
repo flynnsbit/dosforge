@@ -1450,6 +1450,11 @@ class DiskManager:
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.COMPAQ331,
+            # DR-DOS family: FORMAT.COM cannot build a FAT32 system.
+            # Reject up front instead of waiting 5 min for the QEMU
+            # install loop to time out.
+            BootMode.DRDOS6,
+            BootMode.DRDOS7,
         }
         if request.boot_mode in legacy_fat16_modes and request.disk_format is not DiskFormat.FAT16:
             raise ValidationError("Legacy DOS boot profiles support FAT16 only.")

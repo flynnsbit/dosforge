@@ -4,6 +4,12 @@ from dosforge.models import BootMode, DiskFormat, MediaType
 
 from dosforge.e2e_matrix import generate_e2e_cases, valid_e2e_cases
 
+# Boot modes whose install media is FAT12-only and therefore have
+# no valid VHD case at all in the matrix (the matrix only emits
+# FAT16/FAT32 VHDs).  Kept in sync with
+# ``dosforge.e2e_matrix._FAT12_ONLY_NO_VHD``.
+_FAT12_ONLY_NO_VHD = {BootMode.COMPAQ2, BootMode.COMPAQ3, BootMode.PCDOS3}
+
 
 def test_valid_e2e_matrix_has_unique_case_ids() -> None:
     cases = valid_e2e_cases()
@@ -14,7 +20,7 @@ def test_valid_e2e_matrix_has_unique_case_ids() -> None:
 def test_valid_e2e_matrix_covers_all_boot_modes_for_vhd() -> None:
     cases = [case for case in valid_e2e_cases() if case.media_type is MediaType.VHD]
     covered = {case.boot_mode for case in cases}
-    assert covered == set(BootMode)
+    assert covered == set(BootMode) - _FAT12_ONLY_NO_VHD
 
 
 def test_valid_e2e_matrix_covers_all_boot_modes_for_img_system_format() -> None:

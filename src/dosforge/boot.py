@@ -738,6 +738,15 @@ class BootAssetResolver:
                 search_roots=search_roots,
                 exclude_paths=(request.path.expanduser().resolve(),),
             )
+
+        # Floppy IMG targets (≤2.88 MB) can't fit the FDOS/BIN tree
+        # (~66 utilities, easily >5 MiB).  Strip the payload directory
+        # so only KERNEL.SYS + COMMAND.COM (and any optional FreeDOS
+        # system files) land on the floppy; the BIN tree belongs only
+        # on hard-disk targets.  Without this clamp, _copy_payload_via_mount
+        # crashes with ENOSPC mid-shutil.copy2 once the FAT12 fills up.
+        if request.media_type is MediaType.IMG and assets.fdos_payload_dir is not None:
+            assets = replace(assets, fdos_payload_dir=None)
         return assets
 
     def _resolve_freedos_from_directory(self, directory: Path, disk_format: DiskFormat) -> BootAssets:

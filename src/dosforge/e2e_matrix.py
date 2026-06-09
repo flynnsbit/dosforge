@@ -24,6 +24,25 @@ _LEGACY_FAT16_ONLY = {
     BootMode.PCDOS,
     BootMode.PCDOS7,
     BootMode.COMPAQ331,
+    # DR-DOS family: FAT12/FAT16 only (no FAT32 install path).
+    # FORMAT.COM in these DOSes cannot create a FAT32 system; the
+    # in-QEMU install loop just hangs for 5 minutes waiting for a
+    # marker that never lands.
+    BootMode.DRDOS6,
+    BootMode.DRDOS7,
+    # IBM PC-DOS 2000 is a re-release of PC-DOS 7.0 (1998) -- FAT12/FAT16
+    # only, no FAT32 install path.
+    BootMode.PCDOS2000,
+}
+
+# Boot modes whose install media is FAT12-only and therefore have no
+# valid VHD case at all (the matrix emits FAT16/FAT32 for VHDs).
+# These appear ONLY as IMG floppies (or as MartyPC-only VHDs handled
+# outside the standard matrix).
+_FAT12_ONLY_NO_VHD = {
+    BootMode.COMPAQ2,   # 1984 era; 360k DSDD or MartyPC Xebec 10MiB
+    BootMode.COMPAQ3,   # 1985 era; FAT12 ≤16 MiB
+    BootMode.PCDOS3,    # 1984; FAT12 ≤16 MiB
 }
 
 
@@ -57,6 +76,10 @@ def generate_e2e_cases() -> list[E2ECase]:
     cases: list[E2ECase] = []
 
     for boot_mode in BootMode:
+        # Modes whose install media is FAT12-only have no valid VHD
+        # case in the matrix (we only emit FAT16/FAT32 VHDs).
+        if boot_mode in _FAT12_ONLY_NO_VHD:
+            continue
         formats = [DiskFormat.FAT16, DiskFormat.FAT32]
         if boot_mode in _LEGACY_FAT16_ONLY:
             formats = [DiskFormat.FAT16]
@@ -121,6 +144,8 @@ def _is_valid_case(case: E2ECase) -> bool:
         return True
 
     if case.disk_format is None:
+        return False
+    if case.boot_mode in _FAT12_ONLY_NO_VHD:
         return False
     if case.boot_mode in _LEGACY_FAT16_ONLY and case.disk_format is not DiskFormat.FAT16:
         return False
