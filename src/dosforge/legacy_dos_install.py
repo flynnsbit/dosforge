@@ -138,6 +138,14 @@ class LegacyDosInstallProfile:
     ENTER suffices as a placeholder. Profiles can override if their
     SYS variant prompts for confirmation."""
 
+    format_extra_args: bytes = b""
+    """Extra command-line arguments appended to ``FORMAT C:`` (raw
+    bytes, including any leading space). Required for DR-DOS 6/7
+    whose ``FORMAT.COM`` refuses to format a fixed disk without
+    ``/X`` ("Option /X must be specified when formatting a fixed
+    disk"). Default empty preserves the existing MS-DOS / PC-DOS /
+    Compaq behavior byte-for-byte."""
+
     supplementary_disk_images: tuple[Path, ...] = ()
     """Additional disk images whose contents should be merged into
     the boot floppy before injecting AUTOEXEC.BAT. Used for legacy
@@ -354,11 +362,19 @@ def drdos6_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
         required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
         install_method="format",
         timeout_seconds=300.0,
-        # DR-DOS 6.0 FORMAT.COM prompts:
-        #   "Enter volume label (11 characters, ENTER for none)?"
+        # DR-DOS 6.0 FORMAT.COM /X prompts (the /X flag is REQUIRED
+        # for fixed-disk formatting -- without it FORMAT bails with
+        # "Option /X must be specified when formatting a fixed
+        # disk"):
+        #   "WARNING! All data on non-removable disk drive C: will
+        #    be lost!"
         #   "Proceed with format (Y/N)?"
-        # An empty volume label + Y handles both.
-        format_yes_input=b"\r\nY\r\n\r\n",
+        #   (after format)
+        #   "Enter volume label (11 characters, ENTER for none)?"
+        # Y + ENTER + ENTER handles both prompts; the extra leading
+        # \r\n absorbs any pre-prompt newline DR-DOS may consume.
+        format_yes_input=b"Y\r\n\r\n\r\n",
+        format_extra_args=b" /X",
         # DR-DOS 6 FDISK has /MBR but we let dosforge write its own
         # generic MBR (DR-DOS FDISK /MBR writes a DR-DOS-flavored MBR
         # that's not necessary for boot -- the VBR is what FORMAT C: /S
@@ -410,11 +426,15 @@ def drdos7_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
         required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
         install_method="format",
         timeout_seconds=300.0,
-        # DR-DOS 7.03 FORMAT.COM prompts (same as DR-DOS 6):
-        #   "Enter volume label (11 characters, ENTER for none)?"
+        # DR-DOS 7.03 FORMAT.COM /X prompts (same as DR-DOS 6 -- /X
+        # is REQUIRED for fixed-disk formatting):
+        #   "WARNING! All data on non-removable disk drive C: will
+        #    be lost!"
         #   "Proceed with format (Y/N)?"
-        # Empty label + Y handles both.
-        format_yes_input=b"\r\nY\r\n\r\n",
+        #   "Enter volume label (11 characters, ENTER for none)?"
+        # Y + ENTER handles both prompts.
+        format_yes_input=b"Y\r\n\r\n\r\n",
+        format_extra_args=b" /X",
         # DR-DOS 7 FDISK has /MBR; dosforge writes its own generic
         # MBR (the VBR is what makes the partition bootable).
         supports_fdisk_mbr=False,
@@ -1182,9 +1202,14 @@ class LegacyDosQemuInstaller:
                 # transfer step, so we drop /S and follow up with an
                 # explicit SYS C: which is documented to lay down
                 # IBMBIO/IBMDOS onto a freshly formatted DR-DOS partition.
+                # DR-DOS FORMAT also requires /X for fixed disks
+                # ("Option /X must be specified when formatting a
+                # fixed disk") -- profiles pass that via
+                # format_extra_args.
                 format_step = (
                     b"ECHO step=before-format > A:\\STEP.TXT\r\n"
-                    b"FORMAT C: < A:\\YES.TXT > A:\\FMT_OUT.TXT\r\n"
+                    b"FORMAT C:" + profile.format_extra_args
+                    + b" < A:\\YES.TXT > A:\\FMT_OUT.TXT\r\n"
                     b"ECHO step=after-format > A:\\STEP.TXT\r\n"
                     b"SYS C: < A:\\SYSIN.TXT > A:\\SYS_OUT.TXT\r\n"
                     b"ECHO step=after-sys > A:\\STEP.TXT\r\n"
@@ -1193,7 +1218,8 @@ class LegacyDosQemuInstaller:
             else:
                 format_step = (
                     b"ECHO step=before-format > A:\\STEP.TXT\r\n"
-                    b"FORMAT C: /S < A:\\YES.TXT > A:\\FMT_OUT.TXT\r\n"
+                    b"FORMAT C: /S" + profile.format_extra_args
+                    + b" < A:\\YES.TXT > A:\\FMT_OUT.TXT\r\n"
                     b"ECHO step=after-format > A:\\STEP.TXT\r\n"
                 )
             autoexec_bat = (
