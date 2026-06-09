@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -1434,10 +1435,24 @@ class LegacyDosQemuInstaller:
 
         backend = get_backend()
         qemu_path = backend.tool_path("qemu-system-i386")
+        # On Windows host, ask QEMU to use Windows Hypervisor Platform
+        # (WHPX) acceleration when available, falling back to pure
+        # software TCG when WHPX isn't installed.  Without acceleration,
+        # 16-bit DOS installs that finish in ~30 s on Linux+KVM routinely
+        # need 5-10 minutes of TCG cycles on Windows -- the standard
+        # 300 s timeout fires before FORMAT.COM /S even reaches the FAT
+        # scan pass.  WHPX is built into Windows 10+ and just needs the
+        # "Windows Hypervisor Platform" optional feature enabled.
+        # ``accel=whpx:tcg`` is QEMU syntax for "try whpx, fall back to
+        # tcg" -- a no-op on Linux QEMU (which ignores unknown accels
+        # and uses the default).
+        machine_spec = "pc"
+        if sys.platform == "win32":
+            machine_spec = "pc,accel=whpx:tcg"
         cmd = [
             qemu_path,
             "-machine",
-            "pc",
+            machine_spec,
             "-cpu",
             "486",
             "-m",
@@ -1474,7 +1489,7 @@ class LegacyDosQemuInstaller:
             **subprocess_no_window_kwargs(),
         )
 
-        deadline = time.monotonic() + profile.timeout_seconds
+        deadline = time.monotonic() + self._effective_timeout_seconds(profile)
         marker_seen = False
         try:
             poll_interval = 1.5
@@ -1539,14 +1554,34 @@ class LegacyDosQemuInstaller:
                 serial_tail = diagnostics_log.read_text(errors="replace")[-2000:]
             except OSError:
                 pass
+            effective_timeout = self._effective_timeout_seconds(profile)
             raise ValidationError(
                 f"{profile.label} SYS step did not complete within "
-                f"{profile.timeout_seconds:.0f}s. The emulated DOS run did not write "
+                f"{effective_timeout:.0f}s. The emulated DOS run did not write "
                 "C:\\VHDMK.OK. This usually means the VHD geometry, BPB, or install "
                 "floppy is malformed.\n"
+                f"QEMU serial-output log: {diagnostics_log}\n"
+                f"Install floppy: {install_floppy}\n"
                 f"QEMU stderr tail:\n{stderr_tail}\n"
                 f"Emulator console tail:\n{serial_tail}"
             )
+
+    @staticmethod
+    def _effective_timeout_seconds(profile: LegacyDosInstallProfile) -> float:
+        """Per-platform timeout multiplier for the QEMU install.
+
+        QEMU runs under WHPX on Win10+ when the Windows Hypervisor
+        Platform feature is enabled and falls back to pure TCG software
+        emulation otherwise.  TCG on Windows is roughly 3-5x slower
+        than KVM on Linux, so the profile-declared timeout (tuned
+        against Linux + KVM) routinely fires before a slow Windows
+        TCG install reaches the FAT scan / SYS pass.  Multiply the
+        Windows timeout by 3x as a safety net; WHPX-accelerated runs
+        finish well under that and don't notice.
+        """
+        if sys.platform == "win32":
+            return profile.timeout_seconds * 3.0
+        return profile.timeout_seconds
 
     def _required_system_files_present(
         self,
