@@ -119,6 +119,42 @@ class LegacyDosInstallProfile:
     (first Y, second Y, ENTER for no volume label).  Without the
     second Y, FORMAT bails out without transferring system files."""
 
+    use_sys_after_format: bool = False
+    """If True (and ``install_method == 'format'``), the AUTOEXEC runs
+    ``FORMAT C:`` (without ``/S``) followed by an explicit ``SYS C:``
+    to transfer the system files. Required for DR-DOS 6/7 whose
+    ``FORMAT C: /S`` silently no-ops the system-file transfer step
+    (formats the partition but never writes IBMBIO/IBMDOS to C:),
+    even though FORMAT exits cleanly. ``SYS C:`` invoked separately
+    is the documented DR-DOS way to install the system files onto a
+    formatted partition. Default False preserves the existing
+    MS-DOS / PC-DOS / Compaq behavior byte-for-byte."""
+
+    sys_yes_input: bytes = b"\r\n"
+    """Bytes piped into ``SYS C:`` via stdin when
+    ``use_sys_after_format=True``. DR-DOS SYS is non-interactive on
+    a clean ``FORMAT C:``'d partition (no prompts), so a single
+    ENTER suffices as a placeholder. Profiles can override if their
+    SYS variant prompts for confirmation."""
+
+    supplementary_disk_images: tuple[Path, ...] = ()
+    """Additional disk images whose contents should be merged into
+    the boot floppy before injecting AUTOEXEC.BAT. Used for legacy
+    DOS releases that split FORMAT.COM / SYS.COM / FDISK.COM across
+    multiple install diskettes (e.g. DR-DOS 6.0 5.25" 6-disk archive
+    whose Disk06.img carries the disk tools while Disk01.img only
+    has the kernel + COMMAND.COM). Each entry is the host-side path
+    to an additional install diskette image.
+
+    ``supplementary_disk_extract_globs`` controls which files are
+    pulled from these disks; matching files are mcopied into the
+    root of the boot floppy."""
+
+    supplementary_disk_extract_globs: tuple[str, ...] = ()
+    """Case-insensitive filenames (no wildcards in this MVP) to pull
+    from each entry in ``supplementary_disk_images``. Names that don't
+    exist on a given disk are skipped silently."""
+
 
 # Pre-built profile descriptors keyed by short identifier.
 def compaq331_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
@@ -257,7 +293,59 @@ def drdos6_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
     BPB (hidden_sectors present) and boots on any standard MFM / IDE
     BIOS without Compaq-specific extensions.  Supports both FAT12
     (<=16 MiB) and FAT16 (<=32 MiB).
+
+    The WinWorldPC 5.25" 6-disk variant of the DR-DOS 6 archive
+    splits FORMAT.COM / SYS.COM / FDISK.COM onto ``Disk06.img`` (the
+    bootable Disk01.img only ships IBMBIO + IBMDOS + COMMAND + a pile
+    of drivers).  When ``boot_assets_dir`` contains Disk02-Disk06
+    siblings we merge the disk tools from Disk06 onto the boot
+    floppy and pre-scrub a list of large unused drivers
+    (VIEWMAX, EMM386.SYS, HIDOS.SYS, ...) so they fit alongside the
+    new tools within the 360 KB Disk01 budget.
     """
+    supplementary_images: list[Path] = []
+    pre_install_deletes: tuple[str, ...] = ()
+    if install_image is not None:
+        parent = install_image.parent
+        # Case-insensitive Disk0N.img / Disk0N.ima siblings (N >= 2).
+        for sibling in sorted(parent.iterdir() if parent.exists() else []):
+            if sibling == install_image or not sibling.is_file():
+                continue
+            stem = sibling.stem.lower()
+            ext = sibling.suffix.lower()
+            if ext not in (".img", ".ima"):
+                continue
+            if not stem.startswith("disk"):
+                continue
+            digits = stem.removeprefix("disk").lstrip("0") or "0"
+            if not digits.isdigit() or int(digits) < 2:
+                continue
+            supplementary_images.append(sibling)
+        if supplementary_images:
+            # Scrub the non-essential 5.25 drivers so FDISK.COM (18K) +
+            # FORMAT.COM (15K) + SYS.COM (9K) fit alongside the kernel +
+            # COMMAND.COM in the 360 KB Disk01 budget.  Pre-flighted
+            # against the 1992-04-07 release: deleting these files frees
+            # ~210 KB while keeping IBMBIO/IBMDOS/COMMAND.COM intact.
+            pre_install_deletes = (
+                "VIEWMAX",
+                "VIEWMAX.INI",
+                "EMM386.SYS",
+                "EMMXMA.SYS",
+                "HIDOS.SYS",
+                "PCKWIK.SYS",
+                "PCKWIN.SYS",
+                "VDISK.SYS",
+                "PRINTER.SYS",
+                "DISPLAY.SYS",
+                "DRIVER.SYS",
+                "COUNTRY.SYS",
+                "ANSI.SYS",
+                "README",
+                "README.TXT",
+                "TASKMAX.INI",
+                "DRDOS.INI",
+            )
     _ = boot_assets_dir
     return LegacyDosInstallProfile(
         label="Digital Research DR DOS 6.0",
@@ -275,6 +363,18 @@ def drdos6_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
         # that's not necessary for boot -- the VBR is what FORMAT C: /S
         # produces).
         supports_fdisk_mbr=False,
+        # DR-DOS FORMAT C: /S exits cleanly but silently no-ops the
+        # system-file transfer; invoke SYS C: explicitly after FORMAT
+        # so IBMBIO + IBMDOS actually land on the freshly formatted
+        # partition.
+        use_sys_after_format=True,
+        pre_install_deletes=pre_install_deletes,
+        supplementary_disk_images=tuple(supplementary_images),
+        supplementary_disk_extract_globs=(
+            "FORMAT.COM",
+            "SYS.COM",
+            "FDISK.COM",
+        ),
     )
 
 
@@ -293,7 +393,7 @@ def drdos7_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
     * INSTALL.EXE + SETUP2.EX_ + LOADER.COM + PNUNPACK.EXE
       (interactive installer + Personal NetWare unpacker --
       dosforge bypasses the wizard via scripted AUTOEXEC.BAT
-      that runs FORMAT C: /S directly)
+      that runs FORMAT C: then SYS C: directly)
     * HIMEM.SYS, ANSI.SYS, DRMOUSE.COM, EMM386 etc.
 
     DR-DOS 7.03 supports FAT16B / BIGDOS (>32 MiB FAT16 partitions
@@ -317,7 +417,13 @@ def drdos7_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
         # DR-DOS 7 FDISK has /MBR; dosforge writes its own generic
         # MBR (the VBR is what makes the partition bootable).
         supports_fdisk_mbr=False,
+        # DR-DOS FORMAT C: /S exits cleanly but silently no-ops the
+        # system-file transfer; invoke SYS C: explicitly after FORMAT
+        # so IBMBIO + IBMDOS actually land on the freshly formatted
+        # partition.
+        use_sys_after_format=True,
     )
+
 
 
 def compaq2_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
@@ -952,7 +1058,7 @@ class LegacyDosQemuInstaller:
                         str(src), f"::{dest_name}",
                     ],
                 )
-        qemu_failed = False
+        delete_work_floppy = True
         try:
             try:
                 self._run_qemu(
@@ -962,28 +1068,44 @@ class LegacyDosQemuInstaller:
                     profile=profile,
                 )
             except Exception:
-                qemu_failed = True
                 # Preserve the install floppy for postmortem (A:\STEP.TXT
                 # records which step the AUTOEXEC.BAT got to; FMT*_OUT.TXT
                 # captures FORMAT32's stdout/stderr).
-                postmortem = self.cache_root / f"FAILED-{work_floppy.name}"
+                delete_work_floppy = False
+                postmortem = self.cache_root / f"FAILED-QEMU-{work_floppy.name}"
                 try:
-                    shutil.copy2(work_floppy, postmortem)
+                    work_floppy.replace(postmortem)
+                except OSError:
+                    pass
+                raise
+
+            try:
+                self._verify_install(
+                    vhd_path=vhd_path,
+                    partition_offset_bytes=partition_offset_bytes,
+                    profile=profile,
+                )
+            except Exception:
+                # Preserve the install floppy for postmortem so the
+                # AUTOEXEC capture files (STEP.TXT / FMT_OUT.TXT /
+                # SYS_OUT.TXT / CP_OUT.TXT / MBR_OUT.TXT) survive even
+                # when QEMU exited cleanly but the install didn't lay
+                # the required system files down on C:.  Diagnostic
+                # gold for the DR-DOS 6/7 install pipeline work.
+                delete_work_floppy = False
+                postmortem = self.cache_root / f"FAILED-VERIFY-{work_floppy.name}"
+                try:
+                    work_floppy.replace(postmortem)
                 except OSError:
                     pass
                 raise
         finally:
-            if not qemu_failed:
+            if delete_work_floppy:
                 try:
                     work_floppy.unlink()
                 except (FileNotFoundError, PermissionError):
                     pass
 
-        self._verify_install(
-            vhd_path=vhd_path,
-            partition_offset_bytes=partition_offset_bytes,
-            profile=profile,
-        )
 
     # ---- internals ----
 
@@ -1013,6 +1135,16 @@ class LegacyDosQemuInstaller:
                 ["mcopy", "-o", "-i", str(work), str(src), f"::{dst_name}"],
             )
 
+        # Optional multi-disk merge: legacy DOS releases that split
+        # FORMAT / SYS / FDISK across multiple install diskettes (e.g.
+        # DR-DOS 6.0 5.25" 6-disk archive) need tools pulled out of the
+        # supplementary disks onto the boot floppy before AUTOEXEC.BAT
+        # runs. Names that don't exist on a particular disk are silently
+        # skipped (so we can list every potential source name and let
+        # whichever disk owns the file win).
+        if profile.supplementary_disk_images and profile.supplementary_disk_extract_globs:
+            self._merge_supplementary_disks(work, profile)
+
         config_sys = b"FILES=8\r\nBUFFERS=8\r\n"
 
         if profile.install_method == "format":
@@ -1037,13 +1169,30 @@ class LegacyDosQemuInstaller:
                 )
             else:
                 fdisk_mbr_line = b""
+            if profile.use_sys_after_format:
+                # DR-DOS: FORMAT C: /S silently no-ops the system-file
+                # transfer step, so we drop /S and follow up with an
+                # explicit SYS C: which is documented to lay down
+                # IBMBIO/IBMDOS onto a freshly formatted DR-DOS partition.
+                format_step = (
+                    b"ECHO step=before-format > A:\\STEP.TXT\r\n"
+                    b"FORMAT C: < A:\\YES.TXT > A:\\FMT_OUT.TXT\r\n"
+                    b"ECHO step=after-format > A:\\STEP.TXT\r\n"
+                    b"SYS C: < A:\\SYSIN.TXT > A:\\SYS_OUT.TXT\r\n"
+                    b"ECHO step=after-sys > A:\\STEP.TXT\r\n"
+                )
+                self._mcopy_text(work, "SYSIN.TXT", profile.sys_yes_input)
+            else:
+                format_step = (
+                    b"ECHO step=before-format > A:\\STEP.TXT\r\n"
+                    b"FORMAT C: /S < A:\\YES.TXT > A:\\FMT_OUT.TXT\r\n"
+                    b"ECHO step=after-format > A:\\STEP.TXT\r\n"
+                )
             autoexec_bat = (
                 b"@ECHO OFF\r\n"
                 b"PROMPT $p$g\r\n"
-                + fdisk_mbr_line +
-                b"ECHO step=before-format > A:\\STEP.TXT\r\n"
-                b"FORMAT C: /S < A:\\YES.TXT > A:\\FMT_OUT.TXT\r\n"
-                b"ECHO step=after-format > A:\\STEP.TXT\r\n"
+                + fdisk_mbr_line
+                + format_step
                 # Write the success marker IMMEDIATELY after FORMAT /S
                 # completes so we don't lose it if the subsequent COPY
                 # crashes the floppy.  On Windows QEMU, PC-DOS 7.1
@@ -1054,7 +1203,7 @@ class LegacyDosQemuInstaller:
                 # writing VHDMK.OK to C: before the next floppy I/O we
                 # capture the install-complete signal even if A: dies
                 # afterwards.
-                b"ECHO OK> C:\\VHDMK.OK\r\n"
+                + b"ECHO OK> C:\\VHDMK.OK\r\n"
                 b"ECHO step=after-marker > A:\\STEP.TXT\r\n"
                 b"COPY A:\\COMMAND.COM C:\\ > A:\\CP_OUT.TXT\r\n"
                 b"ECHO step=after-copy > A:\\STEP.TXT\r\n"
@@ -1063,6 +1212,7 @@ class LegacyDosQemuInstaller:
                 b"GOTO HALT\r\n"
             )
             self._mcopy_text(work, "YES.TXT", yes_input)
+
         elif profile.install_method == "format32":
             # PC-DOS 7.1: write the authentic IBM MBR first (FDISK32 /MBR),
             # then run FORMAT32 twice (the /S transfer only works on the
@@ -1203,6 +1353,63 @@ class LegacyDosQemuInstaller:
                 scratch.unlink()
             except FileNotFoundError:
                 pass
+
+    def _merge_supplementary_disks(
+        self,
+        work_floppy: Path,
+        profile: LegacyDosInstallProfile,
+    ) -> None:
+        """Pull profile-listed tools from supplementary disks into work_floppy.
+
+        Used for legacy DOS releases where FORMAT.COM / SYS.COM /
+        FDISK.COM live on a different install diskette than the
+        bootable kernel. For each supplementary image, every matching
+        filename is mtype'd out to a scratch file, then mcopy'd onto
+        the work floppy root. Missing source files are skipped
+        silently — list every potential source name and let whichever
+        disk owns the file win.
+        """
+        wanted = {n.upper() for n in profile.supplementary_disk_extract_globs}
+        for disk in profile.supplementary_disk_images:
+            if not disk.exists():
+                continue
+            for name in sorted(wanted):
+                scratch = (
+                    self.cache_root
+                    / f"_supdisk-{uuid4().hex[:8]}-{name}"
+                )
+                result = self.runner.run(
+                    [
+                        "mcopy",
+                        "-i",
+                        str(disk),
+                        f"::{name}",
+                        str(scratch),
+                    ],
+                    check=False,
+                )
+                if result.returncode != 0 or not scratch.exists():
+                    try:
+                        scratch.unlink()
+                    except FileNotFoundError:
+                        pass
+                    continue
+                try:
+                    self.runner.run(
+                        [
+                            "mcopy",
+                            "-o",
+                            "-i",
+                            str(work_floppy),
+                            str(scratch),
+                            f"::{name}",
+                        ],
+                    )
+                finally:
+                    try:
+                        scratch.unlink()
+                    except FileNotFoundError:
+                        pass
 
     def _run_qemu(
         self,

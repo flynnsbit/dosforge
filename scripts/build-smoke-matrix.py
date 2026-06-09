@@ -163,22 +163,9 @@ _REQUIRED_ASSET_GLOBS: dict[BootMode, list[str]] = {
 # (media, boot mode) tuple to the open-issue summary.  Remove from
 # this table once the backend bug is fixed and the case is verified.
 _KNOWN_BROKEN: dict[tuple[MediaType, BootMode], str] = {
-    # DR-DOS 6/7 FORMAT C: /S completes but doesn't lay down
-    # IBMBIO.COM / IBMDOS.COM on C:\.  Suspected cause: DR-DOS
-    # FORMAT.COM's prompt sequence diverges from MS-DOS / PC-DOS,
-    # so the canned YES.TXT input feed in
-    # ``legacy_dos_install._build_install_floppy`` desynchronizes
-    # and the /S transfer step never runs.  Tracking in plan.md.
-    (MediaType.VHD, BootMode.DRDOS6): (
-        "DR-DOS 6.0 install pipeline known broken (FORMAT C: /S "
-        "completes but system files don't transfer to C:\\). "
-        "Tracked as a v0.9.x follow-up."
-    ),
-    (MediaType.VHD, BootMode.DRDOS7): (
-        "DR-DOS 7.03 install pipeline known broken (FORMAT C: /S "
-        "completes but system files don't transfer to C:\\). "
-        "Tracked as a v0.9.x follow-up."
-    ),
+    # (DR-DOS 6/7 entries removed in v0.9.10 -- install pipeline now
+    # uses FORMAT C: + explicit SYS C: two-step AUTOEXEC; DR-DOS 6
+    # 5.25" 6-disk archive auto-merges FORMAT/SYS/FDISK from Disk06.)
 }
 
 
