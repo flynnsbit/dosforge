@@ -279,8 +279,8 @@ _BUILTIN_MSDOS_MBR_BOOT_CODE_B64 = (
 _BUILTIN_FAT16_BOOT_SECTOR_B64 = (
     "6zyQRlJET1M1LjEAAgQEAAIAAgAA+MgAEQAMAAAIAAAAHAMAgAApJXrCXE5PIE5BTUUgICAgRkFUMTYgICD6/DHAjti9AHy44B+OwInuie+5AAHzpepefOAfAABgAI7YjtCNZqD7iFYkx0bAEADHRsIBAIxexsdGxKBji3Yci34eA3YOg9cAiXbSiX7UikYQmPdmFgHGEdeJdtaJftiLXguxBdPri0YRMdL391ABxoPXAIl22ol+3ItG1otW2F/EXlrolQDEflq5CwC+8X1X86ZfJotFGnQLg8cgJoA9AHXncmVQxF5ai34Wi0bSi1bU6GcAWB4Hjl5cvwAgq4nGi1ZcAfZzA4DGEI7arYP4+HLrMcCrDh/EXlq+ACCtCcB1BYjT/25aSEiLfg2B5/8A9+cDRtoTVtzoIADr4LQOzRBerFY8AHX1w+j1/0Vycm9yIQAw5M0TzRbNGVaJRsiJVsqMhp7niZ6c5+jU/y4AtEG7qlWKViSE0nQZzRNyFdHpgdtUqnUNjXbAiV7MiV7OtELrJotOyItWyopGGPZmGpH38ZL2dhiJ0YjGhunQydDJCOFBxF7EuAECilYkzRNyiItGC1e+oGPEvpznicHzpF+xBNPoAYae54NGyAGDVsoAT3WLxJ6c517DAAAAAAAAAABLRVJORUwgIFNZUwAAVao="
 )
-# FreeDOS FAT32 LBA boot sector (FRDOS5.1 OEM, EB 58 90 jmp opcode).
-# Source: built from FDOS/kernel boot/boot32lb.asm via NASM 2.16.01.
+# FreeDOS FAT32 CHS boot sector (FRDOS5.1 OEM, EB 58 90 jmp opcode).
+# Source: built from FDOS/kernel boot/boot32.asm via NASM 3.01.
 # Used as the BUILTIN fallback for ``_write_fat32_boot_template``
 # when no real FreeDOS FAT32 reference VHD is available on the
 # host. Without this, the fallback was an mkfs.fat "This is not a
@@ -288,10 +288,21 @@ _BUILTIN_FAT16_BOOT_SECTOR_B64 = (
 # boot sector by ``_resolve_freedos_from_directory`` -- the
 # combination of a FAT16 EB 3C 90 jmp opcode + FAT32 BPB is what
 # produces the "blinking cursor after Verifying DMI Pool Data"
-# hang. See dosassets/freedos/BOOTSECT_FAT32.BIN for the canonical
+# hang.
+#
+# Why CHS (boot32) instead of LBA (boot32lb): some legitimate
+# emulated BIOSes (notably 86Box's Award FIC VA-503+ Pentium MMX
+# BIOS) don't expose INT 13h Extensions, so the LBA boot loader
+# hangs on the first sector read.  boot32 uses CHS (INT 13h
+# AH=02h) which every PC BIOS since 1983 supports.  All FAT32
+# partitions dosforge creates are well under the 8 GiB CHS limit,
+# so the CHS variant works everywhere the LBA variant did, plus
+# the older BIOSes the LBA variant didn't.
+#
+# See dosassets/freedos/BOOTSECT_FAT32.BIN for the canonical
 # bundled copy (this is its base64 form, identical bytes).
 _BUILTIN_FAT32_BOOT_SECTOR_B64 = (
-    "61iQRlJET1M1LjEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEZBVDMyICAg/PopwI7YvQB8uOAfjsCJ7onvuQAB86XqenzgHwAAYACO2I7QjWbg+4hWQL7Gfej5AGYxwGaJRkSLRg5mA0YcZolGSGaJRkxmi0YQZvduJGYBRky4AAI7Rgt0CAHA/wY2fevzZotGLGZQ6JYAck/EXnbovAAx/7kLAL7xffOmdBWDxyCD5+A7fgt160p14GZY6DYA69Im/3UJJv91D2ZYKdtmUOhcAHIN6IUASnX6ZljoFgDr7IpWQIjT/252vu596GcAMOTNFs0ZBldTicfB5wJQi0YLSCHHWGbB6AdmA0ZIuwAijsMp22Y7RkR0B2aJRkToOwAmgGUDDyZmiwVbXwfDZj34//8PcxhmSGZIZg+2Vg3+ykJmUmb34mZaZgNGTMP5wzHbtA7NEKw8AHX1w1JWV2ZQiedqAGoAZlAGU2oBahCJ5opWQLRCzROJ/GZYcwhQMOTNE1jr2WZAA14LcweMwoDGEI7CX15aw0xvYWRpbmcgRnJlZURPUyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABObyBLRVJORUwgIFNZUwAAVao="
+    "61iQRlJET1M1LjEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEZBVDMyICAg/PopwI7YvQB8uOAfjsCJ7onvuQAB86XqenzgHwAAYACO2I7QjWbg+4hWQIt2HIt+HgN2DoPXAIl2Xol+YIpGEJhQ92YmAcdY92YkAfAR+olGYolWZItGC9Ho0ehIiUZmkUFA0emD+QF1+IhGaEmJTkiJTkqLRiyLVi5SUOicAHJPU8RedujKAFJQi0YLuQsAvvF9iceD7yDzpnQSg+ggdexYWltLddpYWugqAOvMJotFDyaLVQkp21JQU+hdAHJVid9b6IwAT3X6WFroCADr6DDkzRbNGQaJxyN+ZotOaNHq0dhJdfnR59HnA0ZeE1ZgU7sAII7DKds7Rkh1BTtWSnQJiUZIiVZK6EcAWyaLBSaLVQIHw4peQP9udoH6/w91B4P4+HIC+cOJ0YPoAoPZAIpeDSj/kffjkffjAcoDRmITVmTDMdu0Ds0QXqxWPAB188NSUJGKRhj2ZhqR9/GS9nYYidGIxobp0MnQyf7ECOG4AQKKVkDNE1hacwYw5M0T69ADXgtzB4zBgMUQjsGDwAGD0gDDAABLRVJORUwgIFNZUwAAVao="
 )
 # FAT12 floppy boot sector extracted from the upstream FreeDOS 1.4 1.44MB
 # boot floppy at codercowboy/freedosbootdisks (OEM "FreeDOS ", 1.44M BPB at
