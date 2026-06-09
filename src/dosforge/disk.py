@@ -2540,6 +2540,23 @@ class DiskManager:
             # synthesize one from scratch.
             BootMode.DRDOS6: ("Digital Research DR DOS 6.0 (drdos6)", FloppyType.F360K),
             BootMode.DRDOS7: ("Caldera DR-DOS 7.03 (drdos7)", FloppyType.F1440K),
+            # MS-DOS 7.10 OSR2 install disk 1 (Win95 OSR2 era) is a
+            # 1.44 MiB bootable floppy carrying IO.SYS/MSDOS.SYS/
+            # COMMAND.COM + the OSR2 utility set (ATTR, DELTREE, GDISK,
+            # FIND, DOSKEY, MCD, PKUNZIP, XMSDSK, HIMEM, CTMOUSE).
+            # Verbatim copy preserves the authentic boot sector and
+            # gives the user a complete OSR2 boot environment.
+            # _sanitize_verbatim_install_floppy strips the OEM
+            # SETUP.BAT auto-run so the floppy boots to A:\>.
+            BootMode.MSDOS71: ("Microsoft MS-DOS 7.10 [OSR2] (msdos71)", FloppyType.F1440K),
+            # PC-DOS 2000 install disk 1 is a 1.44 MiB bootable
+            # floppy carrying IBMBIO.COM/IBMDOS.COM/COMMAND.COM + the
+            # PC-DOS utility set (ATTRIB, CHKDSK, CHOICE, DEBUG,
+            # DISKCOPY, FDISK, FORMAT, KEYB, etc.).  Verbatim copy
+            # preserves the authentic IBM boot sector;
+            # _sanitize_verbatim_install_floppy strips the OEM
+            # CHOICE/SETUP prompt so the floppy boots to A:\>.
+            BootMode.PCDOS2000: ("IBM PC-DOS 2000 (pcdos2000)", FloppyType.F1440K),
         }
         if request.boot_mode in verbatim_floppy_modes:
             label, expected_floppy = verbatim_floppy_modes[request.boot_mode]
@@ -2550,9 +2567,22 @@ class DiskManager:
                     "non-authentic re-format."
                 )
             descriptor = _LEGACY_DOS_INSTALL_DESCRIPTORS[request.boot_mode]
+            # For verbatim IMG copy we want the boot-floppy variant of
+            # the install media, not the (separate) hard-disk SETUP
+            # floppy used by the VHD QEMU pipeline.  MSDOS71's
+            # descriptor lists ``w95`` first because the Win95 OSR2
+            # archive provides IO.SYS+SYS.COM the SYS-C: install path
+            # consumes.  But w95/Disk01.img is the Win95 SETUP floppy
+            # (MINI.CAB/PRECOPY1.CAB), not a bootable disk — drop into
+            # the dedicated ``msdos71`` folder where the user's own
+            # OSR2 boot floppy lives.
+            if request.boot_mode is BootMode.MSDOS71:
+                fallback_dirs: tuple[str, ...] = ("msdos71",)
+            else:
+                fallback_dirs = descriptor.asset_fallback_dirs
             assets_dir = self._resolve_legacy_dos_assets_dir(
                 request=request,
-                fallback_dirs=descriptor.asset_fallback_dirs,
+                fallback_dirs=fallback_dirs,
                 label=descriptor.label,
             )
             from ._legacy_dos_archive import extract_legacy_dos_install_archive
@@ -2638,16 +2668,24 @@ class DiskManager:
         instead of dumping the user into the OEM installer (which tries
         to find a hard drive C: and FDISKs it).
 
-        Currently only DR-DOS 7.03's ``Installation & Utilities 1.img``
-        needs this — its stock AUTOEXEC.BAT calls ``INSTALL.EXE``. The
-        DR-DOS 6 Disk 1 has no AUTOEXEC.BAT, and the MS-DOS/PC-DOS/
-        Compaq verbatim floppies likewise boot to a bare prompt.
+        Currently handles three boot modes:
 
-        Replaces AUTOEXEC.BAT with a minimal ``PROMPT $p$g`` script
-        (kept hidden behind the same mtools attribute the original used).
-        Leaves INSTALL.EXE on the disk so the user can run it manually.
+        * **DR-DOS 7.03** — stock AUTOEXEC.BAT calls ``INSTALL.EXE``.
+        * **MS-DOS 7.10 (OSR2)** — stock AUTOEXEC.BAT chains through
+          CTMOUSE/MSCDEX and ends in ``IF EXIST SETUP.BAT SETUP.BAT``.
+        * **PC-DOS 2000** — stock AUTOEXEC.BAT runs
+          ``CHOICE /C:YN /TY,10 Do you want to install PC DOS 7.0``
+          and then ``setup``.
+
+        DR-DOS 6 Disk 1, Compaq DOS 2.11, MS-DOS 3.00 (Compaq OEM),
+        and PC-DOS 3.00 verbatim floppies have no AUTOEXEC.BAT and
+        boot to a bare prompt — they need no sanitization.
+
+        Replaces AUTOEXEC.BAT with a minimal ``PROMPT $p$g`` script.
+        Leaves the OEM installer binaries (INSTALL.EXE / SETUP.BAT /
+        SETUP.EXE) on the disk so the user can run them manually.
         """
-        if boot_mode is not BootMode.DRDOS7:
+        if boot_mode not in {BootMode.DRDOS7, BootMode.MSDOS71, BootMode.PCDOS2000}:
             return
         if not isinstance(self.runner, CommandRunner):
             return

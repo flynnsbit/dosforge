@@ -805,32 +805,38 @@ def test_create_img_formats_with_explicit_floppy_geometry(tmp_path: Path, monkey
     assert request.path.stat().st_size == FloppyType.F720K.size_bytes
 
 
-def test_create_img_system_format_aligns_msdos71_with_install_image_size(
+def test_create_img_msdos71_dispatches_to_verbatim_copy_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class StubResolver:
-        def __init__(self, template: Path) -> None:
-            self.template = template
+    """As of v0.9.13, MSDOS71 IMG flows through the verbatim-Disk-1
+    copy path (see ``verbatim_floppy_modes`` in src/dosforge/disk.py)
+    instead of the resolver + ``_align_floppy_type_from_source_media``
+    flow.  Verify the dispatch:
 
-        def resolve(self, request: CreateRequest) -> BootAssets:
-            del request
-            return BootAssets(
-                system_files={},
-                boot_sector_template=self.template,
-                fdos_payload_dir=None,
-                source_image_size_bytes=FloppyType.F1200K.size_bytes,
-            )
+    * The resolver/installer are never invoked.
+    * Floppy sizes other than 1.44 MiB are rejected (the OSR2 boot
+      floppy is 1.44 MiB; smaller targets would need a non-authentic
+      re-format).
+    * The output IMG is byte-equal to the upstream Disk 1, modulo the
+      AUTOEXEC.BAT sanitization that strips the SETUP.BAT auto-run.
+    """
+    class StubResolver:
+        def __init__(self) -> None:
+            self.called = False
+
+        def resolve(self, request: CreateRequest) -> BootAssets:  # pragma: no cover
+            self.called = True
+            raise AssertionError("Resolver should not be called for verbatim path")
 
     class StubInstaller:
         def __init__(self) -> None:
             self.calls: list[dict[str, object]] = []
 
-        def make_floppy_bootable(self, **kwargs: object) -> None:
+        def make_floppy_bootable(self, **kwargs: object) -> None:  # pragma: no cover
             self.calls.append(kwargs)
+            raise AssertionError("Installer should not be called for verbatim path")
 
-    boot_template = tmp_path / "BOOTSECT_FAT16.BIN"
-    boot_template.write_bytes(b"\0" * 512)
-    resolver = StubResolver(boot_template)
+    resolver = StubResolver()
     installer = StubInstaller()
     runner = FakeRunner()
     manager = DiskManager(
@@ -845,25 +851,22 @@ def test_create_img_system_format_aligns_msdos71_with_install_image_size(
     )
     monkeypatch.setattr(manager, "preflight", lambda request=None, media_type=None: None)
 
-    request = CreateRequest(
-        path=tmp_path / "dos71.img",
-        size_bytes=FloppyType.F1440K.size_bytes,
-        disk_format=DiskFormat.FAT16,
+    # Wrong floppy size rejection: F1200K must be refused because the
+    # MSDOS71 OSR2 boot floppy is 1.44 MiB.
+    bad_request = CreateRequest(
+        path=tmp_path / "dos71-wrong-size.img",
+        size_bytes=FloppyType.F1200K.size_bytes,
+        disk_format=DiskFormat.FAT12,
         media_type=MediaType.IMG,
-        floppy_type=FloppyType.F1440K,
+        floppy_type=FloppyType.F1200K,
         img_system_format=True,
         boot_mode=BootMode.MSDOS71,
     )
-    manager.create_and_prepare(request)
+    with pytest.raises(ValidationError, match="--floppy-type 1440k"):
+        manager.create_and_prepare(bad_request)
 
-    assert request.path.stat().st_size == FloppyType.F1200K.size_bytes
-    assert request.floppy_type is FloppyType.F1200K
-    assert request.size_bytes == FloppyType.F1200K.size_bytes
-    mkfs_command = next(command for command, _ in runner.calls if command[:3] == ("mkfs.fat", "-F", "12"))
-    assert "-g" in mkfs_command and "2/15" in mkfs_command
-    assert installer.calls
-    assert installer.calls[0]["floppy_type"] is FloppyType.F1200K
-    assert installer.calls[0]["verify_legacy_layout"] is True
+    assert resolver.called is False
+    assert installer.calls == []
 
 
 def test_create_img_system_format_preserves_selected_floppy_for_pcdos7(

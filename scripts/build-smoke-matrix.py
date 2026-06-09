@@ -126,16 +126,21 @@ _FORCE_BIOS_DRIVE_TYPE: dict[BootMode, str] = {
 # mode" or _LegacyDosInstallDescriptor requires a hard-disk target.
 # Script pre-skips these instead of running into a guaranteed
 # "Unsupported boot mode" exit code.
+#
+# As of v0.9.13, MSDOS71/PCDOS2000/PCDOS3/COMPAQ3 all flow through
+# the verbatim-Disk-1 copy path (see verbatim_floppy_modes in
+# src/dosforge/disk.py) and produce bootable A:\ floppies when the
+# install archive is present in dosassets/<mode>/.  MSDOS6/PCDOS
+# remain unsupported (no descriptor + no media on the dev box; can
+# be wired in a future release once verified).  4DOS is a shell
+# overlay that needs a host DOS underneath; its IMG path is its own
+# unimplemented dispatcher and is deferred.
 _IMG_UNSUPPORTED_MODES: set[BootMode] = {
     BootMode.MSDOS6,    # no static install template; needs VHD QEMU loop
-    BootMode.MSDOS71,   # OSR2; requires local boot assets, not a CLI-only path
-    BootMode.PCDOS,
-    BootMode.PCDOS2000,
-    BootMode.PCDOS3,
-    BootMode.COMPAQ3,
+    BootMode.PCDOS,     # generic CLI-only catch-all, no IMG dispatcher
     # 4DOS is a shell overlay -- it requires a host DOS to provide
-    # COMMAND.COM/IO.SYS.  Our 4DOS host is MSDOS71 (OSR2), and
-    # MSDOS71 has no IMG path (see above).  4DOS VHD works fine.
+    # COMMAND.COM/IO.SYS.  Our 4DOS host is MSDOS71 (OSR2); the
+    # 4DOS IMG dispatcher itself isn't wired yet.  4DOS VHD works fine.
     BootMode.FOURDOS,
 }
 
@@ -153,6 +158,7 @@ _REQUIRED_ASSET_GLOBS: dict[BootMode, list[str]] = {
     BootMode.PCDOS3: ["pcdos3/*.IMG", "pcdos3/*.img", "pcdos3/*.7z", "pcdos3/*.zip"],
     BootMode.MSDOS6: ["msdos6/*.IMG", "msdos6/*.img", "msdos6/*.7z", "msdos6/*.zip"],
     BootMode.PCDOS2000: ["pcdos2000/*.IMG", "pcdos2000/*.img", "pcdos2000/*.7z", "pcdos2000/*.zip"],
+    BootMode.MSDOS71: ["msdos71/disk01.img", "msdos71/disk01.IMG", "msdos71/*.7z", "msdos71/*.zip"],
 }
 
 
