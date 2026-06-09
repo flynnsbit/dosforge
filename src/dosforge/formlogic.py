@@ -578,28 +578,6 @@ def coerce_on_format_change(state: FormState) -> FormState:
     return _snap_size_for_boot_mode(state)
 
 
-_KNOWN_BROKEN_VHD_BOOT_MODES = {
-    # DR-DOS 6/7 VHD installs hang inside QEMU at the FORMAT.COM
-    # prompt (DR-DOS's prompt sequence diverges from MS-DOS / PC-DOS
-    # so the canned A:\\YES.TXT desynchronizes mid-install).  IMG
-    # mode works fine -- verbatim Disk 1 copy lands a bootable
-    # floppy without driving the installer.  Fast-fail at validate
-    # time so the GUI doesn't sit for 5 minutes timing out.
-    BootMode.DRDOS6: (
-        "DR-DOS 6.0 VHD builds are not supported yet -- the QEMU-driven "
-        "install hangs at FORMAT.COM's prompt.  Use Media type = IMG with "
-        "boot mode drdos6 instead (writes a verbatim 720k Disk 1 IMG that "
-        "boots in 86Box / DOSBox-X)."
-    ),
-    BootMode.DRDOS7: (
-        "Caldera DR-DOS 7.03 VHD builds are not supported yet -- the QEMU-driven "
-        "install hangs at FORMAT.COM's prompt.  Use Media type = IMG with "
-        "boot mode drdos7 instead (writes a verbatim 1.44 MB Disk 1 IMG that "
-        "boots in 86Box / DOSBox-X)."
-    ),
-}
-
-
 def validate_media_step(state: FormState) -> str | None:
     if not _is_vhd(state):
         return None
@@ -608,11 +586,6 @@ def validate_media_step(state: FormState) -> str | None:
         fmt = DiskFormat(state.disk_format)
     except ValueError:
         return None
-    # Fast-fail known-broken VHD boot modes before the user wastes
-    # time on the rest of the wizard / a long create + timeout.
-    known_broken = _KNOWN_BROKEN_VHD_BOOT_MODES.get(boot_mode)
-    if known_broken is not None:
-        return known_broken
     rule = _BOOT_MODE_MEDIA_RULES.get(boot_mode)
     if rule is None:
         return None
@@ -693,22 +666,6 @@ def build_create_request(state: FormState) -> CreateRequest:
         raise DosForgeError("Create path is required.")
 
     media_type = MediaType(state.media_type)
-
-    # Fast-fail known-broken VHD boot modes (DR-DOS 6/7) at submit
-    # time so the GUI's Create button rejects immediately instead
-    # of letting the QEMU install run for 5 minutes and time out.
-    # Mirrors the validate_media_step gate that the TUI wizard uses
-    # at Step 2 -> Step 3 navigation.
-    if media_type is MediaType.VHD:
-        try:
-            boot_mode_enum = BootMode(state.boot_mode)
-        except ValueError:
-            boot_mode_enum = None
-        if boot_mode_enum is not None:
-            known_broken = _KNOWN_BROKEN_VHD_BOOT_MODES.get(boot_mode_enum)
-            if known_broken is not None:
-                raise DosForgeError(known_broken)
-
     floppy_type = FloppyType(state.floppy_type)
     disk_controller = DiskController(state.disk_controller) if state.disk_controller else None
     custom_chs = _parse_chs_text(state.custom_chs)
