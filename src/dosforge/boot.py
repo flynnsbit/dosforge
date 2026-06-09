@@ -11,6 +11,7 @@ import struct
 import urllib.request
 import zipfile
 from collections import OrderedDict
+from collections.abc import Callable
 from urllib.error import HTTPError, URLError
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -514,16 +515,28 @@ def _dos_basename(path: str) -> str:
     return candidate or "CP437UNI.TBL"
 
 
-def normalize_freedos_config_sys(text: str) -> str:
+def normalize_freedos_config_sys(text: str, *, target_drive: str = "C") -> str:
+    drive_letter = target_drive[0].upper()
+
     def repl(match: re.Match[str]) -> str:
         suffix = _normalize_freedos_shell_suffix(match.group("suffix"))
-        return f"{match.group('prefix')}C:\\COMMAND.COM{suffix}"
+        return f"{match.group('prefix')}{drive_letter}:\\COMMAND.COM{suffix}"
 
     return _SHELL_COMMAND_PATTERN.sub(repl, text)
 
 
-def normalize_freedos_autoexec_bat(text: str) -> str:
-    normalized = _AUTOEXEC_A_DRIVE_PATTERN.sub(lambda _: "C:\\", text)
+def normalize_freedos_autoexec_bat(text: str, *, target_drive: str = "C") -> str:
+    drive_letter = target_drive[0].upper()
+    # Rewrite explicit drive references in the shipped HD-style template
+    # (``C:\\``) to the boot drive so the same template works on a floppy
+    # boot too. ``A:\\`` references are also rewritten when the target
+    # is a hard-disk install (legacy behavior: the shipped FreeDOS
+    # AUTOEXEC.BAT was authored for HD targets).
+    source_drive = "A" if drive_letter == "C" else "C"
+    drive_pattern = re.compile(
+        rf"(?<![A-Za-z0-9_]){source_drive}:\\", re.IGNORECASE
+    )
+    normalized = drive_pattern.sub(lambda _: f"{drive_letter}:\\", text)
     line_ending = "\r\n"
     content = normalized.rstrip("\r\n")
     additions: list[str] = []
@@ -532,9 +545,9 @@ def normalize_freedos_autoexec_bat(text: str) -> str:
         if _AUTOEXEC_PATH_PATTERN.search(content) is None:
             additions.extend(
                 [
-                    "SET DOSDIR=C:\\FDOS",
-                    "IF EXIST C:\\FDOS\\BIN\\*.* SET PATH=C:\\FDOS\\BIN;C:\\",
-                    "IF NOT EXIST C:\\FDOS\\BIN\\*.* SET PATH=C:\\",
+                    f"SET DOSDIR={drive_letter}:\\FDOS",
+                    f"IF EXIST {drive_letter}:\\FDOS\\BIN\\*.* SET PATH={drive_letter}:\\FDOS\\BIN;{drive_letter}:\\",
+                    f"IF NOT EXIST {drive_letter}:\\FDOS\\BIN\\*.* SET PATH={drive_letter}:\\",
                 ]
             )
         if _AUTOEXEC_PROMPT_PATTERN.search(content) is None:
@@ -3803,6 +3816,7 @@ class BootInstaller:
             fdos_payload_dir=assets.fdos_payload_dir,
             payload_target_dir=assets.payload_target_dir,
             boot_mode=boot_mode,
+            target_drive="A",
         )
         if verify_legacy_layout and isinstance(self.runner, CommandRunner):
             self._validate_legacy_floppy_system_layout(image_path=image_path, boot_mode=boot_mode)
@@ -3815,6 +3829,7 @@ class BootInstaller:
         fdos_payload_dir: Path | None,
         payload_target_dir: str,
         boot_mode: BootMode,
+        target_drive: str = "C",
     ) -> None:
         temp_files: list[Path] = []
         system_order = ("IO.SYS", "MSDOS.SYS", "IBMBIO.COM", "IBMDOS.COM", "KERNEL.SYS", "COMMAND.COM")
@@ -3831,6 +3846,7 @@ class BootInstaller:
                     source_path=source,
                     temp_files=temp_files,
                     boot_mode=boot_mode,
+                    target_drive=target_drive,
                 )
                 self._mcopy_file(
                     partition_device=partition_device,
@@ -3854,6 +3870,7 @@ class BootInstaller:
                     source_path=source_path,
                     temp_files=temp_files,
                     boot_mode=boot_mode,
+                    target_drive=target_drive,
                 )
                 self._mcopy_file(
                     partition_device=partition_device,
@@ -3926,18 +3943,19 @@ class BootInstaller:
         source_path: Path,
         temp_files: list[Path],
         boot_mode: BootMode = BootMode.FREEDOS,
+        target_drive: str = "C",
     ) -> Path:
         destination_upper = destination_name.upper()
-        normalizers = (
-            {
-                "CONFIG.SYS": normalize_freedos_config_sys,
-                "FDCONFIG.SYS": normalize_freedos_config_sys,
-                "AUTOEXEC.BAT": normalize_freedos_autoexec_bat,
-                "FDAUTO.BAT": normalize_freedos_autoexec_bat,
+        if boot_mode is BootMode.FREEDOS:
+            drive = target_drive[0].upper() if target_drive else "C"
+            normalizers: dict[str, Callable[[str], str]] = {
+                "CONFIG.SYS": lambda t: normalize_freedos_config_sys(t, target_drive=drive),
+                "FDCONFIG.SYS": lambda t: normalize_freedos_config_sys(t, target_drive=drive),
+                "AUTOEXEC.BAT": lambda t: normalize_freedos_autoexec_bat(t, target_drive=drive),
+                "FDAUTO.BAT": lambda t: normalize_freedos_autoexec_bat(t, target_drive=drive),
             }
-            if boot_mode is BootMode.FREEDOS
-            else {}
-        )
+        else:
+            normalizers = {}
         normalizer = normalizers.get(destination_upper)
         if normalizer is None:
             return source_path
