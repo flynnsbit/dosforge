@@ -127,8 +127,6 @@ _FORCE_BIOS_DRIVE_TYPE: dict[BootMode, str] = {
 # Script pre-skips these instead of running into a guaranteed
 # "Unsupported boot mode" exit code.
 _IMG_UNSUPPORTED_MODES: set[BootMode] = {
-    BootMode.DRDOS6,
-    BootMode.DRDOS7,
     BootMode.MSDOS6,    # no static install template; needs VHD QEMU loop
     BootMode.MSDOS71,   # OSR2; requires local boot assets, not a CLI-only path
     BootMode.PCDOS,
@@ -311,6 +309,10 @@ _DEFAULT_FLOPPY: dict[BootMode, FloppyType] = {
     BootMode.PCDOS3: FloppyType.F360K,
     BootMode.COMPAQ2: FloppyType.F360K,
     BootMode.COMPAQ3: FloppyType.F360K,
+    # DR DOS 6.0 5.25" 6-disk archive uses 360 KiB floppies; Disk01.img
+    # is verbatim-copied as the bootable output.  DR-DOS 7.03 stays
+    # on the default 1440k path (its archive is a 1.44 MiB Disk 1).
+    BootMode.DRDOS6: FloppyType.F360K,
 }
 
 

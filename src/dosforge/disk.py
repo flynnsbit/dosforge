@@ -2531,6 +2531,15 @@ class DiskManager:
             BootMode.COMPAQ2: ("Compaq DOS 2.11 (compaq2)", FloppyType.F360K),
             BootMode.COMPAQ3: ("Microsoft MS-DOS 3.00 [Compaq OEM] (compaq3)", FloppyType.F360K),
             BootMode.PCDOS3: ("IBM PC-DOS 3.00 (pcdos3)", FloppyType.F360K),
+            # DR DOS 6.0 ships as a 5.25" 6-disk archive (Disk01.img is
+            # the bootable system floppy at 360 KiB); DR-DOS 7.03 ships
+            # a single 1.44 MiB "Installation & Utilities 1.img" that's
+            # bootable on its own.  Both are byte-for-byte authentic
+            # install media — verbatim copy preserves DR-DOS's native
+            # boot sector + IBMBIO/IBMDOS layout instead of trying to
+            # synthesize one from scratch.
+            BootMode.DRDOS6: ("Digital Research DR DOS 6.0 (drdos6)", FloppyType.F360K),
+            BootMode.DRDOS7: ("Caldera DR-DOS 7.03 (drdos7)", FloppyType.F1440K),
         }
         if request.boot_mode in verbatim_floppy_modes:
             label, expected_floppy = verbatim_floppy_modes[request.boot_mode]
