@@ -2668,11 +2668,18 @@ class DiskManager:
                 )
             if install_image is None:
                 install_image = extract_pcdos7_install_floppy(boot_assets_dir)
-        elif request.boot_mode in (BootMode.COMPAQ2, BootMode.COMPAQ3, BootMode.PCDOS3, BootMode.DRDOS6, BootMode.DRDOS7):
-            # COMPAQ2, COMPAQ3, PCDOS3, DRDOS6, and DRDOS7 ship as
-            # single .7z archives containing one or more raw .img
-            # floppies.  Auto-extract via py7zr, cache the result,
-            # and use the first bootable IMG as install_image
+        elif request.boot_mode in (
+            BootMode.COMPAQ2,
+            BootMode.COMPAQ3,
+            BootMode.PCDOS3,
+            BootMode.DRDOS6,
+            BootMode.DRDOS7,
+            BootMode.PCDOS2000,
+        ):
+            # COMPAQ2, COMPAQ3, PCDOS3, DRDOS6, DRDOS7, and PCDOS2000
+            # ship as single .7z archives containing one or more raw
+            # .img floppies.  Auto-extract via py7zr, cache the
+            # result, and use the first bootable IMG as install_image
             # (e.g. disk01.img / "Installation & Utilities 1.img").
             # Short-circuits to a raw IMG if the user has already
             # extracted.
