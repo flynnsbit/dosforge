@@ -68,7 +68,7 @@ Build-Image "vhd-freedos-fat16-64m" @(
 )
 
 # NOTE: FreeDOS on Xebec is NOT supported (Xebec is XT-class and only
-# accepts XT-era DOS modes: none/ibm8088/msdos33/msdos331/pcdos/compaq331).
+# accepts XT-era DOS modes: none/ibm8088/msdos33/msdos331/pcdos3/compaq331).
 # For FreeDOS on MartyPC use martypc-xtide (AT-class) below.
 
 # FreeDOS FAT16, MartyPC XT-IDE 504 MiB standard cap

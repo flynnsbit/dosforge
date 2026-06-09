@@ -307,20 +307,6 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
         system_file_marker="IBMBIO.COM",
         profile_builder=pcdos7_profile,
     ),
-    # Generic "PC-DOS bootable" alias.  Uses the same PC-DOS 7.0 install
-    # pipeline as PCDOS7 (LOADDSKF.EXE on 144US1.DSK, then FORMAT C: /S
-    # in QEMU) so the resulting VHD has an authentic 'IBM  7.0' VBR
-    # instead of the leftover mkfs.fat stub VBR (which previously caused
-    # a 'Non-System disk or disk error' on boot).  Asset fallback tries
-    # ``pcdos/`` first for users who explicitly drop their own install
-    # media there, then ``pcdos7/`` for the standard LOADDSKF flow.
-    BootMode.PCDOS: _LegacyDosInstallDescriptor(
-        label="PC-DOS",
-        asset_fallback_dirs=("pcdos", "pcdos7"),
-        preferred_image_names=("pcdos7-install.img",),
-        system_file_marker="IBMBIO.COM",
-        profile_builder=pcdos7_profile,
-    ),
     # IBM PC-DOS 2000 (= PC-DOS 7.00 rebrand for the Y2K cycle).
     # Distributed by IBM as a 6-floppy set on a Software Selections CD;
     # WinWorldPC archives this as ``IBM PC-DOS 2000 (3.5-1.44mb).7z``
@@ -447,7 +433,6 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
         BootMode.MSDOS6,
         BootMode.MSDOS622,
         BootMode.MSDOS71,
-        BootMode.PCDOS,
         BootMode.PCDOS3,
         BootMode.PCDOS7,
         BootMode.PCDOS2000,
@@ -1446,7 +1431,6 @@ class DiskManager:
             BootMode.MSDOS5,
             BootMode.MSDOS6,
             BootMode.MSDOS622,
-            BootMode.PCDOS,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.COMPAQ331,
@@ -1521,8 +1505,7 @@ class DiskManager:
             BootMode.MSDOS5,
             BootMode.MSDOS6,
             BootMode.MSDOS622,
-            BootMode.PCDOS,
-            BootMode.PCDOS3,
+                BootMode.PCDOS3,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.PCDOS71,
@@ -2058,8 +2041,7 @@ class DiskManager:
             BootMode.MSDOS5,
             BootMode.MSDOS6,
             BootMode.MSDOS622,
-            BootMode.PCDOS,
-            BootMode.PCDOS3,
+                BootMode.PCDOS3,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.PCDOS71,
@@ -2070,7 +2052,7 @@ class DiskManager:
                 "This boot mode is not yet supported on this platform. "
                 "On Windows, supported VHD boot modes are: none, freedos, "
                 "msdos71, msdos33, msdos331, compaq2, compaq331, "
-                "ibm8088 (dos33), msdos5, msdos622, pcdos, pcdos3, pcdos7, "
+                "ibm8088 (dos33), msdos5, msdos622, pcdos3, pcdos7, "
                 "pcdos2000, pcdos71."
             )
 
@@ -2198,7 +2180,6 @@ class DiskManager:
             BootMode.MSDOS5,
             BootMode.MSDOS6,
             BootMode.MSDOS622,
-            BootMode.PCDOS,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.DRDOS6,
@@ -2311,9 +2292,8 @@ class DiskManager:
                 BootMode.MSDOS6,
                 BootMode.MSDOS622,
                 BootMode.MSDOS71,
-                BootMode.PCDOS,
-                BootMode.PCDOS3,
-                BootMode.PCDOS7,
+                        BootMode.PCDOS3,
+            BootMode.PCDOS7,
                 BootMode.PCDOS2000,
                 BootMode.PCDOS71,
                 BootMode.IBM8088,
@@ -2336,7 +2316,7 @@ class DiskManager:
                             BootMode.MSDOS5,
                             BootMode.MSDOS6,
                             BootMode.MSDOS622,
-                            BootMode.PCDOS7,
+                        BootMode.PCDOS7,
                             BootMode.PCDOS2000,
                             BootMode.DRDOS6,
                             BootMode.DRDOS7,
@@ -2630,9 +2610,8 @@ class DiskManager:
                 BootMode.MSDOS5,
                 BootMode.MSDOS6,
                 BootMode.MSDOS622,
-                BootMode.PCDOS,
-                BootMode.PCDOS3,
-                BootMode.PCDOS7,
+                        BootMode.PCDOS3,
+            BootMode.PCDOS7,
                 BootMode.PCDOS2000,
                 BootMode.COMPAQ3,
                 BootMode.COMPAQ331,
@@ -2757,26 +2736,13 @@ class DiskManager:
             fallback_dirs=descriptor.asset_fallback_dirs,
             label=descriptor.label,
         )
-        # PCDOS7 (and the generic PCDOS alias) ship their install floppy
-        # in IBM's LOADDSKF compressed format that mtools can't read.
-        # Extract it on-demand via LOADDSKF.EXE inside DOSBox-X (cached
-        # after first run) and use the resulting raw 1.44 MB IMG as the
-        # install_image.
-        if request.boot_mode in (BootMode.PCDOS, BootMode.PCDOS7):
+        # PC-DOS 7 ships its install floppy in IBM's LOADDSKF compressed
+        # format that mtools can't read. Extract it on-demand via
+        # LOADDSKF.EXE inside DOSBox-X (cached after first run).
+        if request.boot_mode is BootMode.PCDOS7:
             from ._pcdos7_loaddskf import extract_pcdos7_install_floppy
 
-            # For PCDOS the user may have dropped their own pcdos install
-            # media in dosassets/pcdos/ -- prefer that if a usable image
-            # is already present, otherwise fall back to pcdos7 LOADDSKF.
-            install_image = None
-            if request.boot_mode is BootMode.PCDOS:
-                install_image = self._find_legacy_dos_install_image(
-                    directory=boot_assets_dir,
-                    preferred_names=descriptor.preferred_image_names,
-                    system_file_marker=descriptor.system_file_marker,
-                )
-            if install_image is None:
-                install_image = extract_pcdos7_install_floppy(boot_assets_dir)
+            install_image = extract_pcdos7_install_floppy(boot_assets_dir)
         elif request.boot_mode in (
             BootMode.COMPAQ2,
             BootMode.COMPAQ3,
@@ -3708,7 +3674,6 @@ class DiskManager:
             BootMode.MSDOS5,
             BootMode.MSDOS6,
             BootMode.MSDOS622,
-            BootMode.PCDOS,
             BootMode.PCDOS3,
             BootMode.COMPAQ3,
             BootMode.COMPAQ331,

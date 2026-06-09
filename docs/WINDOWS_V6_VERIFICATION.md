@@ -55,7 +55,6 @@ follow-up.
 | MBR CHS rewrite after parted (`3951021`)    | Linux-only `_rewrite_mbr_partition_entry_for_footer` | **N/A** — Windows writes MBR via `core_mbr` with ECHS-translated CHS inline (`disk.py:1970-1978`), never had the parted-clobber bug. |
 | compaq331 MBR ptype 0x06 (`1fecb40`)        | `_legacy_dos_install_descriptor`       | **Already correct on Windows** — inline ptype dispatch (`disk.py:1987-1996`) sends COMPAQ331 to the `else: 0x06` branch (the `msdos33_layout` helper excludes it). No-op for Windows. |
 | msdos5/622/pcdos7 FORMAT double-Y (`e9c5694`) | `legacy_dos_install.py` profile `format_yes_input` | **Inherits** — Windows uses the same profile registry. Behavior change in the QEMU install run. |
-| pcdos alias → pcdos7 pipeline (`bce776f`)   | `_legacy_dos_install_descriptor`       | **Inherits** — same dispatcher. |
 | pcdos71 FAT16 install path (`adc7fa7`)      | `pcdos71_fat16_profile` + descriptor branch + `patch_fat16_bpb_geometry` eligibility | **Inherits the install profile**, AND Windows's inline ptype logic at `disk.py:1991` already gives PCDOS71+FAT16 → `0x0E` (FAT16 LBA). Path is wired but **never run on Windows**. |
 
 ---
@@ -72,7 +71,7 @@ follow-up.
 - **One Linux fix doesn't apply** because the corresponding Windows
   scenario is still rejected (FreeDOS FAT32).
 - **Three changes were never re-verified on Windows after landing:**
-  msdos5 / msdos622 / pcdos7 FORMAT double-Y change, the pcdos alias
+  msdos5 / msdos622 / pcdos7 FORMAT double-Y change
   rewrite, and the brand-new pcdos71+FAT16 install path.
 
 ---
@@ -87,7 +86,6 @@ follow-up.
 | 2 | `msdos5 + fat16`               | 128 MiB  | FORMAT double-Y behavior change                   |
 | 3 | `msdos622 + fat16`             | 128 MiB  | FORMAT double-Y behavior change                   |
 | 4 | `pcdos7 + fat16`               | 128 MiB  | FORMAT double-Y + LOADDSKF via DOSBox-X           |
-| 5 | `pcdos + fat16`                | 32 MiB   | Alias-routing change → pcdos7 pipeline            |
 
 ### Smoke check (unchanged code paths — should still boot)
 

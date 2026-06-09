@@ -79,7 +79,6 @@ and [common post-install](#common-vhd-post-install-linux-nbd-path).
 | `msdos5`     | 16     | QEMU FORMAT C: /S (MS-DOS 5.0 Disk1)      | 0x06      | MSDOS5.0   | `legacy_dos_install.msdos5_profile`  |
 | `msdos622`   | 16     | QEMU FORMAT C: /S (MS-DOS 6.22 Disk1)     | 0x06      | MSDOS5.0   | `legacy_dos_install.msdos622_profile` |
 | `msdos71`    | 16/32  | QEMU SYS A: C: (Win95 OSR2 Boot.img)      | 0x0E/0x0C | MSWIN4.1   | `legacy_dos_install.msdos71_profile` |
-| `pcdos`      | 16     | QEMU FORMAT C: /S (LOADDSKF→144US1.DSK)   | 0x06      | IBM  7.0   | `legacy_dos_install.pcdos7_profile`  |
 | `pcdos7`     | 16     | QEMU FORMAT C: /S (LOADDSKF→144US1.DSK)   | 0x06      | IBM  7.0   | `legacy_dos_install.pcdos7_profile`  |
 | `pcdos71`    | 16     | QEMU FORMAT C: /S (SGTK tk_raid.vfd)      | 0x0E      | IBM  7.1   | `legacy_dos_install.pcdos71_fat16_profile` |
 | `pcdos71`    | 32     | QEMU FORMAT32 + FDISK32 /MBR (SGTK)       | 0x0C      | IBM  7.1   | `legacy_dos_install.pcdos71_profile` |
@@ -239,7 +238,7 @@ host-side cab extraction. Supports both FAT16 and FAT32.
 
 ---
 
-### PC-DOS 7.0 / PC-DOS (`--boot-mode=pcdos7`, `pcdos`)
+### PC-DOS 7.0 (`--boot-mode=pcdos7`)
 
 The install media is IBM's proprietary **LOADDSKF-compressed** `144US1.DSK`
 (magic `AA 59 F0`). `mtools` and `qemu-system-i386 imgmount` cannot read it
@@ -258,10 +257,6 @@ directly.
 6. `_install_legacy_dos_via_qemu(profile=pcdos7_profile)` — same shape as
    msdos5/622 (FDISK /MBR → FORMAT C: /S → COPY COMMAND.COM → VHDMK.OK).
 7. `_stage_legacy_dos_full_profile_payload()`.
-
-The `pcdos` alias routes through this exact same pipeline, with
-`asset_fallback_dirs=("pcdos", "pcdos7")` so users can drop their own install
-media in `dosassets/pcdos/`.
 
 ---
 

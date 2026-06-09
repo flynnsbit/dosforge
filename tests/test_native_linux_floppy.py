@@ -128,7 +128,7 @@ def test_native_linux_mount_shows_boot_system_files_at_root(tmp_path: Path) -> N
     installer.make_floppy_bootable(
         image_path=image_path,
         assets=assets,
-        boot_mode=BootMode.PCDOS,
+        boot_mode=BootMode.PCDOS7,
         floppy_type=floppy_type,
         verify_legacy_layout=True,
     )

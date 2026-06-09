@@ -47,7 +47,6 @@ REGISTERED_MODES = (
     "msdos5",
     "msdos622",
     "msdos71",
-    "pcdos",
     "pcdos7",
     "pcdos71",
     "ibm8088",
@@ -60,11 +59,9 @@ REPO_DOSASSETS = Path(__file__).resolve().parent.parent / "dosassets"
 
 
 # Some boot modes are umbrellas that don't map 1-to-1 to a dosassets/<mode>/
-# folder.  pcdos is an umbrella for the IBM PC-DOS 2.x/3.x family
-# (asset dirs are per-version: pcdos1, pcdos2, pcdos3, pcdos5, pcdos6).
-# ibm8088 is an umbrella that delegates to pcdos or msdos5 at install time.
+# folder. ibm8088 delegates to concrete DOS version media at install time.
 # 4dos has a placeholder readme but no install media folder yet.
-_UMBRELLA_MODES_WITHOUT_DIRECT_README = {"pcdos", "ibm8088"}
+_UMBRELLA_MODES_WITHOUT_DIRECT_README = {"ibm8088"}
 
 
 @pytest.mark.parametrize("mode", REGISTERED_MODES)
@@ -72,7 +69,7 @@ def test_every_mode_has_a_dosassets_readme(mode: str) -> None:
     """Every registered boot mode must have a dosassets/<mode>/readme.txt
     explaining where users get the install media for it.
 
-    Umbrella modes (``pcdos``, ``ibm8088``) are exempt -- they delegate
+    Umbrella modes (``ibm8088``) are exempt -- they delegate
     to per-version sub-modes that DO have their own readme files."""
     if mode in _UMBRELLA_MODES_WITHOUT_DIRECT_README:
         pytest.skip(f"{mode} is an umbrella mode -- see per-version subdirs")
@@ -104,7 +101,6 @@ def test_readme_mentions_the_boot_mode_in_some_form(mode: str) -> None:
         display_lower,
         display_lower.replace(" ", ""),
         display_lower.replace("ms-dos", "msdos"),
-        display_lower.replace("pc-dos", "pcdos"),
         # Common version-number shortenings
         "7.1", "7.0", "6.22", "5.0", "3.31", "3.30",
     )
@@ -164,7 +160,7 @@ def test_freedos_oem_is_frdos() -> None:
 
 def test_pcdos_family_oem_contains_ibm() -> None:
     """IBM PC-DOS family OEM strings must say 'IBM'."""
-    for mode in ("pcdos", "pcdos7", "pcdos71", "compaq331"):
+    for mode in ("pcdos7", "pcdos71", "compaq331"):
         profile = get_profile(mode)
         assert b"IBM" in profile.oem_string, (
             f"{mode} OEM string {profile.oem_string!r} should contain 'IBM'"

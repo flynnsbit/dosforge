@@ -54,7 +54,7 @@ _IMG_BOOT_CASES: tuple[_ImgBootCase, ...] = (
     _ImgBootCase(BootMode.MSDOS331, "msdos331", FloppyType.F720K),
     _ImgBootCase(BootMode.MSDOS5, "msdos5", FloppyType.F1200K),
     _ImgBootCase(BootMode.MSDOS622, "msdos622", FloppyType.F1440K),
-    _ImgBootCase(BootMode.PCDOS, "pcdos7", FloppyType.F1440K),
+    _ImgBootCase(BootMode.PCDOS7, "pcdos7", FloppyType.F1440K),
     _ImgBootCase(BootMode.PCDOS7, "pcdos7", FloppyType.F1440K),
     _ImgBootCase(BootMode.COMPAQ331, "compaq331", FloppyType.F720K),
 )

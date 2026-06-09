@@ -321,7 +321,6 @@ $negative = @(
     @{ name='reject-msdos331'; args=@('create','--media-type','vhd','--format','fat16','--size','32M','--boot-mode','msdos331', '--path','{path}'); expect='not yet supported' },
     @{ name='reject-msdos622'; args=@('create','--media-type','vhd','--format','fat16','--size','32M','--boot-mode','msdos622', '--path','{path}'); expect='not yet supported' },
     @{ name='reject-compaq331';args=@('create','--media-type','vhd','--format','fat16','--size','32M','--boot-mode','compaq331','--path','{path}'); expect='not yet supported' },
-    @{ name='reject-pcdos';    args=@('create','--media-type','vhd','--format','fat16','--size','32M','--boot-mode','pcdos',    '--path','{path}'); expect='not yet supported' },
     @{ name='reject-pcdos7';   args=@('create','--media-type','vhd','--format','fat16','--size','32M','--boot-mode','pcdos7',   '--path','{path}'); expect='not yet supported' },
     @{ name='reject-ibm8088';  args=@('create','--media-type','vhd','--format','fat16','--size','32M','--boot-mode','ibm8088','--ibm-dos-version','dos33','--path','{path}'); expect='not yet supported' },
     @{ name='reject-freedos-fat32'; args=@('create','--media-type','vhd','--format','fat32','--size','128M','--boot-mode','freedos','--freedos-source','local','--boot-assets-path',$freedosAssets,'--path','{path}'); expect='fat16' }

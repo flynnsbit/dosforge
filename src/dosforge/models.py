@@ -86,7 +86,6 @@ class BootMode(str, Enum):
     # stamp to ``MSDOS6.22`` in 6.22).
     MSDOS6 = "msdos6"
     MSDOS622 = "msdos622"
-    PCDOS = "pcdos"
     PCDOS7 = "pcdos7"
     # IBM PC-DOS 2000 = IBM PC-DOS 7.00 rebranded for the Y2K push.
     # Same VBR + IBMBIO/IBMDOS dates as PCDOS7, but distributed as a
@@ -586,7 +585,7 @@ class CreateRequest:
     # ``disk_controller`` is the primary way to choose VHD type.
     # When left at None, ``effective_disk_controller`` auto-detects
     # from the boot mode (MFM for compaq2 / msdos33 / ibm8088+dos33 /
-    # pcdos, IDE otherwise).  ``custom_chs`` provides a free-form
+    # pcdos3, IDE otherwise).  ``custom_chs`` provides a free-form
     # cyl/head/spt geometry source.
     disk_controller: DiskController | None = None
     custom_chs: tuple[int, int, int] | None = None
@@ -613,7 +612,7 @@ class CreateRequest:
         v0.7.0 selection rules:
         - ``disk_controller`` explicitly set: use as-is
         - Otherwise auto-detect from ``boot_mode``:
-          * COMPAQ2, MSDOS33, PCDOS, IBM8088+DOS33: MFM (XT-class era)
+          * COMPAQ2, MSDOS33, PCDOS3, IBM8088+DOS33: MFM (XT-class era)
           * Everything else: IDE
         """
         if self.disk_controller is not None:
@@ -624,8 +623,6 @@ class CreateRequest:
         if self.boot_mode is BootMode.COMPAQ2:
             return DiskController.MFM
         if self.boot_mode is BootMode.MSDOS33:
-            return DiskController.MFM
-        if self.boot_mode is BootMode.PCDOS:
             return DiskController.MFM
         if self.boot_mode is BootMode.PCDOS3:
             return DiskController.MFM

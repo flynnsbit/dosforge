@@ -464,7 +464,6 @@ def _use_pre_dos5_config_sys(request: "CreateRequest") -> bool:
         BootMode.MSDOS331,
         BootMode.COMPAQ2,
         BootMode.COMPAQ331,
-        BootMode.PCDOS,  # legacy PC-DOS family (pre-PC-DOS 7).
         BootMode.PCDOS3,
         BootMode.COMPAQ3,
     ):
@@ -695,8 +694,6 @@ class BootAssetResolver:
             return self._resolve_msdos622(request)
         if request.boot_mode is BootMode.MSDOS6:
             return self._resolve_msdos6(request)
-        if request.boot_mode is BootMode.PCDOS:
-            return self._resolve_pcdos(request)
         if request.boot_mode is BootMode.PCDOS7:
             return self._resolve_pcdos7(request)
         if request.boot_mode is BootMode.PCDOS71:
@@ -1276,17 +1273,6 @@ class BootAssetResolver:
             cache_tag="msdos6",
             prefer_install_image_boot_sector=True,
             default_asset_dirs=("msdos6", "dos6", "dos60"),
-            install_profile=request.msdos_install_profile,
-        )
-
-    def _resolve_pcdos(self, request: CreateRequest) -> BootAssets:
-        return self._resolve_legacy_dos(
-            request=request,
-            profile_label="PC-DOS",
-            version_subdir_name="pcdos",
-            cache_tag="pcdos",
-            prefer_install_image_boot_sector=False,
-            default_asset_dirs=("pcdos", "pcdos7"),
             install_profile=request.msdos_install_profile,
         )
 
@@ -4463,7 +4449,6 @@ class BootInstaller:
             BootMode.MSDOS5,
             BootMode.MSDOS6,
             BootMode.MSDOS622,
-            BootMode.PCDOS,
             BootMode.PCDOS3,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
@@ -4551,7 +4536,6 @@ class BootInstaller:
             BootMode.MSDOS5,
             BootMode.MSDOS6,
             BootMode.MSDOS622,
-            BootMode.PCDOS,
             BootMode.PCDOS3,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,

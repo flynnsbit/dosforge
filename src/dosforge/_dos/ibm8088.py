@@ -2,7 +2,7 @@
 
 This boot mode targets 8088-era hardware (~1981-1986) and dispatches
 based on ``--ibm-dos-version``:
-  - dos33: behaves like ``pcdos`` / MS-DOS 3.3 (max 32 MB partition)
+  - dos33: behaves like MS-DOS 3.3 (max 32 MB partition)
   - dos50: behaves like ``msdos5`` (max ~504 MB partition)
 
 The asset directory follows a per-version layout under
@@ -16,7 +16,7 @@ profile at install time (selected via the IBMDOSVersion enum).
 from __future__ import annotations
 
 from .base import DosProfile, SystemFile
-from . import pcdos as _pcdos, msdos5 as _msdos5
+from . import msdos33 as _msdos33, msdos5 as _msdos5
 
 # Umbrella profile -- placeholder fields are overridden at install time
 # based on --ibm-dos-version.  Kept here to keep the module list
@@ -43,7 +43,7 @@ PROFILE = DosProfile(
 def resolve_inner_profile(version: str) -> DosProfile:
     """Pick the actual per-version profile based on --ibm-dos-version."""
     if version == "dos33":
-        return _pcdos.PROFILE
+        return _msdos33.PROFILE
     if version == "dos50":
         return _msdos5.PROFILE
     raise ValueError(f"Unknown ibm-dos-version: {version!r}")

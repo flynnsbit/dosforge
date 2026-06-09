@@ -159,9 +159,9 @@ def test_create_img_parses_floppy_options(monkeypatch, capsys) -> None:
             "720k",
             "--img-system-format",
             "--boot-mode",
-            "pcdos",
+            "msdos5",
             "--boot-assets-path",
-            "/tmp/pcdos",
+            "/tmp/msdos5",
         ]
     )
     assert result == 0

@@ -221,10 +221,10 @@ def test_validate_rejects_legacy_vhd_profile_with_fat32() -> None:
         path=Path("/tmp/legacy.vhd"),
         size_bytes=128 * 1024 * 1024,
         disk_format=DiskFormat.FAT32,
-        boot_mode=BootMode.PCDOS,
-        boot_assets_path=Path("/tmp/pcdos-assets"),
+        boot_mode=BootMode.PCDOS7,
+        boot_assets_path=Path("/tmp/pcdos7-assets"),
     )
-    with pytest.raises(ValidationError, match="FAT32"):
+    with pytest.raises(ValidationError, match="FAT16"):
         manager._validate_create_request(request)
 
 
@@ -679,15 +679,14 @@ def test_uses_legacy_dos_qemu_install_other_modes_false() -> None:
 
 def test_uses_legacy_dos_qemu_install_pcdos_true() -> None:
     """PCDOS (generic "PC-DOS bootable") routes through the QEMU
-    pipeline so its VHD gets an authentic IBM PC-DOS 7.0 VBR instead
-    of the mkfs.fat stub VBR that the static path left in place."""
+    pipeline so its VHD gets an authentic IBM PC-DOS 7.0 VBR."""
     from dosforge.disk import _uses_legacy_dos_qemu_install
 
     request = CreateRequest(
         path=Path("/tmp/x.vhd"),
         size_bytes=64 * 1024 * 1024,
         disk_format=DiskFormat.FAT16,
-        boot_mode=BootMode.PCDOS,
+        boot_mode=BootMode.PCDOS7,
     )
     assert _uses_legacy_dos_qemu_install(request) is True
 

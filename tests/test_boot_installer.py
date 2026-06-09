@@ -432,7 +432,7 @@ def test_make_floppy_bootable_writes_boot_sector_and_system_files(tmp_path: Path
     installer.make_floppy_bootable(
         image_path=image_path,
         assets=assets,
-        boot_mode=BootMode.PCDOS,
+        boot_mode=BootMode.PCDOS7,
     )
 
     # Floppy IMGs now use pure-Python file I/O (no dd) since the

@@ -21,7 +21,6 @@ _LEGACY_FAT16_ONLY = {
     BootMode.MSDOS5,
     BootMode.MSDOS6,
     BootMode.MSDOS622,
-    BootMode.PCDOS,
     BootMode.PCDOS7,
     BootMode.COMPAQ331,
     # DR-DOS family: FAT12/FAT16 only (no FAT32 install path).
@@ -167,7 +166,6 @@ def _dos_profile_modes() -> set[BootMode]:
         BootMode.MSDOS5,
         BootMode.MSDOS6,
         BootMode.MSDOS622,
-        BootMode.PCDOS,
         BootMode.PCDOS7,
         BootMode.COMPAQ331,
     }

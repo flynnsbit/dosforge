@@ -209,7 +209,6 @@ def test_windows_vhd_pipeline_accepts_every_legacy_dos_mode(tmp_path: Path):
     legacy_modes = (
         BootMode.MSDOS5,
         BootMode.MSDOS622,
-        BootMode.PCDOS,
         BootMode.PCDOS7,
         BootMode.PCDOS2000,
     )

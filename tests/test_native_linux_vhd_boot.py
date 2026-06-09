@@ -78,7 +78,7 @@ _VHD_BOOT_CASES: tuple[_VhdBootCase, ...] = (
     _VhdBootCase(BootMode.MSDOS331, DiskFormat.FAT16, "msdos331"),
     _VhdBootCase(BootMode.MSDOS5, DiskFormat.FAT16, "msdos5"),
     _VhdBootCase(BootMode.MSDOS622, DiskFormat.FAT16, "msdos622"),
-    _VhdBootCase(BootMode.PCDOS, DiskFormat.FAT16, "pcdos7"),
+    _VhdBootCase(BootMode.PCDOS7, DiskFormat.FAT16, "pcdos7"),
     _VhdBootCase(BootMode.PCDOS7, DiskFormat.FAT16, "pcdos7"),
     _VhdBootCase(BootMode.COMPAQ331, DiskFormat.FAT16, "compaq331"),
 )

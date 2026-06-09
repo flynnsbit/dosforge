@@ -179,29 +179,6 @@ def test_ibm_boot_mode_sets_default_size_to_32m() -> None:
     asyncio.run(run())
 
 
-def test_request_from_form_img_sets_floppy_size_and_system_mode() -> None:
-    async def run() -> None:
-        app = DosForgeApp()
-        app.manager.preflight = lambda request=None: None  # type: ignore[assignment]
-
-        async with app.run_test():
-            app.query_one("#media-type", Select).value = MediaType.IMG.value
-            app.query_one("#create-path", Input).value = "/tmp/dos.img"
-            app.query_one("#floppy-type", Select).value = FloppyType.F720K.value
-            app.query_one("#img-system-format", Checkbox).value = True
-            app.query_one("#boot-mode", Select).value = BootMode.PCDOS.value
-
-            request = app._request_from_form()
-            assert request.media_type is MediaType.IMG
-            assert request.floppy_type is FloppyType.F720K
-            assert request.size_bytes == FloppyType.F720K.size_bytes
-            assert request.img_system_format is True
-            assert request.boot_mode is BootMode.PCDOS
-            assert request.disk_format is DiskFormat.FAT16
-
-    asyncio.run(run())
-
-
 def test_request_from_form_img_without_system_mode_forces_non_bootable() -> None:
     async def run() -> None:
         app = DosForgeApp()

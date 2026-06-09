@@ -488,7 +488,6 @@ def test_coerce_uncheck_system_format_clears_boot():
         (BootMode.FREEDOS, "freedos"),
         (BootMode.MSDOS33, "msdos33"),
         (BootMode.MSDOS622, "msdos622"),
-        (BootMode.PCDOS, "pcdos"),
         (BootMode.PCDOS3, "pcdos3"),
         (BootMode.PCDOS71, "pcdos71"),
         (BootMode.COMPAQ2, "compaq2"),
@@ -514,11 +513,6 @@ def test_coerce_boot_change_snaps_boot_assets_to_mode_value():
     )
     assert new.boot_assets == "msdos5"
 
-    # Pick PCDOS -> snaps to 'pcdos' (the generic catch-all dir).
-    new = f.coerce_on_boot_change(
-        _state(boot_mode=BootMode.PCDOS.value, boot_assets="msdos5")
-    )
-    assert new.boot_assets == "pcdos"
 
     # Pick NONE -> empty (no boot, no assets needed).
     new = f.coerce_on_boot_change(

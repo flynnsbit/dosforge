@@ -163,15 +163,6 @@ INSTRUCTIONS: dict[str, tuple[str, str, str]] = {
         """),
         "Source: IBM ServerGuide Scripting Toolkit, or the public PC-DOS 7.1 retail floppy set.",
     ),
-    "pcdos": (
-        "PC-DOS install media (generic / pre-7.0)",
-        dedent("""\
-            Drop the PC-DOS install floppy here (raw IMG/IMA). The exact
-            filename isn't pinned — dosforge will scan for any image
-            containing IBMBIO.COM + IBMDOS.COM + COMMAND.COM.
-        """),
-        "Source: WinWorldPC (IBM PC-DOS 3.x / 5.x / 6.x retail).",
-    ),
     # The remaining folders are kept as placeholders for future per-version
     # boot modes; they aren't wired into any current --boot-mode but are
     # useful as a stable destination for the user's install media archive.

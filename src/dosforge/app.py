@@ -504,12 +504,6 @@ class DosForgeApp(App[None]):
                                         ("MS-DOS 5.0", BootMode.MSDOS5.value),
                                         ("MS-DOS 6.0", BootMode.MSDOS6.value),
                                         ("MS-DOS 6.22", BootMode.MSDOS622.value),
-                                        # NB: the generic ``--boot-mode pcdos`` (IBM PC-DOS
-                                        # catch-all) is intentionally hidden from the dropdown
-                                        # -- redundant with the four version-specific PC-DOS
-                                        # modes (pcdos3, pcdos7, pcdos2000, pcdos71) and lacks
-                                        # version-aware size caps.  Still accepted via CLI for
-                                        # advanced users; see dosassets/pcdos/readme.txt.
                                         (
                                             "IBM PC-DOS 3.00 (1984, 360k DSDD)",
                                             BootMode.PCDOS3.value,
@@ -1041,8 +1035,7 @@ class DosForgeApp(App[None]):
             BootMode.MSDOS5,
             BootMode.MSDOS6,
             BootMode.MSDOS622,
-            BootMode.PCDOS,
-            BootMode.PCDOS3,
+                BootMode.PCDOS3,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.PCDOS71,

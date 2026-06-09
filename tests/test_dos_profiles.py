@@ -21,7 +21,6 @@ EXPECTED_MODES = (
     "msdos5",
     "msdos622",
     "msdos71",
-    "pcdos",
     "pcdos7",
     "pcdos71",
     "ibm8088",
@@ -77,7 +76,7 @@ def test_msdos_family_uses_iosys() -> None:
 
 def test_ibm_pcdos_family_uses_ibmbio() -> None:
     """IBM PC-DOS family uses IBMBIO.COM + IBMDOS.COM, not IO.SYS."""
-    for mode in ("pcdos", "pcdos7", "pcdos71", "compaq331"):
+    for mode in ("pcdos7", "pcdos71", "compaq331"):
         profile = get_profile(mode)
         file_names = {f.name for f in profile.system_files}
         assert "IBMBIO.COM" in file_names, f"{mode} missing IBMBIO.COM"
@@ -109,7 +108,7 @@ def test_fourdos_install_dir_is_4dos() -> None:
 def test_dos3_family_is_pre_dos5() -> None:
     """DOS 3.x family must declare pre_dos5=True so synthesizers know
     not to emit DOS=HIGH/UMB/AUTO or DEVICE=HIMEM.SYS lines."""
-    for mode in ("msdos33", "msdos331", "compaq331", "pcdos"):
+    for mode in ("msdos33", "msdos331", "compaq331"):
         profile = get_profile(mode)
         assert profile.pre_dos5, f"{mode} must be pre_dos5=True"
 
@@ -133,9 +132,9 @@ def test_fat32_supported_only_in_fat32_families() -> None:
 
 
 def test_emulator_required_modes() -> None:
-    """compaq331, msdos33, msdos331, pcdos71, pcdos require emulator
+    """compaq331, msdos33, msdos331, pcdos71 require emulator
     for the SYS install step."""
-    must_emulate = {"compaq331", "msdos33", "msdos331", "pcdos71", "pcdos", "ibm8088"}
+    must_emulate = {"compaq331", "msdos33", "msdos331", "pcdos71", "ibm8088"}
     for mode in EXPECTED_MODES:
         profile = get_profile(mode)
         if mode in must_emulate:

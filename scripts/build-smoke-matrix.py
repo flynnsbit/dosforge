@@ -98,7 +98,6 @@ _DEFAULT_SIZE: dict[tuple[BootMode, DiskFormat], str] = {
     (BootMode.MSDOS33, DiskFormat.FAT12): "10M",      # MFM Type 1 only
     (BootMode.MSDOS331, DiskFormat.FAT16): "32M",     # capped at 32 MiB
     (BootMode.COMPAQ331, DiskFormat.FAT16): "128M",
-    (BootMode.PCDOS, DiskFormat.FAT16): "32M",
     (BootMode.PCDOS7, DiskFormat.FAT16): "128M",
     # PC-DOS 7.1 FORMAT32 requires ≥1 GiB for FAT32 (FAT16 still OK at 32M).
     (BootMode.PCDOS71, DiskFormat.FAT16): "32M",
@@ -117,7 +116,6 @@ _VHD_DEFAULT_BY_FORMAT: dict[DiskFormat, str] = {
 # and accommodates FAT16 ≥16 MiB.
 _FORCE_BIOS_DRIVE_TYPE: dict[BootMode, str] = {
     BootMode.IBM8088: "ami:45",
-    BootMode.PCDOS: "ami:3",
     BootMode.MSDOS33: "ami:3",
 }
 
@@ -136,7 +134,6 @@ _FORCE_BIOS_DRIVE_TYPE: dict[BootMode, str] = {
 # DOS underneath; its IMG path is its own unimplemented dispatcher
 # and is deferred.
 _IMG_UNSUPPORTED_MODES: set[BootMode] = {
-    BootMode.PCDOS,     # generic CLI-only catch-all, no IMG dispatcher
     # 4DOS is a shell overlay -- it requires a host DOS to provide
     # COMMAND.COM/IO.SYS.  Our 4DOS host is MSDOS71 (OSR2); the
     # 4DOS IMG dispatcher itself isn't wired yet.  4DOS VHD works fine.
@@ -153,7 +150,6 @@ _REQUIRED_ASSET_GLOBS: dict[BootMode, list[str]] = {
     BootMode.COMPAQ3: ["compaq3/*.7z", "compaq3/*.zip", "compaq3/*.IMG", "compaq3/*.img"],
     BootMode.DRDOS6: ["drdos6/*.7z", "drdos6/*.zip", "drdos6/*.IMG", "drdos6/*.img"],
     BootMode.DRDOS7: ["drdos7/*.7z", "drdos7/*.zip", "drdos7/*.IMG", "drdos7/*.img"],
-    BootMode.PCDOS: ["pcdos/*.IMG", "pcdos/*.img", "pcdos/*.7z", "pcdos/*.zip"],
     BootMode.PCDOS3: ["pcdos3/*.IMG", "pcdos3/*.img", "pcdos3/*.7z", "pcdos3/*.zip"],
     BootMode.MSDOS6: ["msdos6/*.IMG", "msdos6/*.img", "msdos6/*.7z", "msdos6/*.zip"],
     BootMode.PCDOS2000: ["pcdos2000/*.IMG", "pcdos2000/*.img", "pcdos2000/*.7z", "pcdos2000/*.zip"],
@@ -222,10 +218,6 @@ _VHD_86BOX: dict[BootMode, Profile86Box] = {
     ),
     BootMode.MSDOS622: Profile86Box(
         "AT compatible (ibmat)", "80286 8MHz", "AT BIOS; AT IDE auto",
-        "C>",
-    ),
-    BootMode.PCDOS: Profile86Box(
-        "IBM AT (ibmat)", "80286 8MHz", "AT BIOS; MFM HDC",
         "C>",
     ),
     BootMode.PCDOS3: Profile86Box(
@@ -310,7 +302,6 @@ def _vhd_size_for(boot_mode: BootMode, fmt: DiskFormat) -> str:
 _DEFAULT_FLOPPY: dict[BootMode, FloppyType] = {
     BootMode.IBM8088: FloppyType.F360K,
     BootMode.MSDOS33: FloppyType.F360K,
-    BootMode.PCDOS: FloppyType.F360K,
     BootMode.PCDOS3: FloppyType.F360K,
     BootMode.COMPAQ2: FloppyType.F360K,
     BootMode.COMPAQ3: FloppyType.F360K,

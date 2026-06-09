@@ -621,27 +621,6 @@ def test_resolve_ibm8088_dos33_prefers_install_image_boot_sector_over_sys_com(
     assert template == boot_sector_from_image
 
 
-def test_resolve_pcdos_direct_directory_with_ibmbio_set(tmp_path: Path) -> None:
-    assets_dir = tmp_path / "pcdos"
-    _touch(assets_dir / "IBMBIO.COM", b"bios")
-    _touch(assets_dir / "IBMDOS.COM", b"dos")
-    _touch(assets_dir / "COMMAND.COM", b"command")
-    _touch(assets_dir / "BOOTSECT_FAT16.BIN", _msdos_fat16_boot_sector_bytes())
-
-    request = CreateRequest(
-        path=tmp_path / "disk.img",
-        size_bytes=1440 * 1024,
-        disk_format=DiskFormat.FAT16,
-        boot_mode=BootMode.PCDOS,
-        boot_assets_path=assets_dir,
-    )
-    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
-    assets = resolver.resolve(request)
-
-    assert sorted(assets.system_files) == ["COMMAND.COM", "IBMBIO.COM", "IBMDOS.COM"]
-    assert assets.boot_sector_template == assets_dir / "BOOTSECT_FAT16.BIN"
-
-
 def test_resolve_compaq331_uses_named_subdirectory(tmp_path: Path) -> None:
     assets_root = tmp_path / "dos-assets"
     compaq = assets_root / "compaq331"
@@ -662,53 +641,6 @@ def test_resolve_compaq331_uses_named_subdirectory(tmp_path: Path) -> None:
 
     assert assets.boot_sector_template == compaq / "BOOTSECT_FAT16.BIN"
     assert "IO.SYS" in assets.system_files
-
-
-def test_resolve_pcdos_from_install_images_uses_ibmbio_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    assets_dir = tmp_path / "pcdos"
-    assets_dir.mkdir(parents=True)
-    disk1 = assets_dir / "disk01.img"
-    disk1.write_bytes(_msdos_fat16_boot_sector_bytes() + (b"\0" * 1024))
-
-    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
-    request = CreateRequest(
-        path=tmp_path / "disk.img",
-        size_bytes=1440 * 1024,
-        disk_format=DiskFormat.FAT16,
-        boot_mode=BootMode.PCDOS,
-        boot_assets_path=assets_dir,
-    )
-    monkeypatch.setattr(resolver, "_collect_msdos71_install_images", lambda directory: [disk1])
-
-    def fake_extract_from_images(
-        image_paths: list[Path],
-        output_dir: Path,
-        dos_name: str,
-        *,
-        required: bool,
-    ) -> Path | None:
-        assert image_paths == [disk1]
-        payload_map = {
-            "IBMBIO.COM": b"bios",
-            "IBMDOS.COM": b"dos",
-            "COMMAND.COM": b"command",
-        }
-        payload = payload_map.get(dos_name.upper())
-        if payload is None:
-            if required:
-                raise ValidationError(f"missing {dos_name}")
-            return None
-        path = output_dir / dos_name
-        _touch(path, payload)
-        return path
-
-    monkeypatch.setattr(resolver, "_extract_file_from_images", fake_extract_from_images)
-    assets = resolver.resolve(request)
-
-    assert assets.system_files["IBMBIO.COM"].read_bytes() == b"bios"
-    assert assets.system_files["IBMDOS.COM"].read_bytes() == b"dos"
 
 
 def test_mtools_image_path_extracts_savedskf_wrapper(tmp_path: Path) -> None:
@@ -2322,7 +2254,7 @@ def test_default_msdos_config_sys_modern_keeps_dos_high(tmp_path: Path) -> None:
 def test_use_pre_dos5_config_sys_legacy_dos_modes() -> None:
     from dosforge.boot import _use_pre_dos5_config_sys
 
-    for mode in (BootMode.MSDOS33, BootMode.MSDOS331, BootMode.COMPAQ331, BootMode.PCDOS):
+    for mode in (BootMode.MSDOS33, BootMode.MSDOS331, BootMode.COMPAQ331):
         request = CreateRequest(
             path=Path("/tmp/x.vhd"),
             size_bytes=32 * 1024 * 1024,

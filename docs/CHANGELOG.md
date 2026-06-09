@@ -107,9 +107,6 @@ geometry/format logic.
   Without the second Y, FORMAT bailed without transferring system
   files, leaving "Missing operating system" or "Non-System disk" at
   boot.
-- **`pcdos` boot mode** now routes through the PC-DOS 7.0 QEMU install
-  pipeline (LOADDSKF-decompressed 144US1.DSK) instead of inheriting
-  FreeDOS-style staging. Produces an authentic IBM 7.0 boot.
 - **PC-DOS 7.1 FAT32** is required by `FORMAT32.COM` (it rejects
   partitions smaller than 1 GiB / not laid out as FAT32). Validation
   now refuses FAT16 unless the new fat16 profile is used.
@@ -139,7 +136,6 @@ Every boot mode × FAT combination boots to a DOS prompt:
 | `msdos5`     | ✅                    | n/a                     |
 | `msdos622`   | ✅                    | n/a                     |
 | `msdos71`    | ✅                    | ✅                      |
-| `pcdos`      | ✅                    | n/a                     |
 | `pcdos7`     | ✅                    | n/a                     |
 | `pcdos71`    | ✅ (NEW)              | ✅ (1 GiB+)             |
 | `ibm8088`    | ✅ (DOS33 + DOS50)    | n/a                     |
@@ -468,7 +464,7 @@ release. The legacy CLI command and migration shims have been removed —
     QEMU FORMAT pipeline)
   - `msdos33` (`FORMAT C: /S` driven inside QEMU)
   - `msdos331` / `compaq331` (FAT16B, `SYS C:` driven inside QEMU)
-  - `msdos5` / `msdos622` / `pcdos` / `pcdos7`
+  - `msdos5` / `msdos622` / `pcdos7`
 - **Machine targets** (`--machine-target`) with byte-exact footer CHS,
   partition layout, and BPB geometry:
   - `martypc-xebec` (4 MFM Xebec drive types, including FAT12 for Type 1)

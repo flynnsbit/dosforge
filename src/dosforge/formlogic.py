@@ -86,7 +86,6 @@ _DOS_PROFILE_BOOT_MODES = frozenset(
         BootMode.MSDOS5,
         BootMode.MSDOS6,
         BootMode.MSDOS622,
-        BootMode.PCDOS,
         BootMode.PCDOS3,
         BootMode.COMPAQ3,
         BootMode.PCDOS7,
@@ -365,7 +364,6 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
     BootMode.MSDOS5: _BootMediaRule(frozenset({DiskFormat.FAT16})),
     BootMode.MSDOS6: _BootMediaRule(frozenset({DiskFormat.FAT16})),
     BootMode.MSDOS622: _BootMediaRule(frozenset({DiskFormat.FAT16})),
-    BootMode.PCDOS: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16})),
     BootMode.PCDOS7: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16})),
     BootMode.PCDOS2000: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16})),
     BootMode.COMPAQ2: _BootMediaRule(frozenset({DiskFormat.FAT12}), max_mb=16),
@@ -552,7 +550,7 @@ def coerce_on_boot_change(state: FormState) -> FormState:
             img_system_format=False,
             ibm_dos_version=IBMDOSVersion.DOS33.value,
         )
-    if boot_mode in {BootMode.MSDOS33, BootMode.PCDOS} or (
+    if boot_mode is BootMode.MSDOS33 or (
         boot_mode is BootMode.IBM8088 and IBMDOSVersion(state.ibm_dos_version) is IBMDOSVersion.DOS33
     ):
         state = replace(state, disk_controller=DiskController.MFM.value, ibm_dos_version=IBMDOSVersion.DOS33.value)
