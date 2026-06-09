@@ -276,8 +276,23 @@ _BUILTIN_MSDOS_MBR_BOOT_CODE_B64 = (
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     "AAAAAAAAAAA="
 )
+# Generated from ``dosassets/freedos/BOOTSECT_FAT16.BIN`` (the
+# canonical FreeDOS FAT16 boot sector shipped in-tree).  The previous
+# hand-edited copy of this constant had a single corrupted byte at
+# offset 171 (``f7`` → ``div di`` instead of the correct ``f3`` →
+# ``div bx``) which silently broke the FAT16 boot loader on hard-disk
+# targets whose BIOS-Parameter-Block sectors-per-cluster value caused
+# ``DI`` and ``BX`` to diverge — e.g. the 128 MiB FreeDOS FAT16
+# smoke-matrix VHD (SPC=8) hung with a blinking cursor in 86Box even
+# though the 32 MiB FreeDOS FAT16 VHD (SPC=1, where DI happens to
+# equal BX) booted fine.
+#
+# Regenerate via::
+#
+#   python -c "import base64; print(base64.b64encode(open(
+#       'dosassets/freedos/BOOTSECT_FAT16.BIN', 'rb').read()).decode())"
 _BUILTIN_FAT16_BOOT_SECTOR_B64 = (
-    "6zyQRlJET1M1LjEAAgQEAAIAAgAA+MgAEQAMAAAIAAAAHAMAgAApJXrCXE5PIE5BTUUgICAgRkFUMTYgICD6/DHAjti9AHy44B+OwInuie+5AAHzpepefOAfAABgAI7YjtCNZqD7iFYkx0bAEADHRsIBAIxexsdGxKBji3Yci34eA3YOg9cAiXbSiX7UikYQmPdmFgHGEdeJdtaJftiLXguxBdPri0YRMdL391ABxoPXAIl22ol+3ItG1otW2F/EXlrolQDEflq5CwC+8X1X86ZfJotFGnQLg8cgJoA9AHXncmVQxF5ai34Wi0bSi1bU6GcAWB4Hjl5cvwAgq4nGi1ZcAfZzA4DGEI7arYP4+HLrMcCrDh/EXlq+ACCtCcB1BYjT/25aSEiLfg2B5/8A9+cDRtoTVtzoIADr4LQOzRBerFY8AHX1w+j1/0Vycm9yIQAw5M0TzRbNGVaJRsiJVsqMhp7niZ6c5+jU/y4AtEG7qlWKViSE0nQZzRNyFdHpgdtUqnUNjXbAiV7MiV7OtELrJotOyItWyopGGPZmGpH38ZL2dhiJ0YjGhunQydDJCOFBxF7EuAECilYkzRNyiItGC1e+oGPEvpznicHzpF+xBNPoAYae54NGyAGDVsoAT3WLxJ6c517DAAAAAAAAAABLRVJORUwgIFNZUwAAVao="
+    "6zyQRlJET1M1LjEAAgQEAAIAAgAA+MgAEQAMAAAIAAAAHAMAgAApJXrCXE5PIE5BTUUgICAgRkFUMTYgICD6/DHAjti9AHy44B+OwInuie+5AAHzpepefOAfAABgAI7YjtCNZqD7iFYkx0bAEADHRsIBAIxexsdGxKBji3Yci34eA3YOg9cAiXbSiX7UikYQmPdmFgHGEdeJdtaJftiLXguxBdPri0YRMdL381ABxoPXAIl22ol+3ItG1otW2F/EXlrolQDEflq5CwC+8X1X86ZfJotFGnQLg8cgJoA9AHXncmVQxF5ai34Wi0bSi1bU6GcAWB4Hjl5cvwAgq4nGi1ZcAfZzA4DGEI7arYP4+HLrMcCrDh/EXlq+ACCtCcB1BYjT/25aSEiLfg2B5/8A9+cDRtoTVtzoIADr4LQOzRBerFY8AHX1w+j1/0Vycm9yIQAw5M0TzRbNGVaJRsiJVsqMhp7niZ6c5+jU/y4AtEG7qlWKViSE0nQZzRNyFdHpgdtUqnUNjXbAiV7MiV7OtELrJotOyItWyopGGPZmGpH38ZL2dhiJ0YjGhunQydDJCOFBxF7EuAECilYkzRNyiItGC1e+oGPEvpznicHzpF+xBNPoAYae54NGyAGDVsoAT3WLxJ6c517DAAAAAAAAAABLRVJORUwgIFNZUwAAVao="
 )
 # FreeDOS FAT32 CHS boot sector (FRDOS5.1 OEM, EB 58 90 jmp opcode).
 # Source: built from FDOS/kernel boot/boot32.asm via NASM 3.01.
@@ -1116,6 +1131,17 @@ class BootAssetResolver:
         if not self._looks_like_freedos_fat16_boot_sector(boot_sector):
             return None
         if not any(mbr_code):
+            return None
+        # Reject a stale cached copy of the pre-v0.9.8 buggy builtin
+        # FreeDOS FAT16 boot sector.  That copy had a single-byte
+        # corruption at offset 171 (``f7`` → ``div di`` instead of the
+        # correct ``f3`` → ``div bx``) which made the FreeDOS boot
+        # loader divide by the wrong register when computing FAT/root-
+        # dir geometry on hard-disk targets whose BIOS-Parameter-Block
+        # sectors-per-cluster value caused ``DI`` and ``BX`` to diverge
+        # (e.g. SPC=8 on a 128 MiB volume).  Detect the corrupted byte
+        # and force a re-seed from the now-correct builtin.
+        if boot_sector[171] == 0xF7:
             return None
         # Reject a stale cached copy of the embedded 71-byte CHS-only
         # MBR (see ``_seed_builtin_fat16_boot_records`` for why this
