@@ -788,12 +788,6 @@ class BootAssetResolver:
         )
 
     def _resolve_freedos_from_image(self, image_path: Path, disk_format: DiskFormat) -> BootAssets:
-        if disk_format is DiskFormat.FAT32:
-            raise ValidationError(
-                "FreeDOS auto image source only provides FAT16-style boot sector templates. "
-                "Use local FreeDOS assets with BOOTSECT_FAT32.BIN for FAT32 boot mode."
-            )
-
         extraction_root = self.cache_root / f"freedos-{self._hash_value(str(image_path.resolve()))}"
         extraction_root.mkdir(parents=True, exist_ok=True)
         files: dict[str, Path] = {}
@@ -808,13 +802,27 @@ class BootAssetResolver:
         self._ensure_freedos_core_payload(payload_dir)
         self._prefer_freedos_core_system_files(files, payload_dir)
 
-        template = extraction_root / "BOOTSECT_FAT16.BIN"
-        if not template.exists():
-            with image_path.open("rb") as handle:
-                boot_sector = handle.read(512)
-            if len(boot_sector) < 512:
-                raise ValidationError(f"FreeDOS image is too small to contain a boot sector: {image_path}")
-            template.write_bytes(boot_sector)
+        if disk_format is DiskFormat.FAT32:
+            # The upstream FreeDOS boot image is FAT12 floppy media;
+            # its first sector is a FAT12 VBR, not a FAT32 one.  Seed
+            # the FAT32 template from the bundled / built-in CHS
+            # boot32 sector (see _write_fat32_boot_template +
+            # _BUILTIN_FAT32_BOOT_SECTOR_B64).  This is what makes
+            # AUTO + FAT32 produce a bootable VHD without forcing the
+            # user to switch to the LOCAL source.
+            template = extraction_root / "BOOTSECT_FAT32.BIN"
+            self._write_fat32_boot_template(
+                template,
+                search_roots=(extraction_root.parent, Path.cwd()),
+            )
+        else:
+            template = extraction_root / "BOOTSECT_FAT16.BIN"
+            if not template.exists():
+                with image_path.open("rb") as handle:
+                    boot_sector = handle.read(512)
+                if len(boot_sector) < 512:
+                    raise ValidationError(f"FreeDOS image is too small to contain a boot sector: {image_path}")
+                template.write_bytes(boot_sector)
 
         # Same filter as the directory-source path: even auto-fetched
         # FreeDOS payloads can over-stage when bundled with optional

@@ -23,7 +23,9 @@ TYPE2_SIZE = 615 * 4 * 17 * 512
 AT_504_SIZE = 1024 * 16 * 63 * 512
 
 
-def test_validate_rejects_freedos_auto_with_fat32() -> None:
+def test_validate_accepts_freedos_auto_with_fat32() -> None:
+    """v0.9.5: FreeDOS auto-download now supports FAT32 (bundled
+    + builtin BOOTSECT_FAT32.BIN, CHS variant)."""
     manager = DiskManager()
     request = CreateRequest(
         path=Path("/tmp/test.vhd"),
@@ -32,8 +34,7 @@ def test_validate_rejects_freedos_auto_with_fat32() -> None:
         boot_mode=BootMode.FREEDOS,
         freedos_source=FreeDOSSource.AUTO,
     )
-    with pytest.raises(ValidationError, match="FAT16 only"):
-        manager._validate_create_request(request)
+    manager._validate_create_request(request)
 
 
 def test_validate_accepts_freedos_auto_with_fat16() -> None:

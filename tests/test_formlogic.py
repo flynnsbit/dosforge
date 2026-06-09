@@ -328,19 +328,18 @@ def test_compaq331_capped_at_504mib():
     assert snapped.size_text == "400M"
 
 
-def test_freedos_auto_fat32_rejected_at_next():
-    """v0.8.3: FreeDOS auto-download bundle ships FAT16 boot assets
-    only.  validate_media_step now catches FAT32 + AUTO at Next."""
+def test_freedos_auto_fat32_allowed():
+    """v0.9.5: FreeDOS auto-download now supports FAT32 via the
+    bundled BOOTSECT_FAT32.BIN (CHS variant from boot32.asm) +
+    the embedded _BUILTIN_FAT32_BOOT_SECTOR_B64 fallback.  The
+    stale 'FAT16 only' gate from v0.8.3 is gone."""
     state = _state(
         boot_mode=BootMode.FREEDOS.value,
         disk_format=DiskFormat.FAT32.value,
         freedos_source=FreeDOSSource.AUTO.value,
         size_text="128M",
     )
-    err = f.validate_media_step(state)
-    assert err is not None
-    assert "fat16" in err.lower() or "fat32" in err.lower()
-    assert "local" in err.lower()
+    assert f.validate_media_step(state) is None
 
 
 def test_freedos_local_fat32_allowed():

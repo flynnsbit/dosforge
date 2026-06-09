@@ -627,24 +627,6 @@ def validate_media_step(state: FormState) -> str | None:
             f"{fmt.value} partitions cannot exceed {_render_mb(max_mb)} "
             "(the FAT format's hard cap)."
         )
-    # FreeDOS auto-download bundle ships FAT16 boot assets only
-    # (BOOTSECT_FAT16.BIN); FAT32 requires the LOCAL source with
-    # BOOTSECT_FAT32.BIN.  Surface the gate at Next rather than
-    # letting the user reach Create.
-    if (
-        boot_mode is BootMode.FREEDOS
-        and fmt is DiskFormat.FAT32
-    ):
-        try:
-            source = FreeDOSSource(state.freedos_source)
-        except ValueError:
-            source = FreeDOSSource.AUTO
-        if source is FreeDOSSource.AUTO:
-            return (
-                "FreeDOS auto-download bundle ships FAT16 boot assets only. "
-                "For FAT32, switch FreeDOS source to 'Local FreeDOS assets' "
-                "(needs BOOTSECT_FAT32.BIN in your dosassets/freedos/ folder)."
-            )
     return None
 
 

@@ -1483,15 +1483,6 @@ class DiskManager:
             raise ValidationError(
                 "MS-DOS 3.30 boot mode supports FAT16 (and FAT12 for 10 MiB MFM presets)."
             )
-        if (
-            request.boot_mode is BootMode.FREEDOS
-            and request.freedos_source is FreeDOSSource.AUTO
-            and request.disk_format is DiskFormat.FAT32
-        ):
-            raise ValidationError(
-                "FreeDOS auto-download boot mode currently supports FAT16 only. "
-                "For FAT32, use local FreeDOS assets with BOOTSECT_FAT32.BIN."
-            )
 
     def _resolve_custom_payload_path(self, request: CreateRequest) -> Path | None:
         payload_path = request.custom_payload_path
