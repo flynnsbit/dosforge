@@ -2558,6 +2558,7 @@ class DiskManager:
             from ._legacy_dos_archive import extract_legacy_dos_install_archive
             disk01 = extract_legacy_dos_install_archive(assets_dir)
             shutil.copyfile(disk01, target_path)
+            self._sanitize_verbatim_install_floppy(target_path, request.boot_mode)
             custom_payload = self._resolve_custom_payload_path(request)
             if custom_payload is not None:
                 if self.backend.supports_kernel_mount:
@@ -2628,6 +2629,51 @@ class DiskManager:
     def _create_fixed_img(self, path: Path, floppy_type: FloppyType) -> None:
         with path.open("wb") as handle:
             handle.truncate(floppy_type.size_bytes)
+
+    def _sanitize_verbatim_install_floppy(
+        self, target_path: Path, boot_mode: BootMode
+    ) -> None:
+        """Strip auto-run installer wiring from a verbatim-copied install
+        floppy so the produced media boots to a plain ``A:\\>`` prompt
+        instead of dumping the user into the OEM installer (which tries
+        to find a hard drive C: and FDISKs it).
+
+        Currently only DR-DOS 7.03's ``Installation & Utilities 1.img``
+        needs this — its stock AUTOEXEC.BAT calls ``INSTALL.EXE``. The
+        DR-DOS 6 Disk 1 has no AUTOEXEC.BAT, and the MS-DOS/PC-DOS/
+        Compaq verbatim floppies likewise boot to a bare prompt.
+
+        Replaces AUTOEXEC.BAT with a minimal ``PROMPT $p$g`` script
+        (kept hidden behind the same mtools attribute the original used).
+        Leaves INSTALL.EXE on the disk so the user can run it manually.
+        """
+        if boot_mode is not BootMode.DRDOS7:
+            return
+        if not isinstance(self.runner, CommandRunner):
+            return
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".bat", delete=False, newline="\r\n"
+            ) as tmp:
+                tmp.write("@ECHO OFF\r\nPROMPT $p$g\r\n")
+                tmp_path = Path(tmp.name)
+            try:
+                self.runner.run(
+                    ["mdel", "-i", str(target_path), "::AUTOEXEC.BAT"],
+                    check=False,
+                )
+                self.runner.run(
+                    ["mcopy", "-i", str(target_path), "-o", str(tmp_path),
+                     "::AUTOEXEC.BAT"],
+                    check=True,
+                )
+            finally:
+                try:
+                    tmp_path.unlink()
+                except FileNotFoundError:
+                    pass
+        except Exception:
+            pass
 
     def _install_legacy_dos_via_qemu(
         self,
