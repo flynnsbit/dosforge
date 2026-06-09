@@ -22,7 +22,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .commands import CommandRunner, subprocess_no_window_kwargs
-from .errors import ValidationError
+from .errors import DependencyError, ValidationError
 
 
 @dataclass(frozen=True)
@@ -1117,12 +1117,19 @@ class LegacyDosQemuInstaller:
 
         # Optional pre-install scrub: delete files/dirs that came with a
         # repurposed bootable floppy (e.g. tk_raid.vfd) so FORMAT32 has
-        # room to land. mdel handles files; mdeltree handles directories.
+        # room to land.  ``mdeltree`` was removed from modern mtools
+        # builds; if it's missing, fall through to ``mdel`` which still
+        # handles files (the most common case in pre_install_deletes).
+        # Any remaining directories stay on the floppy and waste a few
+        # KB, but the install still succeeds.
         for name in profile.pre_install_deletes:
-            self.runner.run(
-                ["mdeltree", "-i", str(work), f"::{name}"],
-                check=False,
-            )
+            try:
+                self.runner.run(
+                    ["mdeltree", "-i", str(work), f"::{name}"],
+                    check=False,
+                )
+            except DependencyError:
+                pass  # mdeltree not available; mdel below covers files
             self.runner.run(
                 ["mdel", "-i", str(work), f"::{name}"],
                 check=False,
