@@ -2557,6 +2557,15 @@ class DiskManager:
             # _sanitize_verbatim_install_floppy strips the OEM
             # CHOICE/SETUP prompt so the floppy boots to A:\>.
             BootMode.PCDOS2000: ("IBM PC-DOS 2000 (pcdos2000)", FloppyType.F1440K),
+            # MS-DOS 6.0 install disk 1 is a 1.44 MiB bootable floppy
+            # carrying IO.SYS/MSDOS.SYS/COMMAND.COM + the MS-DOS 6.0
+            # utility set (ATTRIB, CHKDSK, CHOICE, DEBUG, DEFRAG,
+            # DELTREE, EDIT, EXPAND, FDISK, FORMAT, HIMEM, KEYB,
+            # NLSFUNC, ...).  Verbatim copy preserves the authentic
+            # MS-DOS 6.0 boot sector; _sanitize_verbatim_install_floppy
+            # strips the OEM ``setup`` auto-run so the floppy boots
+            # to A:\>.
+            BootMode.MSDOS6: ("Microsoft MS-DOS 6.0 (msdos6)", FloppyType.F1440K),
         }
         if request.boot_mode in verbatim_floppy_modes:
             label, expected_floppy = verbatim_floppy_modes[request.boot_mode]
@@ -2668,7 +2677,7 @@ class DiskManager:
         instead of dumping the user into the OEM installer (which tries
         to find a hard drive C: and FDISKs it).
 
-        Currently handles three boot modes:
+        Currently handles four boot modes:
 
         * **DR-DOS 7.03** — stock AUTOEXEC.BAT calls ``INSTALL.EXE``.
         * **MS-DOS 7.10 (OSR2)** — stock AUTOEXEC.BAT chains through
@@ -2676,6 +2685,8 @@ class DiskManager:
         * **PC-DOS 2000** — stock AUTOEXEC.BAT runs
           ``CHOICE /C:YN /TY,10 Do you want to install PC DOS 7.0``
           and then ``setup``.
+        * **MS-DOS 6.0** — stock AUTOEXEC.BAT runs ``nlsfunc``,
+          ``keyb us``, then ``setup``.
 
         DR-DOS 6 Disk 1, Compaq DOS 2.11, MS-DOS 3.00 (Compaq OEM),
         and PC-DOS 3.00 verbatim floppies have no AUTOEXEC.BAT and
@@ -2685,7 +2696,12 @@ class DiskManager:
         Leaves the OEM installer binaries (INSTALL.EXE / SETUP.BAT /
         SETUP.EXE) on the disk so the user can run them manually.
         """
-        if boot_mode not in {BootMode.DRDOS7, BootMode.MSDOS71, BootMode.PCDOS2000}:
+        if boot_mode not in {
+            BootMode.DRDOS7,
+            BootMode.MSDOS71,
+            BootMode.PCDOS2000,
+            BootMode.MSDOS6,
+        }:
             return
         if not isinstance(self.runner, CommandRunner):
             return

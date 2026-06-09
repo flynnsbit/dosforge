@@ -127,16 +127,15 @@ _FORCE_BIOS_DRIVE_TYPE: dict[BootMode, str] = {
 # Script pre-skips these instead of running into a guaranteed
 # "Unsupported boot mode" exit code.
 #
-# As of v0.9.13, MSDOS71/PCDOS2000/PCDOS3/COMPAQ3 all flow through
-# the verbatim-Disk-1 copy path (see verbatim_floppy_modes in
-# src/dosforge/disk.py) and produce bootable A:\ floppies when the
-# install archive is present in dosassets/<mode>/.  MSDOS6/PCDOS
-# remain unsupported (no descriptor + no media on the dev box; can
-# be wired in a future release once verified).  4DOS is a shell
-# overlay that needs a host DOS underneath; its IMG path is its own
-# unimplemented dispatcher and is deferred.
+# As of v0.9.14, MSDOS6/MSDOS71/PCDOS2000/PCDOS3/COMPAQ3 all flow
+# through the verbatim-Disk-1 copy path (see verbatim_floppy_modes
+# in src/dosforge/disk.py) and produce bootable A:\ floppies when
+# the install archive is present in dosassets/<mode>/.  PCDOS
+# remains unsupported (CLI-only generic catch-all without its own
+# install descriptor).  4DOS is a shell overlay that needs a host
+# DOS underneath; its IMG path is its own unimplemented dispatcher
+# and is deferred.
 _IMG_UNSUPPORTED_MODES: set[BootMode] = {
-    BootMode.MSDOS6,    # no static install template; needs VHD QEMU loop
     BootMode.PCDOS,     # generic CLI-only catch-all, no IMG dispatcher
     # 4DOS is a shell overlay -- it requires a host DOS to provide
     # COMMAND.COM/IO.SYS.  Our 4DOS host is MSDOS71 (OSR2); the
