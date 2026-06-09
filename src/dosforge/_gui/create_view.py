@@ -110,39 +110,10 @@ class CreateView(ttk.Frame):
 
         row = 0
 
-        # ── Card: Output ───────────────────────────────────────────────
-        out_card = Card(body, theme, title="Output")
-        out_card.grid(row=row, column=0, sticky="ew", pady=(0, 12))
-        row += 1
-        ob = out_card.body
-        ob.columnconfigure(0, weight=1)
-        self._add_field(
-            ob, fl.FIELD_OUTPUT_PATH, "Output image path",
-            lambda p: ttk.Entry(p, textvariable=self.var_path),
-            row=0,
-            browse_command=self._browse_output,
-            help_text="Destination .vhd / .img file.",
-        )
-        self._add_field(
-            ob, fl.FIELD_VOLUME_LABEL, "Volume label (optional)",
-            lambda p: ttk.Entry(p, textvariable=self.var_label),
-            row=1,
-        )
-        self._add_field(
-            ob, fl.FIELD_OVERWRITE, "",
-            lambda p: ttk.Checkbutton(
-                p,
-                text="Overwrite if the file already exists",
-                variable=self.var_overwrite,
-                takefocus=False,
-            ),
-            row=2,
-        )
-
         # ── Card: Boot ─────────────────────────────────────────────────
-        # Boot mode + DOS profile come BEFORE the Media card so the user
-        # picks an OS first; downstream Media defaults can then be
-        # snapped to a valid combo for that OS via coerce_on_boot_change.
+        # Boot OS comes FIRST so the user picks an OS before anything
+        # else; downstream Output / Media defaults are then valid for
+        # that OS via coerce_on_boot_change.
         boot_card = Card(body, theme, title="Boot")
         boot_card.grid(row=row, column=0, sticky="ew", pady=(0, 12))
         row += 1
@@ -182,6 +153,35 @@ class CreateView(ttk.Frame):
                         self.combo_profile.build, row=5)
         self._add_field(bb, fl.FIELD_IBM_DOS_VERSION, "IBM DOS version",
                         self.combo_ibm.build, row=6)
+
+        # ── Card: Output ───────────────────────────────────────────────
+        out_card = Card(body, theme, title="Output")
+        out_card.grid(row=row, column=0, sticky="ew", pady=(0, 12))
+        row += 1
+        ob = out_card.body
+        ob.columnconfigure(0, weight=1)
+        self._add_field(
+            ob, fl.FIELD_OUTPUT_PATH, "Output image path",
+            lambda p: ttk.Entry(p, textvariable=self.var_path),
+            row=0,
+            browse_command=self._browse_output,
+            help_text="Destination .vhd / .img file.",
+        )
+        self._add_field(
+            ob, fl.FIELD_VOLUME_LABEL, "Volume label (optional)",
+            lambda p: ttk.Entry(p, textvariable=self.var_label),
+            row=1,
+        )
+        self._add_field(
+            ob, fl.FIELD_OVERWRITE, "",
+            lambda p: ttk.Checkbutton(
+                p,
+                text="Overwrite if the file already exists",
+                variable=self.var_overwrite,
+                takefocus=False,
+            ),
+            row=2,
+        )
 
         # ── Card: Media & geometry ─────────────────────────────────────
         media_card = Card(body, theme, title="Media & geometry")

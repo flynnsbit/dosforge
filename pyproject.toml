@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dosforge"
-version = "0.9.15"
+version = "0.9.16"
 description = "Textual TUI + Windows 11 GUI for creating and managing DOS-compatible VHD and floppy IMG files."
 readme = "README.md"
 requires-python = ">=3.11"
