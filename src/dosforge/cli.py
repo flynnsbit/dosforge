@@ -366,6 +366,62 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
     mkdir_cmd.add_argument("dos_path")
     mkdir_cmd.add_argument("--partition", type=int, default=None)
 
+    grow_cmd = subcommands.add_parser(
+        "grow",
+        help=(
+            "Grow an existing VHD (FAT16 BIGDOS / FAT32 LBA) and "
+            "optionally append staging content. PREVIEW: contract "
+            "frozen, implementation pending."
+        ),
+    )
+    grow_cmd.add_argument(
+        "--manifest",
+        help="Path to a JSON grow manifest (see dosforge.grow.GrowManifest).",
+    )
+    grow_cmd.add_argument(
+        "--target",
+        help="Path to the existing VHD to grow (ignored when --manifest is given).",
+    )
+    grow_cmd.add_argument(
+        "--new-size",
+        help=(
+            "New disk size in human form (e.g. '2G', '512M'). Ignored "
+            "when --manifest is given."
+        ),
+    )
+    grow_cmd.add_argument(
+        "--boot-mode",
+        help=(
+            "Boot mode of the existing VHD. Must be one of: compaq331, "
+            "msdos622, msdos71, freedos. Ignored when --manifest is given."
+        ),
+    )
+    grow_cmd.add_argument(
+        "--add-from",
+        action="append",
+        default=[],
+        metavar="SRC=DEST",
+        help=(
+            "Stage SRC (host directory) into DEST (DOS absolute path, "
+            "e.g. 'C:\\\\GAMES'). Repeatable. Ignored when --manifest "
+            "is given."
+        ),
+    )
+    grow_cmd.add_argument(
+        "--no-boot-probe",
+        dest="boot_probe",
+        action="store_false",
+        default=True,
+        help="Skip the headless QEMU boot probe of the grown VHD.",
+    )
+    grow_cmd.add_argument(
+        "--no-keep-backup",
+        dest="keep_backup",
+        action="store_false",
+        default=True,
+        help="Do not retain the original VHD as <target>.bak after a successful grow.",
+    )
+
     return parser
 
 
@@ -507,6 +563,82 @@ def _init_assets_command(target: Path | None, *, force: bool) -> int:
     )
     print()
     print("Run 'dosforge where-assets' to confirm the location is now discovered.")
+    return 0
+
+
+def _grow_command(args) -> int:
+    """Dispatch ``dosforge grow``: build a :class:`GrowManifest`
+    from either ``--manifest`` or the per-flag form and invoke the
+    grow pipeline.
+
+    PREVIEW: the in-place expansion implementation is not yet
+    landed. This command validates inputs and surfaces the public
+    contract so downstream tools (notably ``exodosconverter``) can
+    integrate against a stable API. Manifests that pass validation
+    raise :class:`NotImplementedError` from
+    :func:`dosforge.grow.grow_vhd`.
+    """
+
+    from .grow import (
+        GrowManifest,
+        StagingSource,
+        grow_vhd,
+        load_manifest_from_json,
+    )
+
+    if args.manifest:
+        manifest = load_manifest_from_json(Path(args.manifest))
+    else:
+        missing = [
+            flag for flag, value in (
+                ("--target", args.target),
+                ("--new-size", args.new_size),
+                ("--boot-mode", args.boot_mode),
+            ) if value is None
+        ]
+        if missing:
+            raise ValidationError(
+                f"dosforge grow requires either --manifest, or all of: "
+                f"{', '.join(flag for flag, _ in (('--target', None), ('--new-size', None), ('--boot-mode', None)))}. "
+                f"Missing: {', '.join(missing)}."
+            )
+        try:
+            boot_mode = BootMode(args.boot_mode)
+        except ValueError as exc:
+            raise ValidationError(
+                f"Unknown --boot-mode {args.boot_mode!r}."
+            ) from exc
+
+        from .size import parse_size as _parse_size
+
+        sources: list[StagingSource] = []
+        for raw in args.add_from:
+            if "=" not in raw:
+                raise ValidationError(
+                    f"--add-from value {raw!r} must be in the form SRC=DEST."
+                )
+            src, dest = raw.split("=", 1)
+            sources.append(StagingSource(src=Path(src), dest=dest))
+
+        manifest = GrowManifest(
+            target_vhd=Path(args.target),
+            new_size_bytes=_parse_size(args.new_size),
+            boot_mode=boot_mode,
+            staging_sources=tuple(sources),
+            boot_probe=args.boot_probe,
+            keep_backup=args.keep_backup,
+        )
+
+    try:
+        grow_vhd(manifest)
+    except NotImplementedError as exc:
+        # Convert the contract-frozen stub error into a friendly CLI
+        # preview message so downstream automation (exodosconverter)
+        # doesn't see a raw Python traceback. Exit non-zero so any
+        # wrapper script still notices the operation didn't complete.
+        print(f"dosforge grow (PREVIEW): {exc}", file=sys.stderr)
+        return 2
+    print(f"Grew {manifest.target_vhd} to {manifest.new_size_bytes} bytes.")
     return 0
 
 
@@ -1044,6 +1176,9 @@ def _run_manager_subcommand(args, parser) -> int:
                 image_ops.mkdir(Path(args.image), args.dos_path, partition=args.partition)
                 print(f"Created directory {args.dos_path} in {args.image}")
                 return 0
+
+        if args.command == "grow":
+            return _grow_command(args)
     except DosForgeError as exc:
         message = str(exc)
         print(message, file=sys.stderr)
