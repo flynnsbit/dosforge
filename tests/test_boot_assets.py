@@ -1394,6 +1394,58 @@ def test_record_startup_payload_request_filters_excluded_basenames() -> None:
     assert any("HIMEM.SYS" in entry for entry in requests)
 
 
+def test_select_minimal_freedos_payload_curates_bin_to_whitelist(tmp_path: Path) -> None:
+    """FreeDOS BIN/ gets filtered through _FREEDOS_BIN_USEFUL_FILES so
+    bloat (curl, html help viewer, multiple debug variants, kernel
+    binaries) is dropped while user-facing utilities are kept."""
+
+    resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
+    source = tmp_path / "source"
+    bin_dir = source / "BIN"
+    bin_dir.mkdir(parents=True)
+    # Useful utilities (whitelisted)
+    for name in ("EDIT.EXE", "EDIT.HLP", "MEM.EXE", "FDISK.EXE",
+                 "FORMAT.EXE", "XCOPY.EXE", "ASSIGN.COM", "DEBUG.COM",
+                 "SB.EXE", "SBPMIXER.COM"):
+        _touch(bin_dir / name, b"useful")
+    # Bloat (must be filtered out)
+    for name in ("CURL.EXE", "CURLLITE.EXE", "HTMLHELP.EXE",
+                 "BOOKSHLF.EXE", "KERNL386.SYS", "KERNL86.SYS",
+                 "_CHOICE.EXE", "_LABEL.EXE", "_TEE.EXE",
+                 "DEBUGB.BIN", "DEBUGX.COM", "DEBXXVDD.DLL",
+                 "DOS32A.EXE", "STUB32A.EXE",
+                 "EDLIN32.EXE", "FDXMST.SYS", "FDXXMS.SYS",
+                 "HEAD.COM", "TEE.EXE", "PING.EXE",
+                 "COUNTRY.SYS", "DISPLAY.EXE", "SETVER.SYS"):
+        _touch(bin_dir / name, b"bloat")
+    # Subdirectory under BIN/ (FreeCOM source tree) must not be copied.
+    freecom_dir = bin_dir / "FREECOM"
+    freecom_dir.mkdir()
+    _touch(freecom_dir / "command.c", b"// source")
+    partition = tmp_path / "partition-root"
+    partition.mkdir()
+
+    staged = resolver._select_minimal_freedos_payload(source, partition)
+    staged_bin = staged / "BIN"
+    staged_names = {p.name.upper() for p in staged_bin.iterdir() if p.is_file()}
+
+    # Useful utilities staged.
+    for kept in ("EDIT.EXE", "EDIT.HLP", "MEM.EXE", "FDISK.EXE",
+                 "FORMAT.EXE", "XCOPY.EXE", "ASSIGN.COM", "DEBUG.COM",
+                 "SB.EXE", "SBPMIXER.COM"):
+        assert kept in staged_names, f"Whitelisted {kept} should be staged"
+    # Bloat filtered out.
+    for dropped in ("CURL.EXE", "CURLLITE.EXE", "HTMLHELP.EXE",
+                    "BOOKSHLF.EXE", "KERNL386.SYS", "KERNL86.SYS",
+                    "_CHOICE.EXE", "_LABEL.EXE", "DEBUGB.BIN",
+                    "DOS32A.EXE", "EDLIN32.EXE", "FDXXMS.SYS",
+                    "HEAD.COM", "PING.EXE", "COUNTRY.SYS",
+                    "DISPLAY.EXE", "SETVER.SYS"):
+        assert dropped not in staged_names, f"Bloat {dropped} should be dropped"
+    # FreeCOM subdirectory must not be copied.
+    assert not (staged_bin / "FREECOM").exists()
+
+
 def test_dos_core_payload_budget_uses_floppy_bounds(tmp_path: Path) -> None:
     resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
 
@@ -1898,7 +1950,8 @@ def test_freedos_filter_drops_bloat_subdirs(tmp_path: Path) -> None:
 
 
 def test_freedos_filter_keeps_bin_recursively(tmp_path: Path) -> None:
-    """BIN/* (including nested FREECOM/ etc.) survives in full."""
+    """BIN/ files survive (filtered through the curated whitelist);
+    nested subdirs under BIN/ are dropped as FreeCOM-source bloat."""
     assets_dir = tmp_path / "freedos"
     _make_freedos_bundle_with_bloat(assets_dir)
     request = CreateRequest(
@@ -1913,10 +1966,12 @@ def test_freedos_filter_keeps_bin_recursively(tmp_path: Path) -> None:
     assets = resolver.resolve(request)
     staged = assets.fdos_payload_dir
     assert staged is not None
+    # Whitelisted utilities staged.
     assert (staged / "BIN" / "XCOPY.EXE").is_file()
     assert (staged / "BIN" / "ATTRIB.COM").is_file()
-    assert (staged / "BIN" / "FREECOM" / "subhelper.exe").is_file()
-    assert (staged / "BIN" / "HIMEM.EXE").is_file()  # also a CONFIG.SYS ref
+    assert (staged / "BIN" / "HIMEM.EXE").is_file()  # whitelist + CONFIG.SYS ref
+    # Nested FREECOM/ subtree is dropped (FreeCOM source code).
+    assert not (staged / "BIN" / "FREECOM").exists()
 
 
 def test_freedos_filter_picks_up_uncommented_config_refs(tmp_path: Path) -> None:

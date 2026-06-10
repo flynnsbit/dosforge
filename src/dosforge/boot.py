@@ -3632,6 +3632,56 @@ class BootAssetResolver:
         {"APPINFO", "APPS", "DEVEL", "DOC", "HELP", "LINKS", "NET", "NLS", "SOUND"}
     )
 
+    _FREEDOS_BIN_USEFUL_FILES = frozenset(
+        {
+            # Editor + text tools
+            "EDIT.EXE", "EDIT.HLP", "EDLIN.EXE", "SED.EXE",
+            "LESS.EXE", "LESS.HLP",
+            # File management
+            "ATTRIB.COM", "ATTRIB.EXE", "XCOPY.EXE", "MOVE.EXE",
+            "DELTREE.EXE", "TREE.COM", "TREE.EXE", "TOUCH.COM",
+            "COMP.COM", "FC.EXE",
+            # Disk management
+            "FORMAT.EXE", "FORMAT.COM", "FDISK.EXE", "FDISK.COM",
+            "LABEL.EXE", "LABEL.COM", "CHKDSK.EXE", "CHKDSK.COM",
+            "SYS.COM", "SYS.EXE",
+            # Memory drivers (keep both XMS variants + EMM386 for game
+            # configurations that need extended/expanded memory).
+            "MEM.EXE", "FDXMS.SYS", "HIMEM.EXE", "HIMEM.SYS",
+            "HIMEMX.EXE", "EMM386.EXE", "EMM386.SYS",
+            # Search / sort
+            "FIND.COM", "FIND.EXE", "SORT.EXE", "GREP.EXE",
+            # Path / scripting helpers
+            "ASSIGN.COM", "ASSIGN.EXE", "SUBST.EXE", "SWSUBST.EXE",
+            "CHOICE.EXE", "CHOICE.COM", "DOSKEY.EXE", "DOSKEY.COM",
+            # Display / console
+            "MODE.COM", "MODE.EXE", "NANSI.SYS",
+            # Process / system tools
+            "DEBUG.COM", "DEBUG.EXE", "DEVLOAD.COM",
+            "SHARE.COM", "SHARE.EXE", "SVER.EXE", "WHICH.EXE",
+            # Mouse drivers (whichever the distro ships)
+            "CTMOUSE.EXE", "CTMOUSE.COM", "MOUSE.COM", "MOUSE.EXE",
+            # CD-ROM / sound (game-relevant)
+            "SHSUCDX.COM", "SHSUCDX.EXE", "MSCDEX.EXE",
+            "PLAYCD.EXE", "SB.EXE", "SBPMIXER.COM", "SBPMIXER.DRV",
+        }
+    )
+    """Curated whitelist of FreeDOS BIN/ files staged under C:\\FDOS\\BIN\\.
+
+    Default-deny: anything not in this set is dropped from BIN/ during
+    the minimal-payload copy.  Covers the utilities a user actually
+    runs at a DOS prompt plus the game-adjacent tools (sound mixer,
+    CD audio player, mouse driver).  Excluded by omission: curl/
+    curllite (1.2 MB+ networking), HTML help viewers, multiple debug
+    variants, kernel-source binaries (KERNL*.SYS), DOS-extender
+    internals (DOS32A/STUB32*), rename helpers (_CHOICE/_LABEL/_TEE),
+    Unix-style oddities (HEAD/TEE), and reference-data files
+    (BOOKSHLF, LESSKEY, DEBUGB.BIN, DEBXXVDD.DLL).
+
+    Companion files (e.g. EDIT.HLP next to EDIT.EXE, LESS.HLP next
+    to LESS.EXE) are listed explicitly so they ride along.
+    """
+
     def _freedos_payload_needs_filtering(self, payload_dir: Path) -> bool:
         """True if ``payload_dir`` looks like a FullCD dump rather than a curated BIN-only tree.
 
@@ -3712,10 +3762,27 @@ class BootAssetResolver:
                 pass
         staged.mkdir(parents=True)
 
-        # 1. Copy BIN/ verbatim if present (case-insensitive).
+        # 1. Copy BIN/ filtered through the curated whitelist.
+        # FreeDOS 1.x BIN/ ships ~60 files; the whitelist trims it to
+        # ~30 user-runnable utilities (editor, file/disk mgmt, mouse,
+        # CD audio, sound mixer, scripting helpers).  Skips bloat
+        # (curl 1.2 MB, HTML help viewer, multiple debug variants,
+        # kernel binaries, DOS-extender stubs, etc.) and FreeCOM
+        # source tree.  Comparison is case-insensitive so both
+        # ``EDIT.EXE`` and ``edit.exe`` shapes match.
         for entry in source.iterdir():
             if entry.is_dir() and entry.name.upper() == "BIN":
-                shutil.copytree(entry, staged / "BIN")
+                target_bin = staged / "BIN"
+                target_bin.mkdir(parents=True, exist_ok=True)
+                for bin_entry in entry.iterdir():
+                    if bin_entry.is_dir():
+                        # FreeCOM and similar sub-trees are FreeDOS
+                        # internals (COMMAND.COM source, help), not
+                        # user-facing.
+                        continue
+                    if bin_entry.name.upper() not in self._FREEDOS_BIN_USEFUL_FILES:
+                        continue
+                    shutil.copy2(bin_entry, target_bin / bin_entry.name)
                 break
 
         # 2. Parse the partition's CONFIG.SYS / FDCONFIG.SYS /
