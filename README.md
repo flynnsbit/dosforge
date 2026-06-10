@@ -11,9 +11,9 @@ It can create, browse, and modify:
 - fixed-size **VHD** images (FAT12/FAT16/FAT32) for **IDE** or **MFM** controllers
 - floppy **IMG/IMA/VFD** images (FAT12)
 
-with optional boot/system-file staging for **14 bootable DOS modes**
-spanning 1984-1998 (Compaq DOS 2.11 through MS-DOS 7.10 / Win95 OSR2,
-plus FreeDOS).
+with optional boot/system-file staging for **17 bootable DOS modes**
+spanning 1984-1999 (Compaq DOS 2.11 through MS-DOS 7.10 / Win95 OSR2,
+plus PC-DOS, DR-DOS, and FreeDOS).
 
 ## Platform support
 
@@ -33,10 +33,18 @@ plus FreeDOS).
 
 ## Supported boot modes
 
-dosforge produces **14 bootable DOS configurations** plus `none`
+dosforge produces **17 bootable DOS configurations** plus `none`
 (non-bootable) and `4dos` (overlay, planned).  Source media is staged
 in `dosassets/<mode>/` (each mode folder ships a `readme.txt` with the
 expected files / .7z names).
+
+Every `dosassets/<mode>/` directory transparently accepts **any one** of:
+
+- A WinWorldPC `.7z` (or `.zip`) archive — auto-extracted on first use via `py7zr`
+- A raw `.img` / `.ima` / `.dsk` / `.xdf` / `.vfd` floppy file
+- A pre-extracted directory tree with system files at the root
+
+Whichever you have, drop it in and dosforge resolves it automatically.
 
 ### Wired and verified
 
@@ -45,22 +53,21 @@ expected files / .7z names).
 | `freedos` | FreeDOS 1.x | 12/16/32 | IDE | LOCAL files or auto-download |
 | `ibm8088` (+`--ibm-dos-version dos33`/`dos50`) | IBM PC DOS 3.3 or 5.0 | 12/16 | IDE (or MFM via Phoenix Type) | install floppies |
 | `compaq2` | Microsoft MS-DOS 2.11 (Compaq OEM, 1984) | 12 | **MFM** + 360k IMG | WinWorldPC 360k .7z |
+| `compaq3` | Microsoft MS-DOS 3.00 (Compaq OEM, 1985) | 12/16≤32MB | IDE / MFM | 360k .7z |
+| `pcdos3` | IBM PC-DOS 3.00 (1984) | 12/16≤32MB | IDE / MFM | 360k .7z |
 | `msdos33` | MS-DOS 3.30 | 12/16≤32MB | IDE / MFM | install floppies |
 | `msdos331` | Microsoft MS-DOS 3.31 | 16≤32MB | IDE | install floppies |
 | `compaq331` | Compaq DOS 3.31 (FAT16B, up to 504 MiB) | 16B | IDE | install floppies |
-| `pcdos` | IBM PC-DOS 2.x/3.x/4.x (generic, pre-7.0) | 12/16 | IDE / MFM | install floppies |
+| `drdos6` | Digital Research DR DOS 6.0 (1991) | 12/16≤32MB | IDE | 720k .7z (single or 6-disk) |
+| `drdos7` | Caldera DR-DOS 7.03 (1999, FAT16B up to 2 GiB) | 16B | IDE | 1.44M .7z |
 | `msdos5` | MS-DOS 5.00 | 16 | IDE | install floppies |
+| `msdos6` | MS-DOS 6.00 | 16 | IDE | install floppies / .7z |
 | `msdos622` | MS-DOS 6.22 + Enhanced Tools | 16 | IDE | install floppies |
 | `pcdos7` | IBM PC-DOS 7.0 (XDF / LOADDSKF-compressed) | 12/16 | IDE | XDF .DSK file |
 | `pcdos2000` | IBM PC-DOS 2000 (rebranded PC-DOS 7.0 for Y2K) | 12/16 | IDE | 6-floppy 1.44MB .7z |
 | `pcdos71` | IBM PC-DOS 7.1 (SGTK, FAT32 + LBA) | 16/32 | IDE | auto-downloads via `dosforge fetch-pcdos71-assets` |
 | `msdos71` | **MS-DOS 7.10 / Win95 OSR2** (DOS-only boot, no GUI Setup) | 16/32 | IDE | Win95 OSR2 floppy set in `dosassets/w95/` |
 | `4dos` | 4DOS shell overlay on top of a `--host-boot-mode` | — | — | planned (not yet implemented) |
-
-### Queued (user-staged media, wiring pending)
-
-`pcdos3` (IBM PC-DOS 3.00), `msdos6` (MS-DOS 6.0), `compaq3` (Compaq
-OEM MS-DOS 3.00), `drdos6` (DR-DOS 6.0), `drdos7` (Caldera DR-DOS 7.03).
 
 ### Intentionally not implemented
 
@@ -79,10 +86,10 @@ geometry source.
 | `--disk-controller` | Era / use case | Compatible boot modes |
 |---|---|---|
 | `ide` (default for most boot modes) | AT-class IDE/ATA — every emulator since 1988, all modern hardware | All boot modes except those marked MFM-only |
-| `mfm` | XT-class ST-506/ST-412 (1984-1990) — Western Digital WD1002A, IBM/Xebec, Adaptec 4070, etc. Works on 86Box's MFM controllers, PCem MFM, MartyPC Xebec, real WD1002A-WX1 hardware | `compaq2`, `msdos33`, `pcdos`, `ibm8088`+`dos33` |
+| `mfm` | XT-class ST-506/ST-412 (1984-1990) — Western Digital WD1002A, IBM/Xebec, Adaptec 4070, etc. Works on 86Box's MFM controllers, PCem MFM, MartyPC Xebec, real WD1002A-WX1 hardware | `compaq2`, `msdos33`, `ibm8088`+`dos33` |
 
 Auto-detect rules when `--disk-controller` is omitted:
-- **MFM**: `compaq2`, `msdos33`, `pcdos`, `ibm8088`+`dos33`
+- **MFM**: `compaq2`, `msdos33`, `ibm8088`+`dos33`
 - **IDE**: everything else
 
 ### Geometry source (per controller)
@@ -444,14 +451,13 @@ dosforge create \
   --img-system-format \
   --boot-mode compaq2
 
-# Create bootable 720K PC-DOS floppy IMG
+# Create bootable 720K DR-DOS 6 floppy IMG
 dosforge create \
-  --path ~/floppy/pcdos-boot.img \
+  --path ~/floppy/drdos6-boot.img \
   --media-type img \
   --floppy-type 720k \
   --img-system-format \
-  --boot-mode pcdos \
-  --boot-assets-path ./pcdos
+  --boot-mode drdos6
 
 # Create bootable 1.84M XDF-style PC-DOS 7.0 floppy IMG
 dosforge create \
@@ -511,6 +517,88 @@ dosforge mount --path ~/floppy/tools.img --open
 dosforge unmount --mount-point ~/.local/state/dosforge/mounts/demo-xxxxxxxx
 ```
 
+## Inspect an existing VHD
+
+Read-only structural inspection of any VHD — useful for downstream
+tooling (e.g. `exodosconverter`) that wants to decide whether to grow
+vs. rebuild before constructing a manifest.
+
+```bash
+# Human-readable summary
+dosforge inspect path/to/disk.vhd
+
+# JSON for tooling (stable sort_keys output, diff-friendly)
+dosforge inspect path/to/disk.vhd --json
+```
+
+Returns the VHD container shape (file size, footer CHS), MBR partition
+entry (type / LBA / sector count), BPB (OEM stamp, FAT format, cluster
+size, total clusters, volume label + serial), root system files present
+(IO.SYS / MSDOS.SYS / IBMBIO.COM / IBMDOS.COM / KERNEL.SYS / COMMAND.COM
+/ CONFIG.SYS / AUTOEXEC.BAT / FDCONFIG.SYS / FDAUTO.BAT), and an
+**inferred boot mode** via two-stage fallback:
+
+1. Match BPB OEM stamp against known dosforge stamps (`MSDOS5.0`,
+   `IBM  3.3`, `MSWIN4.1`, `FRDOS5.1`, `DRDOS  7`, …).
+2. When the OEM is generic (`mkfs.fat`, `MTOOLxxxx` from mformat),
+   fall back to root-system-file presence: `KERNEL.SYS` → `freedos`,
+   `IO.SYS + MSDOS.SYS` on FAT32 → `msdos71`, `IO.SYS + MSDOS.SYS`
+   on FAT16 → `msdos622`, `IBMBIO.COM + IBMDOS.COM` → `compaq331`.
+
+## Grow an existing VHD
+
+Grows an existing FAT16 (BIGDOS, ≤2 GiB) or FAT32 (LBA, ≤2 TiB) VHD
+to a larger size while preserving the user's files, attributes, volume
+label, system files, `CONFIG.SYS` / `AUTOEXEC.BAT`, and any custom
+directory trees.  Optionally appends new staging directories at the
+same time — the canonical "add some games to my existing build" path.
+
+**Supported boot modes**: `compaq331`, `msdos622`, `msdos71`, `freedos`.
+Every other mode falls outside the FAT12-or-too-quirky bands; use
+`dosforge create` to rebuild instead.
+
+```bash
+# Grow a 32 MiB MSDOS 6.22 VHD to 128 MiB and stage a games folder
+dosforge grow \
+  --target ~/vhd/dos.vhd \
+  --new-size 128M \
+  --boot-mode msdos622 \
+  --add-from /tmp/games=C:\\GAMES
+
+# Or via JSON manifest (preferred for tooling integration)
+dosforge grow --manifest /tmp/grow-plan.json
+```
+
+JSON manifest schema (v1):
+
+```json
+{
+  "schema_version": 1,
+  "target_vhd": "/home/u/dos.vhd",
+  "new_size_bytes": "128M",
+  "boot_mode": "msdos622",
+  "staging_sources": [
+    {"src": "/tmp/games", "dest": "C:\\GAMES"}
+  ],
+  "boot_probe": true,
+  "keep_backup": true
+}
+```
+
+**What survives**: system files (IO.SYS / MSDOS.SYS / IBMBIO.COM /
+IBMDOS.COM / KERNEL.SYS / COMMAND.COM), `CONFIG.SYS`, `AUTOEXEC.BAT`,
+volume label, every user directory, attributes.
+
+**Cluster-band safety check**: grows that would force a different
+`mformat` cluster size (e.g. FAT16 128 MiB → 256 MiB crosses 2 KiB →
+4 KiB) are refused with an actionable error.  Stay within the same
+band, or use `dosforge create` for a fresh rebuild.
+
+**v1 limitations** (deferred to v2): custom MBR / VBR boot code is
+replaced with dosforge's standard bootstrap for the chosen mode (no
+observable effect for the four supported modes; matters only for
+power users who hand-patched their boot sector).
+
 ## Boot assets (local media)
 
 dosforge looks for install media under a top-level `dosassets/` folder.
@@ -521,19 +609,27 @@ covering every wired mode:
 ```
 dosassets/
 ├── compaq2/        # boot-mode=compaq2     (Compaq OEM MS-DOS 2.11 .7z, 360k)
+├── compaq3/        # boot-mode=compaq3     (Compaq OEM MS-DOS 3.00 .7z, 360k)
 ├── compaq331/      # boot-mode=compaq331   (Compaq DOS 3.31 .7z, 720k)
+├── drdos6/         # boot-mode=drdos6      (Digital Research DR DOS 6.0 .7z)
+├── drdos7/         # boot-mode=drdos7      (Caldera DR-DOS 7.03 .7z, 1.44M)
 ├── freedos/        # boot-mode=freedos     (KERNEL.SYS + COMMAND.COM + boot template)
-├── ibmpcdos401/    # boot-mode=pcdos       (IBM PC-DOS 4.01)
+├── ibm8088/        # boot-mode=ibm8088     (IBM PC-DOS 3.3 or 5.0 install floppies)
 ├── msdos33/        # boot-mode=msdos33  /  ibm8088+dos33
 ├── msdos331/       # boot-mode=msdos331    (Microsoft MS-DOS 3.31)
 ├── msdos5/         # boot-mode=msdos5   /  ibm8088+dos50
+├── msdos6/         # boot-mode=msdos6      (MS-DOS 6.00)
 ├── msdos622/       # boot-mode=msdos622    (DOS 6.22 + Enhanced Tools)
-├── msdos71/        # legacy DOS71_1S.PAK location (deprecated — see w95/)
+├── pcdos3/         # boot-mode=pcdos3      (IBM PC-DOS 3.00 .7z)
 ├── pcdos7/         # boot-mode=pcdos7      (IBM PC-DOS 7.0 XDF .DSK)
 ├── pcdos2000/      # boot-mode=pcdos2000   (IBM PC-DOS 2000 6-floppy .7z)
 ├── pcdos71/        # boot-mode=pcdos71     (auto-fetched IBM SGTK)
 └── w95/            # boot-mode=msdos71     (Win95 OSR2 floppy set for FAT32 DOS)
 ```
+
+Per-mode `readme.txt` files document the expected file names.  As
+noted above, any one of `.7z` / raw `.img` / pre-extracted directory
+works — pick whatever matches what you downloaded.
 
 Pass `--boot-assets-path <name>` (a bare name like `msdos33`) and
 dosforge will resolve it to `./dosassets/<name>/`.  Pass a full path
@@ -611,11 +707,41 @@ profiles before boot staging.
 `--dos-install-profile`:
 - `minimal` (default): stage boot-critical system files only.
 - `full`: stage root `CONFIG.SYS` / `AUTOEXEC.BAT` (from media when
-  available, otherwise generated defaults) plus a curated core DOS
-  utility set under `\DOS` (e.g. `EDIT`, `QBASIC`, `E`, `CHKDSK`,
-  `SUBST`, `FDISK`, `FORMAT`, `SYS`, `XCOPY`).  Compressed `*_` install
-  files are expanded; `CONFIG.SYS`/`AUTOEXEC.BAT`-referenced
-  commands/drivers are prioritized for inclusion.
+  available, otherwise generated defaults) plus a **curated** core
+  DOS utility set under `\DOS` (or `\FDOS\BIN` for FreeDOS).
+
+**Curated FULL-profile payload** (v0.9.23 / v0.9.24): the resolver
+ships only end-user-runnable utilities and filters out installer
+wizards, multi-user subsystems, and distro internals even when
+referenced by the install media's `CONFIG.SYS` / `AUTOEXEC.BAT`.
+
+Always included when present on the install media:
+
+| Category | Files |
+|---|---|
+| Editor / text | EDIT, EDLIN, SED, LESS, GREP |
+| File management | ATTRIB, XCOPY, MOVE, DELTREE, TREE, TOUCH, COMP, FC |
+| Disk management | FORMAT, FDISK, LABEL, CHKDSK, SYS |
+| Memory drivers | MEM, HIMEM, HIMEMX, EMM386, FDXMS |
+| Search / sort | FIND, SORT, GREP |
+| Path / scripting | ASSIGN, SUBST, SWSUBST, CHOICE, DOSKEY |
+| Display / console | MODE, NANSI |
+| Process / system | DEBUG, DEVLOAD, SHARE, SVER, WHICH |
+| Mouse drivers | MOUSE, DRMOUSE, CTMOUSE, MSMOUSE |
+| Game-relevant | MSCDEX, SHSUCDX, PLAYCD, SB, SBPMIXER |
+
+Always excluded (even when referenced in startup scripts):
+
+| Category | Excluded |
+|---|---|
+| Installer wizards | INSTALL, SETUP, UNINSTAL, DELOLDOS, OAKINST |
+| Multi-user subsystem | LOGIN |
+| DR-DOS internals | DEVSWAP, SSTORDRV, VIEWMAX, TASKMAX, DOSSHELL |
+| Networking | SHARE (FAT), INTERLNK, INTERSVR, curl |
+| Code-page support | NLSFUNC, GRAFTABL, COUNTRY.SYS |
+| Backup / antivirus / spooler | BACKUP, RESTORE, VSAFE, MSAV, MWAV, PRINT |
+| Path / cache helpers | APPEND, FASTOPEN |
+| Niche | POWER, WINA20, MEMMAX, HTMLHELP, BOOKSHLF |
 
 #### PC-DOS / PC-DOS 7.0 / PC-DOS 2000 / Compaq DOS 3.31
 
@@ -637,7 +763,7 @@ keeps the user-selected floppy geometry.
 - IMG mode uses fixed floppy capacities and FAT12 geometry with
   explicit BPB/media profile checks
 - Legacy DOS profiles enforce FAT16-compatible boot workflows on IDE
-- MFM controller restricts to XT-era DOS (compaq2 / msdos33 / pcdos /
+- MFM controller restricts to XT-era DOS (compaq2 / msdos33 /
   ibm8088+dos33) — anything else raises a clear `ValidationError`
 
 ## Custom payload directory
