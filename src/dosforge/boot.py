@@ -363,32 +363,121 @@ _MSDOS_INSTALL_DIR_DRIVERS = frozenset(
     }
 )
 _DOS_CORE_PAYLOAD_UTILITY_CANDIDATES = (
-    ("EDIT.COM",),
-    ("E.EXE",),
+    ("EDIT.COM", "EDIT.EXE"),
+    ("E.EXE", "E.COM"),
     ("CHKDSK.EXE", "CHKDSK.COM", "CHKDSK.EX_"),
-    ("SUBST.EXE", "SUBST.EX_"),
-    ("ATTRIB.EXE", "ATTRIB.EX_"),
+    ("SUBST.EXE", "SUBST.COM", "SUBST.EX_"),
+    ("ASSIGN.COM", "ASSIGN.EXE", "ASSIGN.CO_"),
+    ("ATTRIB.EXE", "ATTRIB.COM", "ATTRIB.EX_"),
     ("FDISK.EXE", "FDISK.COM", "FDISK.EX_"),
     ("FORMAT.COM", "FORMAT.EXE", "FORMAT.CO_"),
     ("SYS.COM", "SYS.EXE", "SYS.CO_"),
     ("MODE.COM", "MODE.EXE", "MODE.CO_"),
     ("MEM.EXE", "MEM.COM", "MEM.EX_"),
-    ("KEYB.COM", "KEYB.EXE", "KEYB.CO_"),
     ("DEBUG.EXE", "DEBUG.COM", "DEBUG.EX_"),
-    ("EDLIN.EXE", "EDLIN.COM", "EDLIN.EX_"),
     ("XCOPY.EXE", "XCOPY.COM", "XCOPY.EX_"),
+    ("MOVE.EXE", "MOVE.COM", "MOVE.EX_"),
     ("FIND.EXE", "FIND.COM", "FIND.EX_"),
     ("MORE.COM", "MORE.EXE", "MORE.CO_"),
+    ("SORT.EXE", "SORT.COM", "SORT.EX_"),
     ("LABEL.EXE", "LABEL.COM", "LABEL.EX_"),
     ("DISKCOPY.COM", "DISKCOPY.EXE", "DISKCOPY.CO_"),
     ("DISKCOMP.COM", "DISKCOMP.EXE", "DISKCOMP.CO_"),
+    ("TREE.COM", "TREE.EXE", "TREE.CO_"),
+    ("DELTREE.EXE", "DELTREE.COM", "DELTREE.EX_"),
+    ("DOSKEY.COM", "DOSKEY.EXE", "DOSKEY.CO_"),
+    ("UNDELETE.EXE", "UNDELETE.COM", "UNDELETE.EX_"),
+    ("MSCDEX.EXE", "MSCDEX.COM", "MSCDEX.EX_"),
+    # Mouse drivers -- whichever the install media ships (MS-DOS
+    # MOUSE.COM, DR-DOS DRMOUSE.COM, FreeDOS CTMOUSE.EXE, Microsoft
+    # MSMOUSE.COM).  Only one is typically present per release.
+    ("MOUSE.COM", "MOUSE.EXE", "MOUSE.CO_"),
+    ("DRMOUSE.COM", "DRMOUSE.EXE"),
+    ("CTMOUSE.EXE", "CTMOUSE.COM"),
+    ("MSMOUSE.COM", "MSMOUSE.EXE"),
+    ("EDLIN.EXE", "EDLIN.COM", "EDLIN.EX_"),
     ("QBASIC.EXE", "QBASIC.EX_"),
 )
 _DOS_CORE_PAYLOAD_COMPANION_FILES = {
     "EDIT.COM": ("EDIT.HLP",),
+    "EDIT.EXE": ("EDIT.HLP",),
     "QBASIC.EXE": ("QBASIC.HLP",),
     "E.EXE": ("E.EX", "E.INI", "EHELP.HLP"),
+    "E.COM": ("E.EX", "E.INI", "EHELP.HLP"),
 }
+# Names that must NEVER be staged to C:\DOS\ regardless of whether
+# they appear in the install media's CONFIG.SYS / AUTOEXEC.BAT or
+# match a candidate suffix.  Curated so the FULL-profile payload
+# stays focused on user-runnable utilities; installers, multi-user
+# subsystems, disk-compression internals, and rarely-needed niche
+# tools are filtered out even when referenced in startup scripts.
+# Match is case-insensitive on the bare basename (no extension
+# variants needed -- both INSTALL.EXE and INSTALL.COM are caught
+# via the prefix lookup in _is_excluded_payload_name).
+_DOS_CORE_PAYLOAD_EXCLUDED_BASENAMES = frozenset({
+    # Installer / setup wizards (never useful on an already-installed
+    # disk; the user can re-install from floppy if they need to).
+    "INSTALL",
+    "SETUP",
+    "UNINSTAL",
+    "DELOLDOS",
+    "OAKINST",
+    # DR-DOS multi-user subsystem (single-user games don't need it).
+    "LOGIN",
+    # DR-DOS internals (kernel device swapper + SuperStor disk
+    # compression driver -- both go in CONFIG.SYS only when the
+    # user is doing a DR-DOS reinstall, never as command-line tools).
+    "DEVSWAP",
+    "SSTORDRV",
+    "SSTOR",
+    # DR-DOS GUI / multitasker (niche, large, rarely useful).
+    "VIEWMAX",
+    "TASKMAX",
+    "DOSSHELL",
+    # Networking / file sharing (DOS games don't use TCP/IP file
+    # sharing; SHARE is for multi-user FAT locking).
+    "SHARE",
+    "INTERLNK",
+    "INTERSVR",
+    # International code-page support (KEYB without NLSFUNC + CPI is
+    # harmless; we drop the whole stack since US default works for
+    # almost every game).
+    "NLSFUNC",
+    "GRAFTABL",
+    # Backup / restore (huge, format-specific, rarely useful).
+    "BACKUP",
+    "RESTORE",
+    "MSBACKUP",
+    "MWBACKUP",
+    # Antivirus (1990s scanners, never useful in 2020s).
+    "VSAFE",
+    "MSAV",
+    "MWAV",
+    "MWAVTSR",
+    # Print spooler (DOS games don't print).
+    "PRINT",
+    # Path / cache helpers (rarely needed; can be re-installed by
+    # the power user from the install floppy).
+    "APPEND",
+    "FASTOPEN",
+    # Laptop power management (irrelevant on emulators / desktop
+    # retro builds).
+    "POWER",
+    # Windows 3.x bootstrap helper.
+    "WINA20",
+    # Memory tuner that only makes sense at install time.
+    "MEMMAX",
+})
+
+# Extensions stripped before checking against
+# _DOS_CORE_PAYLOAD_EXCLUDED_BASENAMES.  Covers the standard
+# executable suffixes plus DOS install-media compressed variants
+# (e.g. INSTALL.EX_ from MS-DOS 6.22 SETUP archives).
+_DOS_CORE_PAYLOAD_EXCLUDED_EXTENSIONS = frozenset({
+    ".EXE", ".COM", ".SYS", ".BAT", ".OVL", ".OVR",
+    ".EX_", ".CO_", ".SY_", ".BA_", ".OV_", ".CP_",
+    ".HLP", ".INI", ".TXT", ".ERR",
+})
 _DOS_CORE_PAYLOAD_MIN_BYTES = 64 * 1024
 _DOS_CORE_PAYLOAD_MAX_BYTES = 512 * 1024
 _DOS_STARTUP_WRAPPER_COMMANDS = frozenset({"CALL", "LH", "LOADHIGH"})
@@ -1929,6 +2018,16 @@ class BootAssetResolver:
         base_name: str,
         extensions: tuple[str, ...],
     ) -> None:
+        # Filter installer / multi-user / niche internals out of the
+        # FULL-profile C:\DOS\ payload even when they're referenced
+        # in the install media's CONFIG.SYS / AUTOEXEC.BAT (e.g.
+        # DR-DOS install floppy auto-runs INSTALL.EXE and LOGIN.EXE
+        # but neither belongs on the end-user's hard disk).  Driver
+        # references already in _DOS_BOOT_ROOT_FILES are staged at
+        # C:\ root by the system-file copy path and were skipped
+        # below anyway.
+        if base_name.upper() in _DOS_CORE_PAYLOAD_EXCLUDED_BASENAMES:
+            return
         candidates: list[str] = []
         for extension in extensions:
             normalized = f"{base_name.upper()}.{extension.upper()}"

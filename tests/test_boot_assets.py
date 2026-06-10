@@ -1094,6 +1094,10 @@ def test_extract_legacy_full_payload_from_images_includes_startup_references(
     config = tmp_path / "CONFIG.SYS"
     autoexec = tmp_path / "AUTOEXEC.BAT"
     _touch(config, b"DEVICE=HIMEM.SYS\r\n")
+    # NLSFUNC and SETUP are referenced in AUTOEXEC.BAT but must NOT
+    # be staged: they're on the curated-payload exclusion list
+    # (international code-page support stack + installer wizard).
+    # KEYB and HIMEM are legitimate startup references and stay.
     _touch(autoexec, b"@ECHO OFF\r\nNLSFUNC\r\nKEYB US\r\nSETUP\r\n")
 
     def fake_extract_from_images(
@@ -1128,10 +1132,11 @@ def test_extract_legacy_full_payload_from_images_includes_startup_references(
     )
 
     assert (destination / "HIMEM.SYS").read_bytes() == b"himem"
-    assert (destination / "NLSFUNC.EXE").read_bytes() == b"nls"
     assert (destination / "KEYB.COM").read_bytes() == b"keyb"
-    assert (destination / "SETUP.EXE").read_bytes() == b"setup"
     assert (destination / "EDIT.COM").read_bytes() == b"edit"
+    # Excluded -- never staged regardless of AUTOEXEC reference.
+    assert not (destination / "NLSFUNC.EXE").exists()
+    assert not (destination / "SETUP.EXE").exists()
 
 
 def test_resolve_legacy_full_profile_adds_country_sys_to_root_when_config_requires_it(
@@ -1326,20 +1331,24 @@ def test_resolve_msdos622_vhd_normalizes_kernel_loader_bootsector(tmp_path: Path
 
 
 def test_trim_payload_to_core_files_prioritizes_startup_references(tmp_path: Path) -> None:
+    # HIMEM.SYS is a legitimate startup reference (CONFIG.SYS DEVICE=);
+    # NLSFUNC would normally be filtered by the exclusion list, so we
+    # use HIMEM here to keep this test focused on the "startup ref
+    # beats budget pressure" invariant.
     resolver = BootAssetResolver(CommandRunner(), cache_root=tmp_path / "cache")
     payload_dir = tmp_path / "payload"
-    _touch(payload_dir / "NLSFUNC.EXE", b"nls")
+    _touch(payload_dir / "HIMEM.SYS", b"himem")
     _touch(payload_dir / "EDIT.COM", b"edit")
-    autoexec = tmp_path / "AUTOEXEC.BAT"
-    _touch(autoexec, b"@ECHO OFF\r\nNLSFUNC\r\n")
+    config = tmp_path / "CONFIG.SYS"
+    _touch(config, b"DEVICE=HIMEM.SYS\r\n")
 
     resolver._trim_payload_to_core_files(
         payload_dir=payload_dir,
-        payload_budget_bytes=4,
-        startup_files={"AUTOEXEC.BAT": autoexec},
+        payload_budget_bytes=5,
+        startup_files={"CONFIG.SYS": config},
     )
 
-    assert sorted(entry.name for entry in payload_dir.iterdir()) == ["NLSFUNC.EXE"]
+    assert sorted(entry.name for entry in payload_dir.iterdir()) == ["HIMEM.SYS"]
 
 
 def test_trim_payload_to_core_files_prioritizes_core_utilities(tmp_path: Path) -> None:
@@ -1361,6 +1370,28 @@ def test_trim_payload_to_core_files_prioritizes_core_utilities(tmp_path: Path) -
         "EDIT.COM",
         "SUBST.EXE",
     ]
+
+
+def test_record_startup_payload_request_filters_excluded_basenames() -> None:
+    """Names on _DOS_CORE_PAYLOAD_EXCLUDED_BASENAMES must never be
+    recorded as startup-payload requests, even when CONFIG.SYS /
+    AUTOEXEC.BAT references them (e.g. the DR-DOS install media's
+    AUTOEXEC auto-runs INSTALL.EXE + LOGIN.EXE, but neither belongs
+    on the user's hard disk after install).
+    """
+
+    from collections import OrderedDict
+
+    resolver = BootAssetResolver(CommandRunner())
+    requests: OrderedDict[tuple[str, ...], None] = OrderedDict()
+
+    for excluded in ("INSTALL", "LOGIN", "DEVSWAP", "SSTORDRV", "SETUP", "NLSFUNC", "VSAFE"):
+        resolver._record_startup_payload_request(requests, excluded, ("EXE", "COM"))
+    assert requests == OrderedDict()
+
+    # Legitimate references still get recorded (with compressed variant).
+    resolver._record_startup_payload_request(requests, "HIMEM", ("SYS",))
+    assert any("HIMEM.SYS" in entry for entry in requests)
 
 
 def test_dos_core_payload_budget_uses_floppy_bounds(tmp_path: Path) -> None:
