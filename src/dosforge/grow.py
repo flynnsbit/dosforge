@@ -336,7 +336,12 @@ def grow_vhd(manifest: GrowManifest) -> None:
        authentic bootstrap stays intact.
     6. Stage every ``manifest.staging_sources`` entry into its
        target DOS path.
-    7. Atomic swap: rename the original target to ``<target>.bak``
+    7. Optional: headless QEMU boot probe (default on, disable via
+       ``--no-boot-probe``).  Temporarily injects an AUTOEXEC marker
+       into the temp VHD, boots in QEMU, looks for the marker, then
+       restores AUTOEXEC.  Probe failure aborts the grow with the
+       original VHD intact.
+    8. Atomic swap: rename the original target to ``<target>.bak``
        (when ``manifest.keep_backup`` is True), then move the new
        VHD into place.
 
@@ -350,8 +355,6 @@ def grow_vhd(manifest: GrowManifest) -> None:
     * ``IO.SYS`` cluster-2 contiguity isn't explicitly enforced
       (the fresh VHD's ``FORMAT C: /S`` step guarantees it for
       MS-DOS family, FreeDOS's kernel is FAT-chain-tolerant).
-    * Headless QEMU boot probing (``manifest.boot_probe``) is not
-      yet wired -- the flag is accepted but no probe runs.
     """
 
     validate_grow_request(manifest)

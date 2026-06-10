@@ -396,6 +396,233 @@ def _mtools_stage_directory(
             )
 
 
+def _mtools_read_file_bytes(
+    vhd: Path,
+    snapshot: _VhdSnapshot,
+    dos_path: str,
+    runner: CommandRunner,
+) -> bytes | None:
+    """Return file bytes from the partition, or None if it doesn't exist.
+
+    Uses ``mtype`` to stream the file to a host scratch path so we
+    can read it as bytes regardless of platform.  Returns None on
+    any mtools-side failure (file not present, partition unreadable,
+    etc.) -- callers treat that as "no original AUTOEXEC.BAT".
+    """
+
+    partition_image = f"{vhd}@@{snapshot.partition_offset_bytes}"
+    with tempfile.NamedTemporaryFile(
+        prefix="dosforge-grow-probe-", delete=False
+    ) as fh:
+        scratch = Path(fh.name)
+    try:
+        result = runner.run(
+            ["mcopy", "-n", "-i", partition_image, f"::{dos_path}", str(scratch)],
+            check=False,
+        )
+        if result.returncode != 0 or not scratch.exists():
+            return None
+        return scratch.read_bytes()
+    finally:
+        try:
+            scratch.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _mtools_write_file_bytes(
+    vhd: Path,
+    snapshot: _VhdSnapshot,
+    dos_path: str,
+    payload: bytes,
+    runner: CommandRunner,
+) -> None:
+    """Write ``payload`` to ``::<dos_path>`` inside the partition."""
+
+    partition_image = f"{vhd}@@{snapshot.partition_offset_bytes}"
+    with tempfile.NamedTemporaryFile(
+        prefix="dosforge-grow-probe-", delete=False
+    ) as fh:
+        scratch = Path(fh.name)
+        fh.write(payload)
+    try:
+        runner.run(
+            ["mcopy", "-o", "-i", partition_image, str(scratch), f"::{dos_path}"],
+        )
+    finally:
+        try:
+            scratch.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _mtools_delete_file(
+    vhd: Path,
+    snapshot: _VhdSnapshot,
+    dos_path: str,
+    runner: CommandRunner,
+) -> None:
+    """Best-effort delete of ``::<dos_path>``.  Swallows missing-file."""
+
+    partition_image = f"{vhd}@@{snapshot.partition_offset_bytes}"
+    runner.run(
+        ["mdel", "-i", partition_image, f"::{dos_path}"],
+        check=False,
+    )
+
+
+# Marker the probe BAT echoes to COM1.  Picked to be unmistakable in
+# serial output -- shouldn't appear in any normal DOS boot stream.
+_BOOT_PROBE_MARKER: bytes = b"DOSFORGE_BOOT_PROBE_OK"
+
+# Probe BAT script: redirect console to COM1, echo marker, redirect
+# back to CON so the user's subsequent AUTOEXEC commands still see
+# the screen.  CRLF line endings throughout (DOS-native).
+_PROBE_BAT_SCRIPT: bytes = (
+    b"@ECHO OFF\r\n"
+    b"CTTY COM1\r\n"
+    b"ECHO " + _BOOT_PROBE_MARKER + b"\r\n"
+    b"CTTY CON\r\n"
+)
+
+
+def _run_boot_probe(
+    new_vhd: Path,
+    new_snapshot: _VhdSnapshot,
+    runner: CommandRunner,
+    *,
+    timeout_seconds: float = 90.0,
+) -> tuple[bool, str]:
+    """Boot the grown VHD in headless QEMU and verify it reaches AUTOEXEC.
+
+    Temporarily prepends ``@CALL C:\\BOOTPRB.BAT`` to the partition's
+    AUTOEXEC.BAT (or creates one if absent) and writes ``BOOTPRB.BAT``
+    to C:\\ root.  The probe BAT redirects DOS console to COM1, echoes
+    a unique marker, then redirects back to CON so any subsequent
+    AUTOEXEC commands still see the screen.  Boots in QEMU with
+    serial output captured to a file via the ``chardev`` syntax
+    (avoids the ``-serial file:C:\\...`` colon-parser bug that
+    silently produces zero-byte logs on Windows).
+
+    Always restores AUTOEXEC.BAT (delete if it didn't exist
+    originally) and deletes BOOTPRB.BAT before returning, even on
+    failure paths.
+
+    Returns ``(passed, diagnostic_text)``.  ``diagnostic_text`` is
+    the tail of QEMU's serial log -- useful for the caller's error
+    message when probe fails.
+    """
+
+    import subprocess
+    import time
+    from uuid import uuid4
+
+    from ._platform import get_backend
+
+    backend = get_backend()
+    qemu_path = backend.tool_path("qemu-system-i386")
+
+    # 1. Snapshot user's original AUTOEXEC.BAT (might not exist).
+    original_autoexec = _mtools_read_file_bytes(
+        new_vhd, new_snapshot, "AUTOEXEC.BAT", runner
+    )
+    # 2. Write probe BAT + modified AUTOEXEC.
+    probe_autoexec = b"@CALL C:\\BOOTPRB.BAT\r\n"
+    if original_autoexec is not None:
+        probe_autoexec += original_autoexec
+    _mtools_write_file_bytes(new_vhd, new_snapshot, "BOOTPRB.BAT", _PROBE_BAT_SCRIPT, runner)
+    _mtools_write_file_bytes(new_vhd, new_snapshot, "AUTOEXEC.BAT", probe_autoexec, runner)
+
+    # 3. Boot QEMU.
+    log_path = Path(tempfile.gettempdir()) / f"dosforge-bootprobe-{uuid4().hex[:8]}.log"
+    log_path.write_bytes(b"")  # ensure the file exists for tail-reading
+
+    machine_spec = "pc"
+    if sys.platform == "win32":
+        machine_spec = "pc,accel=whpx:tcg"
+
+    cmd = [
+        qemu_path,
+        "-machine", machine_spec,
+        "-cpu", "486",
+        "-m", "16",
+        "-display", "none",
+        "-nic", "none",
+        # Use chardev syntax instead of -serial file: -- the latter
+        # uses ':' as a sub-option separator and silently mis-parses
+        # paths with Windows drive letters like 'file:C:\\...'.
+        "-chardev", f"file,id=bplog,path={log_path}",
+        "-serial", "chardev:bplog",
+        "-no-reboot",
+        "-drive", f"file={new_vhd},if=ide,format=vpc,index=0,media=disk",
+        "-boot", "c",
+    ]
+    if os.path.isabs(qemu_path):
+        cmd.insert(1, str(Path(qemu_path).parent))
+        cmd.insert(1, "-L")
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        **subprocess_no_window_kwargs(),
+    )
+
+    passed = False
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            time.sleep(1.0)
+            try:
+                if _BOOT_PROBE_MARKER in log_path.read_bytes():
+                    passed = True
+                    break
+            except OSError:
+                pass
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+
+    # Final marker check after QEMU exit (catches the race where
+    # the marker landed in the last poll interval).
+    try:
+        if _BOOT_PROBE_MARKER in log_path.read_bytes():
+            passed = True
+    except OSError:
+        pass
+
+    diagnostic_tail = ""
+    try:
+        diagnostic_tail = log_path.read_bytes()[-2000:].decode("utf-8", errors="replace")
+    except OSError:
+        pass
+
+    # 4. Restore original AUTOEXEC (best-effort, never raises).
+    try:
+        if original_autoexec is not None:
+            _mtools_write_file_bytes(
+                new_vhd, new_snapshot, "AUTOEXEC.BAT", original_autoexec, runner
+            )
+        else:
+            _mtools_delete_file(new_vhd, new_snapshot, "AUTOEXEC.BAT", runner)
+        _mtools_delete_file(new_vhd, new_snapshot, "BOOTPRB.BAT", runner)
+    except Exception:
+        # Restoration failure shouldn't mask the probe result.
+        pass
+
+    return passed, diagnostic_tail
+
+
 def perform_grow(manifest) -> None:
     """End-to-end grow operation.
 
@@ -410,7 +637,12 @@ def perform_grow(manifest) -> None:
     5. Re-inject the extracted tree (skipping protected system files
        so the fresh VHD's authentic bootstrap survives).
     6. Stage every ``staging_sources`` entry.
-    7. Atomic swap: rename ``target.vhd`` -> ``target.vhd.bak``
+    7. **When ``manifest.boot_probe`` is True** (default): inject a
+       temporary AUTOEXEC marker, boot the temp VHD in headless QEMU,
+       look for the marker in the serial log.  Restore AUTOEXEC.
+       Abort the grow on probe failure so the user keeps their
+       original VHD intact.
+    8. Atomic swap: rename ``target.vhd`` -> ``target.vhd.bak``
        (when ``keep_backup``), move the new VHD into place.
     """
 
@@ -459,7 +691,28 @@ def perform_grow(manifest) -> None:
                 runner=runner,
             )
 
-        # Step 7: atomic swap
+        # Step 7: optional headless boot probe.  Inject a marker
+        # AUTOEXEC line, boot in QEMU, look for the marker, restore
+        # AUTOEXEC.  Abort the grow on probe failure so the user
+        # keeps their original VHD.
+        if manifest.boot_probe:
+            passed, log_tail = _run_boot_probe(
+                new_vhd=new_vhd_temp,
+                new_snapshot=new_snapshot,
+                runner=runner,
+            )
+            if not passed:
+                raise ValidationError(
+                    "Boot probe failed: the grown VHD did not reach the "
+                    "AUTOEXEC.BAT probe marker within 90s.  This usually "
+                    "means a CONFIG.SYS DEVICE= line references a file "
+                    "not present on the new VHD, or the boot setup got "
+                    "corrupted during file injection.  The original "
+                    "VHD has NOT been modified.\n"
+                    f"Serial-log tail:\n{log_tail}"
+                )
+
+        # Step 8: atomic swap
         target = manifest.target_vhd
         backup = target.with_suffix(target.suffix + ".bak")
         if backup.exists():
