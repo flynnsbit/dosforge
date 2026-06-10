@@ -239,21 +239,11 @@ class TestValidate:
             validate_grow_request(manifest)
 
 
-class TestGrowVhdStub:
-    def test_valid_manifest_raises_not_implemented(self, tmp_path: Path) -> None:
-        target = tmp_path / "exo.vhd"
-        _write_fake_fixed_vhd(target, data_bytes=1024 * 1024)
-        manifest = GrowManifest(
-            target_vhd=target,
-            new_size_bytes=4 * 1024 * 1024,
-            boot_mode=BootMode.MSDOS622,
-        )
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
-            grow_vhd(manifest)
-
+class TestGrowVhd:
     def test_invalid_manifest_raises_validation_first(self, tmp_path: Path) -> None:
-        # Grow stub should validate BEFORE raising NotImplementedError so
-        # downstream callers (exodosconverter) get actionable errors today.
+        # Grow stub should validate BEFORE invoking the implementation
+        # so downstream callers (exodosconverter) get actionable
+        # validation errors instead of mtools/qemu-img failures.
         target = tmp_path / "exo.vhd"
         _write_fake_fixed_vhd(target)
         manifest = GrowManifest(
@@ -262,4 +252,19 @@ class TestGrowVhdStub:
             boot_mode=BootMode.DRDOS6,
         )
         with pytest.raises(ValidationError, match="does not support boot mode"):
+            grow_vhd(manifest)
+
+    def test_unparseable_vhd_raises_validation(self, tmp_path: Path) -> None:
+        # _snapshot_vhd should reject a "VHD" with no MBR signature
+        # before the grow pipeline starts touching files. The fake
+        # VHD in this test file has the conectix footer but no MBR
+        # 55 AA signature, so snapshot bails immediately.
+        target = tmp_path / "exo.vhd"
+        _write_fake_fixed_vhd(target, data_bytes=1024 * 1024)
+        manifest = GrowManifest(
+            target_vhd=target,
+            new_size_bytes=4 * 1024 * 1024,
+            boot_mode=BootMode.MSDOS622,
+        )
+        with pytest.raises(ValidationError, match="no valid MBR signature"):
             grow_vhd(manifest)

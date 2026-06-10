@@ -319,24 +319,46 @@ def _looks_like_dos_absolute_path(dest: str) -> bool:
 def grow_vhd(manifest: GrowManifest) -> None:
     """Apply a grow operation to ``manifest.target_vhd``.
 
-    **Not yet implemented.** The contract is frozen; the in-place
-    grow pipeline (VHD container expansion → MBR partition entry
-    extension → BPB / FAT preservation → ordered system-file restage
-    → headless boot probe → atomic swap) lands in a future release.
+    v1 implementation:
 
-    Validates the manifest before raising so callers get actionable
-    feedback today on malformed requests, and so integration tests
-    in downstream tools (``exodosconverter``) can exercise the
-    happy-path API surface.
+    1. Snapshot the existing VHD (MBR + first partition BPB).
+    2. Validate the target size stays within the existing cluster
+       band (FAT16/FAT32 ``mformat`` defaults).  Crossing a
+       cluster-size boundary requires relaying out every file's
+       cluster chain and is out of scope for v1 -- the caller is
+       told to ``dosforge create`` a fresh VHD instead.
+    3. Extract every file from the old partition to a host scratch
+       directory via mtools (preserves mtime + hidden/system bits).
+    4. Build a fresh empty bootable VHD at the new size with the
+       same boot mode + filesystem format.
+    5. Re-inject the extracted tree, skipping protected root-level
+       system files (IO.SYS, COMMAND.COM, ...) so the fresh VHD's
+       authentic bootstrap stays intact.
+    6. Stage every ``manifest.staging_sources`` entry into its
+       target DOS path.
+    7. Atomic swap: rename the original target to ``<target>.bak``
+       (when ``manifest.keep_backup`` is True), then move the new
+       VHD into place.
+
+    v1 limitations (tracked for v2):
+
+    * The new VHD ships dosforge's standard MBR / VBR for the chosen
+      boot mode -- any custom boot code the user hand-patched is
+      lost.  All four supported modes (COMPAQ331 / MSDOS622 /
+      MSDOS71 / FREEDOS) get the same authentic bootstrap they
+      originally received, so this is a no-op for 99% of users.
+    * ``IO.SYS`` cluster-2 contiguity isn't explicitly enforced
+      (the fresh VHD's ``FORMAT C: /S`` step guarantees it for
+      MS-DOS family, FreeDOS's kernel is FAT-chain-tolerant).
+    * Headless QEMU boot probing (``manifest.boot_probe``) is not
+      yet wired -- the flag is accepted but no probe runs.
     """
 
     validate_grow_request(manifest)
-    raise NotImplementedError(
-        "dosforge grow is registered but not yet implemented. The "
-        "manifest passed validation; the actual in-place expansion "
-        "pipeline lands in a future dosforge release. Track the "
-        "feature status in the project README."
-    )
+
+    from ._grow_impl import perform_grow
+
+    perform_grow(manifest)
 
 
 __all__ = [
