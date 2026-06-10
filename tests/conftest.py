@@ -81,6 +81,7 @@ _WINDOWS_ALLOWED_TEST_FILES = frozenset(
         "test_fourdos_overlay.py",
         "test_grow_impl.py",
         "test_grow_manifest.py",
+        "test_inspect.py",
         "test_mscompress.py",
         "test_pcdos71_fetch.py",
         "test_platform_windows.py",

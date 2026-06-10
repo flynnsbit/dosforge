@@ -366,12 +366,27 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
     mkdir_cmd.add_argument("dos_path")
     mkdir_cmd.add_argument("--partition", type=int, default=None)
 
+    inspect_cmd = subcommands.add_parser(
+        "inspect",
+        help=(
+            "Read-only structural inspection of a VHD (MBR + first "
+            "partition BPB + root system files).  Output is JSON when "
+            "--json is given, human-friendly otherwise."
+        ),
+    )
+    inspect_cmd.add_argument("vhd", help="Path to the VHD to inspect.")
+    inspect_cmd.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Emit JSON for downstream tooling (e.g. exodosconverter).",
+    )
+
     grow_cmd = subcommands.add_parser(
         "grow",
         help=(
             "Grow an existing VHD (FAT16 BIGDOS / FAT32 LBA) and "
-            "optionally append staging content. PREVIEW: contract "
-            "frozen, implementation pending."
+            "optionally append staging content."
         ),
     )
     grow_cmd.add_argument(
@@ -563,6 +578,67 @@ def _init_assets_command(target: Path | None, *, force: bool) -> int:
     )
     print()
     print("Run 'dosforge where-assets' to confirm the location is now discovered.")
+    return 0
+
+
+def _inspect_command(args) -> int:
+    """Dispatch ``dosforge inspect``: read MBR + BPB + root system
+    files from a VHD and print either human-readable summary or
+    JSON (for tooling integration).
+    """
+
+    from .inspect import inspect_vhd
+
+    info = inspect_vhd(Path(args.vhd))
+    if args.as_json:
+        print(info.to_json())
+        return 0
+
+    # Human-readable summary.
+    def _fmt_bytes(n: int) -> str:
+        if n >= 1024**3:
+            return f"{n / 1024**3:.2f} GiB ({n:,} bytes)"
+        if n >= 1024**2:
+            return f"{n / 1024**2:.2f} MiB ({n:,} bytes)"
+        if n >= 1024:
+            return f"{n / 1024:.2f} KiB ({n:,} bytes)"
+        return f"{n} bytes"
+
+    print(f"VHD: {info.path}")
+    print(f"  File size       : {_fmt_bytes(info.file_size_bytes)}")
+    print(f"  Format          : {'Fixed VHD (conectix)' if info.is_fixed_vhd else 'Raw / unknown'}")
+    if info.footer_chs:
+        c, h, s = info.footer_chs
+        print(f"  Footer CHS      : {c} cyl x {h} heads x {s} spt ({c*h*s:,} sectors)")
+    print()
+    print(f"  Partition       : type=0x{info.mbr_partition_type:02X}  "
+          f"LBA={info.partition_lba_start}-{info.partition_lba_start + info.partition_sector_count - 1}  "
+          f"({_fmt_bytes(info.partition_sector_count * 512)})")
+    print()
+    print(f"  BPB OEM         : {info.bpb_oem!r}")
+    print(f"  FAT format      : {info.fat_format.value}")
+    print(f"  Cluster size    : {info.cluster_size_bytes:,} bytes "
+          f"({info.bytes_per_sector} bytes/sector x {info.sectors_per_cluster} sectors/cluster)")
+    print(f"  Cluster count   : {info.cluster_count:,}")
+    print(f"  Total sectors   : {info.total_sectors:,}")
+    print(f"  Reserved        : {info.reserved_sectors}")
+    print(f"  Num FATs        : {info.num_fats}")
+    print(f"  Sectors/FAT     : {info.sectors_per_fat}")
+    print(f"  Root dir entries: {info.root_dir_entries}")
+    if info.volume_label:
+        print(f"  Volume label    : {info.volume_label}")
+    if info.volume_serial_hex:
+        print(f"  Volume serial   : {info.volume_serial_hex[:4]}-{info.volume_serial_hex[4:]}")
+    print()
+    if info.inferred_boot_mode:
+        print(f"  Inferred boot mode: {info.inferred_boot_mode.value}")
+    else:
+        print(f"  Inferred boot mode: (unknown -- BPB OEM not in dosforge's table)")
+    print()
+    if info.root_system_files:
+        print(f"  Root system files: {', '.join(info.root_system_files)}")
+    else:
+        print(f"  Root system files: (mtools unavailable -- run with mdir on PATH for detection)")
     return 0
 
 
@@ -1179,6 +1255,8 @@ def _run_manager_subcommand(args, parser) -> int:
 
         if args.command == "grow":
             return _grow_command(args)
+        if args.command == "inspect":
+            return _inspect_command(args)
     except DosForgeError as exc:
         message = str(exc)
         print(message, file=sys.stderr)
