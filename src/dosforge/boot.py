@@ -700,6 +700,18 @@ class BootAssetResolver:
             return self._resolve_pcdos71(request)
         if request.boot_mode is BootMode.COMPAQ331:
             return self._resolve_compaq331(request)
+        if request.boot_mode is BootMode.COMPAQ2:
+            return self._resolve_compaq2(request)
+        if request.boot_mode is BootMode.COMPAQ3:
+            return self._resolve_compaq3(request)
+        if request.boot_mode is BootMode.PCDOS3:
+            return self._resolve_pcdos3(request)
+        if request.boot_mode is BootMode.PCDOS2000:
+            return self._resolve_pcdos2000(request)
+        if request.boot_mode is BootMode.DRDOS6:
+            return self._resolve_drdos6(request)
+        if request.boot_mode is BootMode.DRDOS7:
+            return self._resolve_drdos7(request)
         raise ValidationError(f"Unsupported boot mode: {request.boot_mode.value}")
 
     def _effective_filesystem_format(self, request: CreateRequest) -> DiskFormat:
@@ -1344,6 +1356,78 @@ class BootAssetResolver:
             install_profile=request.msdos_install_profile,
         )
 
+    def _resolve_compaq2(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="Compaq DOS 2.11",
+            version_subdir_name="compaq2",
+            cache_tag="compaq2",
+            prefer_install_image_boot_sector=False,
+            default_asset_dirs=("compaq2",),
+            install_profile=request.msdos_install_profile,
+            boot_template_required=False,
+        )
+
+    def _resolve_compaq3(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="Microsoft MS-DOS 3.00 (Compaq OEM)",
+            version_subdir_name="compaq3",
+            cache_tag="compaq3",
+            prefer_install_image_boot_sector=False,
+            default_asset_dirs=("compaq3",),
+            install_profile=request.msdos_install_profile,
+            boot_template_required=False,
+        )
+
+    def _resolve_pcdos3(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="IBM PC-DOS 3.00",
+            version_subdir_name="pcdos3",
+            cache_tag="pcdos3",
+            prefer_install_image_boot_sector=False,
+            default_asset_dirs=("pcdos3",),
+            install_profile=request.msdos_install_profile,
+            boot_template_required=False,
+        )
+
+    def _resolve_pcdos2000(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="IBM PC-DOS 2000",
+            version_subdir_name="pcdos2000",
+            cache_tag="pcdos2000",
+            prefer_install_image_boot_sector=False,
+            default_asset_dirs=("pcdos2000",),
+            install_profile=request.msdos_install_profile,
+            boot_template_required=False,
+        )
+
+    def _resolve_drdos6(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="Digital Research DR DOS 6.0",
+            version_subdir_name="drdos6",
+            cache_tag="drdos6",
+            prefer_install_image_boot_sector=False,
+            default_asset_dirs=("drdos6",),
+            install_profile=request.msdos_install_profile,
+            boot_template_required=False,
+        )
+
+    def _resolve_drdos7(self, request: CreateRequest) -> BootAssets:
+        return self._resolve_legacy_dos(
+            request=request,
+            profile_label="Caldera DR-DOS 7.03",
+            version_subdir_name="drdos7",
+            cache_tag="drdos7",
+            prefer_install_image_boot_sector=False,
+            default_asset_dirs=("drdos7",),
+            install_profile=request.msdos_install_profile,
+            boot_template_required=False,
+        )
+
     def _resolve_legacy_dos(
         self,
         *,
@@ -1356,6 +1440,7 @@ class BootAssetResolver:
         prefer_install_images_first: bool = False,
         prefer_directory_boot_template: bool = True,
         install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL,
+        boot_template_required: bool = True,
     ) -> BootAssets:
         if request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12, DiskFormat.FAT32):
             raise ValidationError(
@@ -1388,6 +1473,7 @@ class BootAssetResolver:
                     payload_budget_bytes=payload_budget_bytes,
                     media_type=request.media_type,
                     pre_dos5=pre_dos5,
+                    boot_template_required=boot_template_required,
                 )
                 if image_assets is not None:
                     return image_assets
@@ -1421,6 +1507,7 @@ class BootAssetResolver:
                             payload_budget_bytes=payload_budget_bytes,
                             media_type=request.media_type,
                             pre_dos5=pre_dos5,
+                            boot_template_required=boot_template_required,
                         )
                         if image_assets is not None:
                             return image_assets
@@ -1435,6 +1522,7 @@ class BootAssetResolver:
                     payload_budget_bytes=payload_budget_bytes,
                     media_type=request.media_type,
                     pre_dos5=pre_dos5,
+                    boot_template_required=boot_template_required,
                 )
                 if image_assets is not None:
                     return image_assets
@@ -1596,6 +1684,7 @@ class BootAssetResolver:
         payload_budget_bytes: int | None = None,
         media_type: MediaType = MediaType.VHD,
         pre_dos5: bool = False,
+        boot_template_required: bool = True,
     ) -> BootAssets | None:
         install_images = self._collect_msdos71_install_images(directory)
         if not install_images:
@@ -1649,22 +1738,37 @@ class BootAssetResolver:
                         source_candidates=source_candidates,
                         source_label="legacy DOS install media",
                     )
-                else:
+                elif boot_template_required:
                     return None
+                else:
+                    template.write_bytes(b"\x00" * 512)
             elif any(path.exists() for path in source_candidates):
-                self._write_msdos_boot_template(
-                    template,
-                    disk_format=DiskFormat.FAT16,
-                    source_candidates=source_candidates,
-                    source_label="legacy DOS install media",
-                )
+                if boot_template_required:
+                    self._write_msdos_boot_template(
+                        template,
+                        disk_format=DiskFormat.FAT16,
+                        source_candidates=source_candidates,
+                        source_label="legacy DOS install media",
+                    )
+                else:
+                    # QEMU-install boot modes (DR-DOS 6/7, etc.) write
+                    # their own boot sector during FORMAT C: -- the
+                    # template is never read.  Use a zero-byte stand-in
+                    # so the BootAssets dataclass stays valid without
+                    # trying to extract a boot sector from system
+                    # files that don't carry one (DR-DOS IBMBIO.COM
+                    # has no embedded MS-DOS-style FAT16 boot sector).
+                    template.write_bytes(b"\x00" * 512)
             else:
                 boot_sector = self._extract_msdos_fat16_boot_sector_from_images(install_images)
                 if boot_sector is None:
-                    return None
-                template.write_bytes(boot_sector)
+                    if boot_template_required:
+                        return None
+                    template.write_bytes(b"\x00" * 512)
+                else:
+                    template.write_bytes(boot_sector)
 
-        if media_type is MediaType.VHD:
+        if media_type is MediaType.VHD and boot_template_required:
             self._normalize_legacy_vhd_boot_template(template=template, system_files=files)
 
         source_image_size_bytes = self._select_source_image_size_bytes(install_images)
