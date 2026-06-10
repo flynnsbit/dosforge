@@ -161,11 +161,26 @@ _REQUIRED_ASSET_GLOBS: dict[BootMode, list[str]] = {
 # manifest instead of producing a noisy FAIL log.  Each entry maps a
 # (media, boot mode) tuple to the open-issue summary.  Remove from
 # this table once the backend bug is fixed and the case is verified.
-_KNOWN_BROKEN: dict[tuple[MediaType, BootMode], str] = {
-    # (DR-DOS 6/7 entries removed in v0.9.10 -- install pipeline now
-    # uses FORMAT C: + explicit SYS C: two-step AUTOEXEC; DR-DOS 6
-    # 5.25" 6-disk archive auto-merges FORMAT/SYS/FDISK from Disk06.)
-}
+#
+# Currently empty.  All 6 legacy DOS modes that ship via the QEMU
+# FORMAT C: install pipeline (DRDOS6, DRDOS7, PCDOS2000, COMPAQ2,
+# COMPAQ3, PCDOS3) are end-to-end verified on Windows for both
+# MINIMAL and FULL install profiles as of v0.9.24:
+#
+# * v0.9.20 added "/X" to the DR-DOS FORMAT C: AUTOEXEC line (the
+#   1991 R2.0 FORMAT.COM refuses fixed-disk formatting without /X).
+# * v0.9.21 added BootAssetResolver.resolve() dispatch for all six
+#   modes (FULL profile invokes the resolver to stage tools to
+#   C:\\DOS\\, which previously fell through to "Unsupported boot
+#   mode" for DRDOS6/DRDOS7/PCDOS2000/COMPAQ2/COMPAQ3/PCDOS3).
+# * v0.9.23 introduced a curated C:\\DOS\\ payload whitelist +
+#   installer/multi-user/internals exclusion list so FULL profile
+#   stages only end-user-runnable utilities (e.g. INSTALL.EXE,
+#   LOGIN.EXE, SSTORDRV.SYS no longer leak through).
+# * v0.9.24 extended the same model to FreeDOS C:\\FDOS\\BIN\\
+#   (whitelist-only payload; curl.exe / HTML help / kernel
+#   binaries / FreeCOM source dropped).
+_KNOWN_BROKEN: dict[tuple[MediaType, BootMode], str] = {}
 
 
 # ---------------------------------------------------------------------------
