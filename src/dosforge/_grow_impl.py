@@ -623,7 +623,11 @@ def _run_boot_probe(
     return passed, diagnostic_tail
 
 
-def perform_grow(manifest) -> None:
+def perform_grow(
+    manifest,
+    *,
+    progress_callback: "Callable[[str], None] | None" = None,
+) -> None:
     """End-to-end grow operation.
 
     Steps (see module docstring for the design rationale):
@@ -644,10 +648,22 @@ def perform_grow(manifest) -> None:
        original VHD intact.
     8. Atomic swap: rename ``target.vhd`` -> ``target.vhd.bak``
        (when ``keep_backup``), move the new VHD into place.
+
+    ``progress_callback`` is called with short human-readable stage
+    labels at the start of each step.  Used by the TUI to keep the
+    spinner honest about which step is currently burning wall-clock.
     """
+
+    def _report(stage: str) -> None:
+        if progress_callback is not None:
+            try:
+                progress_callback(stage)
+            except Exception:
+                pass
 
     runner = CommandRunner()
 
+    _report("Snapshotting source VHD geometry...")
     snapshot = _snapshot_vhd(manifest.target_vhd)
     _validate_cluster_band_match(snapshot, manifest.new_size_bytes)
 
@@ -657,6 +673,7 @@ def perform_grow(manifest) -> None:
         new_vhd_temp = work_root / "new.vhd"
 
         # Step 3: extract old → host
+        _report("Step 3/8: Extracting files from source VHD via mtools...")
         _mtools_extract_partition_root(
             target_vhd=manifest.target_vhd,
             snapshot=snapshot,
@@ -665,6 +682,10 @@ def perform_grow(manifest) -> None:
         )
 
         # Step 4: build fresh VHD at the new size
+        _report(
+            f"Step 4/8: Building fresh {manifest.boot_mode.value} VHD at "
+            f"{manifest.new_size_bytes:,} bytes (may need sudo for qemu-nbd)..."
+        )
         _create_fresh_vhd(
             new_vhd_temp,
             boot_mode=manifest.boot_mode,
@@ -674,6 +695,7 @@ def perform_grow(manifest) -> None:
         new_snapshot = _snapshot_vhd(new_vhd_temp)
 
         # Step 5: inject extracted user files
+        _report("Step 5/8: Re-injecting extracted user files...")
         _mtools_inject_extracted_tree(
             new_vhd=new_vhd_temp,
             new_snapshot=new_snapshot,
@@ -682,20 +704,31 @@ def perform_grow(manifest) -> None:
         )
 
         # Step 6: stage manifest sources
-        for staging in manifest.staging_sources:
-            _mtools_stage_directory(
-                new_vhd=new_vhd_temp,
-                new_snapshot=new_snapshot,
-                src=staging.src,
-                dest_dos_path=staging.dest,
-                runner=runner,
+        if manifest.staging_sources:
+            _report(
+                f"Step 6/8: Staging {len(manifest.staging_sources)} additional "
+                f"source(s) into DOS paths..."
             )
+            for staging in manifest.staging_sources:
+                _mtools_stage_directory(
+                    new_vhd=new_vhd_temp,
+                    new_snapshot=new_snapshot,
+                    src=staging.src,
+                    dest_dos_path=staging.dest,
+                    runner=runner,
+                )
+        else:
+            _report("Step 6/8: No staging sources -- skipping.")
 
         # Step 7: optional headless boot probe.  Inject a marker
         # AUTOEXEC line, boot in QEMU, look for the marker, restore
         # AUTOEXEC.  Abort the grow on probe failure so the user
         # keeps their original VHD.
         if manifest.boot_probe:
+            _report(
+                "Step 7/8: Headless boot probe -- booting grown VHD in QEMU "
+                "(up to 90s; uncheck 'Headless boot probe' to skip)..."
+            )
             passed, log_tail = _run_boot_probe(
                 new_vhd=new_vhd_temp,
                 new_snapshot=new_snapshot,
@@ -711,8 +744,11 @@ def perform_grow(manifest) -> None:
                     "VHD has NOT been modified.\n"
                     f"Serial-log tail:\n{log_tail}"
                 )
+        else:
+            _report("Step 7/8: Boot probe disabled -- skipping QEMU verify.")
 
         # Step 8: atomic swap
+        _report("Step 8/8: Atomic swap (moving grown VHD into place)...")
         target = manifest.target_vhd
         backup = target.with_suffix(target.suffix + ".bak")
         if backup.exists():
@@ -722,6 +758,7 @@ def perform_grow(manifest) -> None:
         else:
             target.unlink()
         shutil.copy2(new_vhd_temp, target)
+        _report("Grow complete.")
     finally:
         shutil.rmtree(work_root, ignore_errors=True)
 

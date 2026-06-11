@@ -833,7 +833,7 @@ class DosForgeApp(App[None]):
                         yield Button("Add", id="grow-add-staging-btn", classes="btn-ghost")
                     yield Static("(no staging sources)", id="grow-staging-list")
                     yield Checkbox(
-                        "Headless boot probe (verify the grown VHD boots before swap)",
+                        "Headless boot probe (adds ~60-90s; verifies new VHD boots before swap)",
                         value=True,
                         id="grow-boot-probe-check",
                     )
@@ -1816,9 +1816,14 @@ class DosForgeApp(App[None]):
             btn.disabled = True
         except Exception:
             pass
+        probe_hint = (
+            " + ~60-90s headless boot probe"
+            if manifest.boot_probe
+            else " (boot probe disabled)"
+        )
         self._start_spinner(
-            f"Growing {manifest.target_vhd.name} to {manifest.new_size_bytes:,} bytes "
-            f"(this may take 10-30 s)…"
+            f"Grow {manifest.target_vhd.name} -> {manifest.new_size_bytes:,} "
+            f"bytes (extract + rebuild + reinject{probe_hint})..."
         )
         self._grow_worker(manifest)
 
@@ -1826,11 +1831,31 @@ class DosForgeApp(App[None]):
     def _grow_worker(self, manifest) -> None:
         from .grow import grow_vhd
 
+        def _on_progress(stage: str) -> None:
+            # Worker thread: bounce back to the UI thread for the
+            # spinner update so Textual's reactive system stays
+            # single-threaded (avoid the 'No active app' warnings).
+            self.call_from_thread(self._set_spinner_message, stage)
+
         try:
-            grow_vhd(manifest)
+            grow_vhd(manifest, progress_callback=_on_progress)
             self.call_from_thread(self._on_grow_done, manifest, None)
         except Exception as exc:
             self.call_from_thread(self._on_grow_done, manifest, exc)
+
+    def _set_spinner_message(self, message: str) -> None:
+        """Update the active spinner's message in-place.
+
+        Used by the grow worker's progress_callback so the spinner
+        narrates which of the 8 grow steps is currently burning
+        wall-clock.  Falls back to a no-op if no spinner is running.
+        """
+        if not self._spinner_message:
+            return
+        self._spinner_message = message
+        # Also push a one-line summary into the persistent log so the
+        # user has scrollback of every stage transition.
+        self._append_status_log(f"[..] {message}")
 
     def _on_grow_done(self, manifest, error) -> None:
         self._stop_spinner()

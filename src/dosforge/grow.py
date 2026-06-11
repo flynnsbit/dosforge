@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .errors import ValidationError
 from .models import BootMode
@@ -316,7 +316,11 @@ def _looks_like_dos_absolute_path(dest: str) -> bool:
     return False
 
 
-def grow_vhd(manifest: GrowManifest) -> None:
+def grow_vhd(
+    manifest: GrowManifest,
+    *,
+    progress_callback: "Callable[[str], None] | None" = None,
+) -> None:
     """Apply a grow operation to ``manifest.target_vhd``.
 
     v1 implementation:
@@ -355,13 +359,18 @@ def grow_vhd(manifest: GrowManifest) -> None:
     * ``IO.SYS`` cluster-2 contiguity isn't explicitly enforced
       (the fresh VHD's ``FORMAT C: /S`` step guarantees it for
       MS-DOS family, FreeDOS's kernel is FAT-chain-tolerant).
+
+    ``progress_callback`` is invoked with short human-readable
+    stage labels (e.g. ``"Extracting source VHD..."``) as
+    :func:`perform_grow` walks through its 8-step pipeline.  Pass
+    ``None`` (the default) for the silent CLI path.
     """
 
     validate_grow_request(manifest)
 
     from ._grow_impl import perform_grow
 
-    perform_grow(manifest)
+    perform_grow(manifest, progress_callback=progress_callback)
 
 
 __all__ = [
