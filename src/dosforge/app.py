@@ -35,7 +35,7 @@ from textual import on as _textual_on
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 from .disk import DiskManager
-from .errors import DosForgeError
+from .errors import DosForgeError, ValidationError
 from . import __version__
 from . import formlogic as fl
 from .models import (
@@ -749,6 +749,11 @@ class DosForgeApp(App[None]):
                         "(uses mtools — no admin / kernel mount needed)."
                     )
                     yield Button(
+                        "Inspect VHD (MBR + BPB + root system files)",
+                        id="inspect-btn",
+                        classes="btn-secondary",
+                    )
+                    yield Button(
                         "List contents (ls)",
                         id="ls-btn",
                         classes="btn-secondary",
@@ -770,6 +775,61 @@ class DosForgeApp(App[None]):
                         id="open-btn",
                         classes="btn-secondary",
                     )
+
+            # ── Grow ─────────────────────────────────────────────────
+            with TabPane("Grow Disk", id="tab-grow"):
+                with Vertical(id="grow-tab"):
+                    yield Label(
+                        "Resize an existing VHD (FAT16 BIGDOS / FAT32 LBA) "
+                        "while preserving system files, CONFIG.SYS / "
+                        "AUTOEXEC.BAT, and user directories.  Optionally "
+                        "stage a new directory tree at the same time."
+                    )
+                    yield Static("Target VHD: (select via Browse tab first)", id="grow-target-info")
+                    with Horizontal(classes="path-row", id="grow-target-row"):
+                        yield Input(
+                            placeholder="Target VHD path",
+                            id="grow-target-input",
+                        )
+                        yield Button("...", id="browse-grow-target-btn", classes="btn-ghost")
+                    with Horizontal(classes="path-row", id="grow-size-row"):
+                        yield Input(
+                            placeholder="New size (e.g. 128M, 256M, 1G, 2G)",
+                            id="grow-new-size-input",
+                        )
+                        yield Select(
+                            [
+                                ("Compaq DOS 3.31 (FAT16 BIGDOS)", "compaq331"),
+                                ("MS-DOS 6.22 (FAT16)", "msdos622"),
+                                ("MS-DOS 7.10 / Win95 OSR2 (FAT16/32)", "msdos71"),
+                                ("FreeDOS (FAT16/32)", "freedos"),
+                            ],
+                            id="grow-boot-mode-select",
+                            prompt="Boot mode",
+                        )
+                    with Horizontal(classes="path-row", id="grow-staging-row"):
+                        yield Input(
+                            placeholder="Optional: stage HOST_DIR=C:\\DOS_PATH (repeatable)",
+                            id="grow-staging-input",
+                        )
+                        yield Button("Add", id="grow-add-staging-btn", classes="btn-ghost")
+                    yield Static("(no staging sources)", id="grow-staging-list")
+                    yield Checkbox(
+                        "Headless boot probe (verify the grown VHD boots before swap)",
+                        value=True,
+                        id="grow-boot-probe-check",
+                    )
+                    yield Checkbox(
+                        "Keep original VHD as <target>.bak",
+                        value=True,
+                        id="grow-keep-backup-check",
+                    )
+                    yield Button(
+                        "Grow VHD",
+                        id="grow-btn",
+                        classes="btn-primary",
+                    )
+                    yield Static("", id="grow-output")
 
             # ── Mounts ───────────────────────────────────────────────
             with TabPane("Mounts", id="tab-mounts"):
@@ -922,6 +982,8 @@ class DosForgeApp(App[None]):
             self._handle_unmount()
         elif button_id == "ls-btn":
             self._handle_image_ls()
+        elif button_id == "inspect-btn":
+            self._handle_image_inspect()
         elif button_id == "extract-btn":
             self._handle_image_extract()
         elif button_id == "open-btn":
@@ -940,6 +1002,12 @@ class DosForgeApp(App[None]):
             self._handle_browse_button("custom-payload")
         elif button_id == "browse-open-btn":
             self._handle_browse_button("open-input")
+        elif button_id == "browse-grow-target-btn":
+            self._handle_browse_button("grow-target-input")
+        elif button_id == "grow-add-staging-btn":
+            self._handle_grow_add_staging()
+        elif button_id == "grow-btn":
+            self._handle_grow()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if len(self.query("#create-path")) == 0:
@@ -1550,6 +1618,227 @@ class DosForgeApp(App[None]):
             error=True,
         )
         return None
+
+    def _handle_image_inspect(self) -> None:
+        """Inspect the currently selected VHD via dosforge.inspect.
+
+        Outputs the same MBR + BPB + root-system-files summary the
+        ``dosforge inspect`` CLI prints (human-readable mode).  No
+        worker thread needed -- inspect is pure-Python with one
+        cheap ``mdir`` per known root system filename.
+        """
+
+        image = self._selected_image_for_image_ops()
+        if image is None:
+            return
+        from .inspect import inspect_vhd
+
+        self._set_status(f"Inspecting {image.name}…")
+        try:
+            info = inspect_vhd(image)
+        except DosForgeError as exc:
+            self._set_status(str(exc), error=True)
+            return
+
+        lines: list[str] = []
+        lines.append(f"VHD: {info.path}")
+        lines.append(f"  File size       : {info.file_size_bytes:,} bytes")
+        lines.append(
+            f"  Format          : {'Fixed VHD (conectix)' if info.is_fixed_vhd else 'Raw / unknown'}"
+        )
+        if info.footer_chs:
+            c, h, s = info.footer_chs
+            lines.append(
+                f"  Footer CHS      : {c} cyl x {h} heads x {s} spt ({c*h*s:,} sectors)"
+            )
+        lines.append("")
+        lines.append(
+            f"  Partition       : type=0x{info.mbr_partition_type:02X}  "
+            f"LBA={info.partition_lba_start}-{info.partition_lba_start + info.partition_sector_count - 1}"
+        )
+        lines.append(f"  BPB OEM         : {info.bpb_oem!r}")
+        lines.append(f"  FAT format      : {info.fat_format.value}")
+        lines.append(
+            f"  Cluster size    : {info.cluster_size_bytes:,} bytes "
+            f"({info.bytes_per_sector} bytes/sector x {info.sectors_per_cluster} sectors/cluster)"
+        )
+        lines.append(f"  Cluster count   : {info.cluster_count:,}")
+        if info.volume_label:
+            lines.append(f"  Volume label    : {info.volume_label}")
+        if info.volume_serial_hex:
+            lines.append(
+                f"  Volume serial   : {info.volume_serial_hex[:4]}-{info.volume_serial_hex[4:]}"
+            )
+        lines.append("")
+        if info.inferred_boot_mode:
+            lines.append(f"  Inferred boot mode: {info.inferred_boot_mode.value}")
+        else:
+            lines.append("  Inferred boot mode: (unknown -- OEM stamp not in table)")
+        if info.root_system_files:
+            lines.append(f"  Root system files: {', '.join(info.root_system_files)}")
+        else:
+            lines.append("  Root system files: (none detected)")
+        self._set_status("\n".join(lines))
+
+    def _handle_grow_add_staging(self) -> None:
+        """Add one staging entry from the SRC=DEST input box.
+
+        Stores entries in self._grow_staging (a list[tuple[Path, str]])
+        and re-renders #grow-staging-list as a multi-line summary.
+        """
+
+        raw = self.query_one("#grow-staging-input", Input).value.strip()
+        if "=" not in raw:
+            self._set_status(
+                "Staging entry must be in the form SRC_DIR=C:\\DOS_PATH "
+                "(e.g. /tmp/games=C:\\GAMES).",
+                error=True,
+            )
+            return
+        src_str, dest_str = raw.split("=", 1)
+        src_str = src_str.strip()
+        dest_str = dest_str.strip()
+        src = Path(src_str).expanduser().resolve()
+        if not src.exists() or not src.is_dir():
+            self._set_status(
+                f"Staging source must be an existing directory: {src}",
+                error=True,
+            )
+            return
+        if not hasattr(self, "_grow_staging") or self._grow_staging is None:
+            self._grow_staging = []
+        self._grow_staging.append((src, dest_str))
+        self.query_one("#grow-staging-input", Input).value = ""
+        lines = [f"{src}  ->  {dest}" for src, dest in self._grow_staging]
+        self.query_one("#grow-staging-list", Static).update(
+            "\n".join(lines) if lines else "(no staging sources)"
+        )
+        self._set_status(f"Staged {src} -> {dest_str}.")
+
+    def _handle_grow(self) -> None:
+        """Build a GrowManifest from the Grow tab form and run grow_vhd.
+
+        The grow can take 10-30 seconds (extract + dosforge create +
+        re-inject + optional boot probe), so we run it on a worker
+        thread to keep the TUI responsive.
+        """
+
+        from .grow import GrowManifest, StagingSource, grow_vhd
+        from .size import parse_size
+
+        target_str = self.query_one("#grow-target-input", Input).value.strip()
+        if not target_str and self.selected_image is not None:
+            target_str = str(self.selected_image)
+        if not target_str:
+            self._set_status(
+                "Pick a target VHD (Browse tab) or paste its path into the "
+                "Grow Disk form first.",
+                error=True,
+            )
+            return
+
+        size_str = self.query_one("#grow-new-size-input", Input).value.strip()
+        if not size_str:
+            self._set_status(
+                "Enter a new size (e.g. 128M, 256M, 1G).", error=True
+            )
+            return
+        try:
+            new_size_bytes = parse_size(size_str)
+        except ValidationError as exc:
+            self._set_status(str(exc), error=True)
+            return
+
+        boot_select = self.query_one("#grow-boot-mode-select", Select)
+        boot_value = boot_select.value
+        if not boot_value or boot_value == Select.BLANK:
+            self._set_status(
+                "Pick a boot mode (compaq331, msdos622, msdos71, freedos).",
+                error=True,
+            )
+            return
+        try:
+            boot_mode = BootMode(str(boot_value))
+        except ValueError as exc:
+            self._set_status(f"Invalid boot mode: {exc}", error=True)
+            return
+
+        staging_pairs: list[tuple[Path, str]] = list(
+            getattr(self, "_grow_staging", []) or []
+        )
+        boot_probe = self.query_one("#grow-boot-probe-check", Checkbox).value
+        keep_backup = self.query_one("#grow-keep-backup-check", Checkbox).value
+
+        manifest = GrowManifest(
+            target_vhd=Path(target_str).expanduser().resolve(),
+            new_size_bytes=new_size_bytes,
+            boot_mode=boot_mode,
+            staging_sources=tuple(
+                StagingSource(src=src, dest=dest) for src, dest in staging_pairs
+            ),
+            boot_probe=boot_probe,
+            keep_backup=keep_backup,
+        )
+
+        try:
+            btn = self.query_one("#grow-btn", Button)
+            btn.disabled = True
+        except Exception:
+            pass
+        self._start_spinner(
+            f"Growing {manifest.target_vhd.name} to {manifest.new_size_bytes:,} bytes "
+            f"(this may take 10-30 s)…"
+        )
+        self._grow_worker(manifest)
+
+    @work(thread=True, exclusive=True, group="grow")
+    def _grow_worker(self, manifest) -> None:
+        from .grow import grow_vhd
+
+        try:
+            grow_vhd(manifest)
+            self.call_from_thread(self._on_grow_done, manifest, None)
+        except Exception as exc:
+            self.call_from_thread(self._on_grow_done, manifest, exc)
+
+    def _on_grow_done(self, manifest, error) -> None:
+        self._stop_spinner()
+        try:
+            btn = self.query_one("#grow-btn", Button)
+            btn.disabled = False
+        except Exception:
+            pass
+        if error is not None:
+            self._set_status(f"Grow failed: {error}", error=True)
+            try:
+                self.query_one("#grow-output", Static).update(
+                    f"Grow failed (original VHD untouched):\n{error}"
+                )
+            except Exception:
+                pass
+            return
+        # Clear staging list on success so the user doesn't accidentally
+        # re-add the same games to a follow-up grow.
+        self._grow_staging = []
+        try:
+            self.query_one("#grow-staging-list", Static).update("(no staging sources)")
+        except Exception:
+            pass
+        backup_msg = (
+            f" Backup at {manifest.target_vhd}.bak."
+            if manifest.keep_backup
+            else " (no backup kept)"
+        )
+        self._set_status(
+            f"✓ Grew {manifest.target_vhd} to {manifest.new_size_bytes:,} bytes.{backup_msg}"
+        )
+        try:
+            self.query_one("#grow-output", Static).update(
+                f"Grew {manifest.target_vhd} to "
+                f"{manifest.new_size_bytes:,} bytes.{backup_msg}"
+            )
+        except Exception:
+            pass
 
     def _handle_fetch_freedos(self) -> None:
         """Kick off FreeDOS download on a worker thread + spin until done.

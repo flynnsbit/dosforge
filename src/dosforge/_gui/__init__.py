@@ -52,6 +52,7 @@ class DosForgeGUI:
         ("create", "New Disk"),
         ("browse", "Browse"),
         ("tools", "Image Tools"),
+        ("grow", "Grow Disk"),
         ("mounts", "Mounts"),
         ("utils", "Utilities"),
     ]
@@ -154,6 +155,7 @@ class DosForgeGUI:
     def _build_views(self, nav_items: list[tuple[str, str]]) -> None:
         from .browse_view import BrowseView
         from .create_view import CreateView
+        from .grow_view import GrowView
         from .mounts_view import MountsView
         from .tools_view import ToolsView
         from .utils_view import UtilsView
@@ -162,6 +164,7 @@ class DosForgeGUI:
             "create": CreateView,
             "browse": BrowseView,
             "tools": ToolsView,
+            "grow": GrowView,
             "mounts": MountsView,
             "utils": UtilsView,
         }
@@ -175,6 +178,8 @@ class DosForgeGUI:
         if view is None:
             return
         if key == "tools" and hasattr(view, "refresh_target"):
+            view.refresh_target()
+        if key == "grow" and hasattr(view, "refresh_target"):
             view.refresh_target()
         if key == "mounts" and hasattr(view, "refresh_mounts"):
             view.refresh_mounts()

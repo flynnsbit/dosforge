@@ -32,8 +32,11 @@ class ToolsView(ttk.Frame):
         btn_row = ttk.Frame(body)
         btn_row.grid(row=1, column=0, sticky="ew")
         ttk.Button(
-            btn_row, text="List contents", command=self._ls, takefocus=False
+            btn_row, text="Inspect VHD", command=self._inspect, takefocus=False
         ).pack(side="left")
+        ttk.Button(
+            btn_row, text="List contents", command=self._ls, takefocus=False
+        ).pack(side="left", padx=(8, 0))
         ttk.Button(
             btn_row, text="Open in file manager", command=self._open, takefocus=False
         ).pack(side="left", padx=(8, 0))
@@ -90,6 +93,71 @@ class ToolsView(ttk.Frame):
         self._output.delete("1.0", "end")
         self._output.insert("1.0", text)
         self._output.configure(state="disabled")
+
+    def _inspect(self) -> None:
+        image = self._image()
+        if image is None:
+            return
+        from ..inspect import inspect_vhd
+
+        def work():
+            return inspect_vhd(image)
+
+        def done(info):
+            # Render the same human-readable summary the CLI prints.
+            lines: list[str] = []
+            lines.append(f"VHD: {info.path}")
+            lines.append(f"  File size       : {info.file_size_bytes:,} bytes")
+            lines.append(
+                f"  Format          : {'Fixed VHD (conectix)' if info.is_fixed_vhd else 'Raw / unknown'}"
+            )
+            if info.footer_chs:
+                c, h, s = info.footer_chs
+                lines.append(
+                    f"  Footer CHS      : {c} cyl x {h} heads x {s} spt ({c*h*s:,} sectors)"
+                )
+            lines.append("")
+            lines.append(
+                f"  Partition       : type=0x{info.mbr_partition_type:02X}  "
+                f"LBA={info.partition_lba_start}-{info.partition_lba_start + info.partition_sector_count - 1}"
+            )
+            lines.append("")
+            lines.append(f"  BPB OEM         : {info.bpb_oem!r}")
+            lines.append(f"  FAT format      : {info.fat_format.value}")
+            lines.append(
+                f"  Cluster size    : {info.cluster_size_bytes:,} bytes "
+                f"({info.bytes_per_sector} bytes/sector x {info.sectors_per_cluster} sectors/cluster)"
+            )
+            lines.append(f"  Cluster count   : {info.cluster_count:,}")
+            lines.append(f"  Total sectors   : {info.total_sectors:,}")
+            lines.append(f"  Reserved        : {info.reserved_sectors}")
+            lines.append(f"  Num FATs        : {info.num_fats}")
+            lines.append(f"  Sectors/FAT     : {info.sectors_per_fat}")
+            if info.volume_label:
+                lines.append(f"  Volume label    : {info.volume_label}")
+            if info.volume_serial_hex:
+                lines.append(
+                    f"  Volume serial   : {info.volume_serial_hex[:4]}-{info.volume_serial_hex[4:]}"
+                )
+            lines.append("")
+            if info.inferred_boot_mode:
+                lines.append(f"  Inferred boot mode: {info.inferred_boot_mode.value}")
+            else:
+                lines.append("  Inferred boot mode: (unknown -- OEM stamp not in table)")
+            lines.append("")
+            if info.root_system_files:
+                lines.append(f"  Root system files: {', '.join(info.root_system_files)}")
+            else:
+                lines.append("  Root system files: (none detected)")
+            self._write_output("\n".join(lines))
+
+        self.app.run_operation(
+            "inspect",
+            work,
+            done,
+            busy_msg=f"Inspecting {image.name}…",
+            success_msg=f"Inspected {image.name}.",
+        )
 
     def _ls(self) -> None:
         image = self._image()
