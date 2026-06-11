@@ -492,7 +492,6 @@ class DosForgeApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Static("Selected image: (none)", id="context-bar")
         with TabbedContent(initial="tab-new"):
             # ── New Disk (wizard) ────────────────────────────────────
             with TabPane("New Disk", id="tab-new"):
@@ -889,6 +888,7 @@ class DosForgeApp(App[None]):
                         id="utils-tip",
                     )
 
+        yield Static("Selected image: (none)", id="context-bar")
         yield Static("", id="status-current")
         yield RichLog(
             id="status",
