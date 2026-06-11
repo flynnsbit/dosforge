@@ -91,10 +91,14 @@ class GrowManifest:
     Use :func:`dosforge.size.parse_size` to parse human-friendly
     inputs like ``"2G"`` or ``"512M"``."""
 
-    boot_mode: BootMode
-    """Boot mode the VHD was originally built with -- must be one of
-    :data:`GROWABLE_BOOT_MODES`. Used to pick the file-ordering and
-    BPB-preservation rules for the underlying rewrite."""
+    boot_mode: BootMode | None = None
+    """Boot mode the VHD was originally built with.  When ``None``
+    (the default), :func:`grow_vhd` auto-detects the family from the
+    source VHD's root system files (KERNEL.SYS → FreeDOS, IBMBIO.COM
+    → Compaq DOS 3.31, MSDOS.SYS as text → MS-DOS 7.10, else
+    MS-DOS 6.22).  Set explicitly only when you need to override
+    detection (e.g. you're rebuilding a corrupted VHD).  Must be in
+    :data:`GROWABLE_BOOT_MODES` when set."""
 
     staging_sources: tuple[StagingSource, ...] = ()
     """Zero or more directories to copy into the grown VHD. Empty
@@ -122,7 +126,7 @@ class GrowManifest:
             "schema_version": self.schema_version,
             "target_vhd": str(self.target_vhd),
             "new_size_bytes": self.new_size_bytes,
-            "boot_mode": self.boot_mode.value,
+            "boot_mode": self.boot_mode.value if self.boot_mode else None,
             "staging_sources": [
                 {"src": str(s.src), "dest": s.dest}
                 for s in self.staging_sources
@@ -151,19 +155,22 @@ def load_manifest_from_dict(payload: dict[str, Any]) -> GrowManifest:
             f"(dosforge supports {MANIFEST_SCHEMA_VERSION})."
         )
 
-    required = ("target_vhd", "new_size_bytes", "boot_mode")
+    required = ("target_vhd", "new_size_bytes")
     missing = [k for k in required if k not in payload]
     if missing:
         raise ValidationError(
             f"Grow manifest is missing required field(s): {', '.join(missing)}."
         )
 
-    try:
-        boot_mode = BootMode(payload["boot_mode"])
-    except ValueError as exc:
-        raise ValidationError(
-            f"Unknown boot_mode in grow manifest: {payload['boot_mode']!r}."
-        ) from exc
+    boot_mode: BootMode | None = None
+    raw_boot_mode = payload.get("boot_mode")
+    if raw_boot_mode:
+        try:
+            boot_mode = BootMode(raw_boot_mode)
+        except ValueError as exc:
+            raise ValidationError(
+                f"Unknown boot_mode in grow manifest: {raw_boot_mode!r}."
+            ) from exc
 
     raw_size = payload["new_size_bytes"]
     if isinstance(raw_size, str):
@@ -230,7 +237,7 @@ def validate_grow_request(manifest: GrowManifest) -> None:
     first failure encountered.
     """
 
-    if manifest.boot_mode not in GROWABLE_BOOT_MODES:
+    if manifest.boot_mode is not None and manifest.boot_mode not in GROWABLE_BOOT_MODES:
         supported = ", ".join(sorted(m.value for m in GROWABLE_BOOT_MODES))
         raise ValidationError(
             f"dosforge grow does not support boot mode "
@@ -274,17 +281,22 @@ def validate_grow_request(manifest: GrowManifest) -> None:
         )
 
     fat32_modes = {BootMode.MSDOS71, BootMode.FREEDOS}
-    if manifest.boot_mode in fat32_modes:
+    # When boot_mode is unspecified (will be auto-detected at grow
+    # time), conservatively use the FAT32 cap so we don't refuse
+    # valid grows up-front.  perform_grow re-checks size against the
+    # detected mode after detection.
+    if manifest.boot_mode is None or manifest.boot_mode in fat32_modes:
         max_bytes = FAT32_MAX_BYTES
         fs_label = "FAT32"
     else:
         max_bytes = FAT16_MAX_BYTES
         fs_label = "FAT16"
     if manifest.new_size_bytes > max_bytes:
+        mode_label = manifest.boot_mode.value if manifest.boot_mode else "<auto-detect>"
         raise ValidationError(
             f"new_size_bytes ({manifest.new_size_bytes}) exceeds the "
             f"{fs_label} hard cap of {max_bytes} bytes for boot mode "
-            f"{manifest.boot_mode.value}."
+            f"{mode_label}."
         )
 
     for staging in manifest.staging_sources:

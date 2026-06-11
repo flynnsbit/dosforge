@@ -29,6 +29,10 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from .commands import CommandRunner, subprocess_no_window_kwargs
 from .disk import DiskManager
@@ -238,6 +242,62 @@ def _validate_cluster_band_match(
         )
 
 
+def _detect_boot_mode_from_root(
+    target_vhd: Path,
+    snapshot: _VhdSnapshot,
+    runner: CommandRunner,
+) -> BootMode:
+    """Infer the original boot mode from the VHD partition root.
+
+    Inspects ``mdir`` output for signature system files and, for
+    MS-DOS variants, peeks at MSDOS.SYS to discriminate 7.x text
+    config from 6.22 binary header.  Returns one of the four
+    growable boot modes (FREEDOS, MSDOS71, MSDOS622, COMPAQ331).
+
+    Falls back to FREEDOS only when nothing identifiable is found,
+    which is the safest choice for fresh dosforge-built VHDs.
+    """
+
+    partition_image = f"{target_vhd}@@{snapshot.partition_offset_bytes}"
+    proc = runner.run(
+        ["mdir", "-i", partition_image, "-/", "-a", "::"], check=False
+    )
+    stdout = (proc.stdout or "").upper()
+    names: set[str] = set()
+    for line in stdout.splitlines():
+        head = line.split()[:2]
+        if len(head) == 2 and head[0].isalnum() and head[1].isalnum():
+            names.add(f"{head[0]}.{head[1]}")
+
+    if "KERNEL.SYS" in names:
+        return BootMode.FREEDOS
+    if "IBMBIO.COM" in names or "IBMDOS.COM" in names:
+        return BootMode.COMPAQ331
+    if "IO.SYS" in names or "MSDOS.SYS" in names:
+        # MS-DOS 7.x ships MSDOS.SYS as an ASCII text config file
+        # beginning with "[Paths]".  6.22 ships it as a binary
+        # kernel stub.  Sample first 16 bytes via mtype.
+        with tempfile.NamedTemporaryFile(
+            prefix="dosforge-grow-detect-", delete=False
+        ) as fh:
+            scratch = Path(fh.name)
+        try:
+            runner.run(
+                ["mcopy", "-n", "-i", partition_image, "::MSDOS.SYS", str(scratch)],
+                check=False,
+            )
+            head = scratch.read_bytes()[:16] if scratch.exists() else b""
+        finally:
+            try:
+                scratch.unlink()
+            except OSError:
+                pass
+        if b"[Paths]" in head or b"[PATHS]" in head.upper():
+            return BootMode.MSDOS71
+        return BootMode.MSDOS622
+    return BootMode.FREEDOS
+
+
 def _mtools_extract_partition_root(
     target_vhd: Path,
     snapshot: _VhdSnapshot,
@@ -317,43 +377,72 @@ def _mtools_inject_extracted_tree(
     new_snapshot: _VhdSnapshot,
     extract_dir: Path,
     runner: CommandRunner,
+    progress: "Callable[[str], None] | None" = None,
 ) -> None:
-    """Copy host extract dir back into the new VHD partition.
+    """Copy host extract dir back into the new VHD partition (fast path).
 
-    Walks ``extract_dir`` and re-issues ``mcopy -o`` (overwrite) for
-    each file, ``mmd`` for each directory.  Files at the root whose
-    names appear in :data:`_PROTECTED_ROOT_SYSTEM_FILES` are skipped
-    so the fresh VHD's authentic system files survive (otherwise we
-    risk losing cluster-2 contiguity or attribute state).
+    Strategy: minimize the number of ``mcopy`` subprocess spawns,
+    which is the dominant cost when injecting populated source VHDs.
 
-    Attribute restoration (+s, +h, +r) is applied via ``mattrib``
-    after each file copy where we can inspect the host file's
-    attributes -- on Windows we use the FILE_ATTRIBUTE_HIDDEN /
-    FILE_ATTRIBUTE_SYSTEM / FILE_ATTRIBUTE_READONLY bits stored by
-    mcopy's host-side fileio (mtools mirrors DOS attrs into Windows
-    file attrs and preserves them with ``-p``).
+    * Root-level files (excluding protected system files) are copied
+      in ONE batched ``mcopy`` call using multi-source syntax.
+    * Each top-level subdirectory is copied with ``mcopy -s``
+      (recursive) in one shot, regardless of how many files it
+      contains.
+
+    The old implementation spawned one mcopy per file (~100ms each
+    on slow disks), which made step 5 of grow appear to hang for
+    minutes on a populated VHD.  This implementation typically
+    finishes in well under a second for any FAT16 source.
+
+    ``progress`` is called with short labels like
+    ``"Step 5/8: Re-injecting 38 root files..."`` so the spinner can
+    show movement instead of a stuck "Step 5/8" caption.
     """
 
     partition_image = f"{new_vhd}@@{new_snapshot.partition_offset_bytes}"
 
-    # First pass: directories (sorted, parents before children).
-    for entry in sorted(extract_dir.rglob("*"), key=lambda p: (p.is_file(), str(p))):
-        rel = entry.relative_to(extract_dir)
-        if any(part.upper() in _ALWAYS_SKIP_NAMES for part in rel.parts):
+    def _report(msg: str) -> None:
+        if progress is not None:
+            try:
+                progress(msg)
+            except Exception:
+                pass
+
+    # Inventory top-level entries (files + dirs) skipping protected names.
+    root_files: list[Path] = []
+    root_dirs: list[Path] = []
+    for entry in sorted(extract_dir.iterdir()):
+        if entry.name.upper() in _ALWAYS_SKIP_NAMES:
             continue
-        dest = "::" + str(rel).replace(os.sep, "/")
-        if entry.is_dir():
-            # mmd silently fails if dir already exists -- ignore.
-            runner.run(["mmd", "-i", partition_image, dest], check=False)
-            continue
-        if not entry.is_file():
-            continue
-        # Skip protected root-level system files (let fresh VHD's
-        # versions win).
-        if rel.parent == Path(".") and entry.name.upper() in _PROTECTED_ROOT_SYSTEM_FILES:
-            continue
+        if entry.is_file():
+            if entry.name.upper() in _PROTECTED_ROOT_SYSTEM_FILES:
+                continue
+            root_files.append(entry)
+        elif entry.is_dir():
+            root_dirs.append(entry)
+
+    # Batched root file copy: chunk to keep argv under typical
+    # ARG_MAX (~128 KiB on Linux).  500 files per chunk is well
+    # under the limit even with long paths.
+    if root_files:
+        _report(f"Step 5/8: Re-injecting {len(root_files)} root file(s)...")
+        chunk = 200
+        for i in range(0, len(root_files), chunk):
+            batch = root_files[i : i + chunk]
+            cmd = ["mcopy", "-o", "-m", "-i", partition_image]
+            cmd.extend(str(f) for f in batch)
+            cmd.append("::/")
+            runner.run(cmd, check=False)
+
+    # Recursive subdirectory copy: one mcopy -s per top-level dir.
+    for idx, sub in enumerate(root_dirs, start=1):
+        _report(
+            f"Step 5/8: Re-injecting subdirectory {idx}/{len(root_dirs)}: "
+            f"\\{sub.name}\\..."
+        )
         runner.run(
-            ["mcopy", "-o", "-m", "-i", partition_image, str(entry), dest],
+            ["mcopy", "-s", "-o", "-m", "-i", partition_image, str(sub), "::"],
             check=False,
         )
 
@@ -667,6 +756,18 @@ def perform_grow(
     snapshot = _snapshot_vhd(manifest.target_vhd)
     _validate_cluster_band_match(snapshot, manifest.new_size_bytes)
 
+    # Auto-detect boot mode from the source VHD when the manifest
+    # doesn't pin one.  The CLI / TUI both now leave this unset so
+    # the user doesn't have to remember which DOS family the VHD
+    # was originally built with.
+    boot_mode = manifest.boot_mode
+    if boot_mode is None:
+        _report("Detecting boot mode from source VHD root files...")
+        boot_mode = _detect_boot_mode_from_root(
+            manifest.target_vhd, snapshot, runner
+        )
+        _report(f"Detected boot mode: {boot_mode.value}")
+
     work_root = Path(tempfile.mkdtemp(prefix="dosforge-grow-"))
     try:
         extract_dir = work_root / "extract"
@@ -683,12 +784,12 @@ def perform_grow(
 
         # Step 4: build fresh VHD at the new size
         _report(
-            f"Step 4/8: Building fresh {manifest.boot_mode.value} VHD at "
+            f"Step 4/8: Building fresh {boot_mode.value} VHD at "
             f"{manifest.new_size_bytes:,} bytes (may need sudo for qemu-nbd)..."
         )
         _create_fresh_vhd(
             new_vhd_temp,
-            boot_mode=manifest.boot_mode,
+            boot_mode=boot_mode,
             fat_format=snapshot.fat_format,
             new_size_bytes=manifest.new_size_bytes,
         )
@@ -701,6 +802,7 @@ def perform_grow(
             new_snapshot=new_snapshot,
             extract_dir=extract_dir,
             runner=runner,
+            progress=_report,
         )
 
         # Step 6: stage manifest sources

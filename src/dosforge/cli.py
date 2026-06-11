@@ -669,21 +669,21 @@ def _grow_command(args) -> int:
             flag for flag, value in (
                 ("--target", args.target),
                 ("--new-size", args.new_size),
-                ("--boot-mode", args.boot_mode),
             ) if value is None
         ]
         if missing:
             raise ValidationError(
-                f"dosforge grow requires either --manifest, or all of: "
-                f"{', '.join(flag for flag, _ in (('--target', None), ('--new-size', None), ('--boot-mode', None)))}. "
-                f"Missing: {', '.join(missing)}."
+                f"dosforge grow requires either --manifest, or both of: "
+                f"--target, --new-size. Missing: {', '.join(missing)}."
             )
-        try:
-            boot_mode = BootMode(args.boot_mode)
-        except ValueError as exc:
-            raise ValidationError(
-                f"Unknown --boot-mode {args.boot_mode!r}."
-            ) from exc
+        boot_mode: BootMode | None = None
+        if args.boot_mode:
+            try:
+                boot_mode = BootMode(args.boot_mode)
+            except ValueError as exc:
+                raise ValidationError(
+                    f"Unknown --boot-mode {args.boot_mode!r}."
+                ) from exc
 
         from .size import parse_size as _parse_size
 

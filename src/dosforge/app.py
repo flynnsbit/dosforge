@@ -815,16 +815,6 @@ class DosForgeApp(App[None]):
                             placeholder="New size (e.g. 128M, 256M, 1G, 2G)",
                             id="grow-new-size-input",
                         )
-                        yield Select(
-                            [
-                                ("Compaq DOS 3.31 (FAT16 BIGDOS)", "compaq331"),
-                                ("MS-DOS 6.22 (FAT16)", "msdos622"),
-                                ("MS-DOS 7.10 / Win95 OSR2 (FAT16/32)", "msdos71"),
-                                ("FreeDOS (FAT16/32)", "freedos"),
-                            ],
-                            id="grow-boot-mode-select",
-                            prompt="Boot mode",
-                        )
                     with Horizontal(classes="path-row", id="grow-staging-row"):
                         yield Input(
                             placeholder="Optional: stage HOST_DIR=C:\\DOS_PATH (repeatable)",
@@ -1780,19 +1770,8 @@ class DosForgeApp(App[None]):
             self._set_status(str(exc), error=True)
             return
 
-        boot_select = self.query_one("#grow-boot-mode-select", Select)
-        boot_value = boot_select.value
-        if not boot_value or boot_value == Select.BLANK:
-            self._set_status(
-                "Pick a boot mode (compaq331, msdos622, msdos71, freedos).",
-                error=True,
-            )
-            return
-        try:
-            boot_mode = BootMode(str(boot_value))
-        except ValueError as exc:
-            self._set_status(f"Invalid boot mode: {exc}", error=True)
-            return
+        boot_select = None
+        boot_mode = None
 
         staging_pairs: list[tuple[Path, str]] = list(
             getattr(self, "_grow_staging", []) or []
