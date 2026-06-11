@@ -2165,6 +2165,12 @@ class DosForgeApp(App[None]):
         elif target == "create-path":
             mode = "save"
             title = "Select image output path"
+        elif target == "grow-target-input":
+            mode = "file"
+            title = "Select target VHD to grow"
+        elif target == "open-input":
+            mode = "file_or_directory"
+            title = "Select image or mount path"
         else:
             mode = "file_or_directory"
             title = "Select path"
@@ -2257,6 +2263,8 @@ class DosForgeApp(App[None]):
             value = self.query_one("#custom-payload", Input).value.strip()
         elif target == "open-input":
             value = self.query_one("#open-input", Input).value.strip()
+        elif target == "grow-target-input":
+            value = self.query_one("#grow-target-input", Input).value.strip()
         if value:
             candidate = Path(value).expanduser()
             if candidate.exists():
@@ -2332,6 +2340,15 @@ class DosForgeApp(App[None]):
         elif target == "open-input":
             self.query_one("#open-input", Input).value = str(selected)
             self._set_status(f"Open path set: {selected}")
+        elif target == "grow-target-input":
+            if not selected.is_file():
+                self._set_status(
+                    "Grow target must be an existing VHD file.",
+                    error=True,
+                )
+                return
+            self.query_one("#grow-target-input", Input).value = str(selected)
+            self._set_status(f"Grow target VHD set: {selected}")
         self.path_picker_target = None
 
     def _set_tree_path(self, destination: Path) -> None:
