@@ -23,6 +23,7 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    RichLog,
     Select,
     Static,
     TabbedContent,
@@ -186,6 +187,8 @@ class DosForgeApp(App[None]):
         ("ctrl+3", "show_tab('tab-tools')", "Image Tools"),
         ("ctrl+4", "show_tab('tab-mounts')", "Mounts"),
         ("ctrl+5", "show_tab('tab-utils')", "Utilities"),
+        ("ctrl+y", "copy_log", "Copy log"),
+        ("ctrl+shift+l", "clear_log", "Clear log"),
     ]
 
     CSS = """
@@ -312,12 +315,24 @@ class DosForgeApp(App[None]):
       min-height: 5;
       background: $surface;
     }
-    #status {
-      height: 3;
+    #status-current {
+      height: 1;
       padding: 0 2;
+      margin: 0;
+      color: $accent;
+      background: $boost;
+    }
+    #status {
+      height: 7;
+      padding: 0 1;
       margin: 0;
       color: $text;
       background: $boost;
+      border: round $primary;
+      scrollbar-size-vertical: 1;
+    }
+    #status:focus {
+      border: round $accent;
     }
 
     /* ── Inputs / selects / labels: compact spacing ── */
@@ -470,6 +485,10 @@ class DosForgeApp(App[None]):
         self._spinner_message: str = ""
         self._spinner_started_at: float = 0.0
         self._spinner_frames = cycle(_SPINNER_FRAMES)
+        # Plain-text mirror of every line written to #status RichLog so
+        # action_copy_log can return raw text on demand (RichLog.lines
+        # holds rendered Strip objects which are awkward to round-trip).
+        self._status_log_history: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -870,7 +889,15 @@ class DosForgeApp(App[None]):
                         id="utils-tip",
                     )
 
-        yield Static("", id="status")
+        yield Static("", id="status-current")
+        yield RichLog(
+            id="status",
+            max_lines=500,
+            wrap=True,
+            highlight=False,
+            markup=False,
+            auto_scroll=True,
+        )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1443,7 +1470,7 @@ class DosForgeApp(App[None]):
         try:
             frame = next(self._spinner_frames)
             elapsed = time.monotonic() - self._spinner_started_at
-            self.query_one("#status", Static).update(
+            self.query_one("#status-current", Static).update(
                 f"{frame} {self._spinner_message}  [{elapsed:0.1f}s]"
             )
         except Exception:
@@ -1457,6 +1484,10 @@ class DosForgeApp(App[None]):
                 pass
             self._spinner_timer = None
         self._spinner_message = ""
+        try:
+            self.query_one("#status-current", Static).update("")
+        except Exception:
+            pass
 
     def _update_context_bar(self) -> None:
         """Update the always-visible context strip above the tabs."""
@@ -1994,7 +2025,7 @@ class DosForgeApp(App[None]):
         self._set_status("Running privilege diagnostics…")
         ok, summary = self.manager.privilege_diagnostics_summary()
         label = "[OK]" if ok else "[ERROR]"
-        self.query_one("#status", Static).update(f"{label} {summary}")
+        self._append_status_log(f"{label} {summary}")
 
     def _request_from_form(self) -> CreateRequest:
         return fl.build_create_request(self._current_form_state())
@@ -2326,14 +2357,60 @@ class DosForgeApp(App[None]):
 
     def _set_status(self, message: str, *, error: bool = False) -> None:
         label = "[ERROR] " if error else "[OK] "
-        self.query_one("#status", Static).update(f"{label}{message}")
+        self._append_status_log(f"{label}{message}")
+
+    def _append_status_log(self, message: str) -> None:
+        self._status_log_history.append(message)
+        if len(self._status_log_history) > 500:
+            del self._status_log_history[: len(self._status_log_history) - 500]
+        try:
+            self.query_one("#status", RichLog).write(message)
+        except Exception:
+            pass
+        try:
+            self.query_one("#status-current", Static).update("")
+        except Exception:
+            pass
 
     def _clear_status(self) -> None:
-        """Clear the bottom status banner (used on wizard navigation /
-        when the user mutates form fields so stale errors don't linger).
+        """Clear only the live status row (spinner / current op).
+
+        The persistent log panel (``#status``) intentionally keeps its
+        history so the user can scroll back, copy past messages with
+        ``Ctrl+Y``, or clear it explicitly with ``Ctrl+Shift+L``.
         """
         try:
-            self.query_one("#status", Static).update("")
+            self.query_one("#status-current", Static).update("")
+        except Exception:
+            pass
+
+    def action_copy_log(self) -> None:
+        """Copy the persistent status log to the clipboard.
+
+        Uses Textual's OSC 52 clipboard bridge so it works over SSH
+        and inside terminal multiplexers (provided the terminal
+        emulator supports OSC 52, which all modern ones do).
+        """
+        payload = "\n".join(self._status_log_history).rstrip()
+        if not payload:
+            self._append_status_log("[INFO] Log is empty -- nothing to copy.")
+            return
+        try:
+            self.copy_to_clipboard(payload)
+        except Exception:
+            self._append_status_log(
+                "[ERROR] copy_to_clipboard failed (terminal may not support OSC 52)."
+            )
+            return
+        self._append_status_log(
+            f"[OK] Copied {len(self._status_log_history)} log line(s) to clipboard."
+        )
+
+    def action_clear_log(self) -> None:
+        """Wipe the persistent status log."""
+        self._status_log_history.clear()
+        try:
+            self.query_one("#status", RichLog).clear()
         except Exception:
             pass
 

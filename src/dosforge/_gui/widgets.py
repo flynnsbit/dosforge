@@ -123,6 +123,13 @@ class StatusBar(tk.Frame):
             takefocus=False,
         )
         self._toggle_btn.pack(side="right")
+        self._copy_btn = ttk.Button(
+            status_row,
+            text="Copy log",
+            command=self.copy_log_to_clipboard,
+            takefocus=False,
+        )
+        self._copy_btn.pack(side="right", padx=(0, 6))
         self._progress = ttk.Progressbar(status_row, mode="indeterminate", length=160)
 
         # Log panel — kept packed-but-hidden so toggling is fast.
@@ -182,6 +189,29 @@ class StatusBar(tk.Frame):
             self._log_holder.pack(fill="both", expand=False, padx=16, pady=(0, 6))
             self._toggle_btn.configure(text="Hide log")
             self._log_visible = True
+
+    def copy_log_to_clipboard(self) -> None:
+        """Copy the full log buffer to the OS clipboard.
+
+        Works on Windows / macOS / X11 / Wayland via Tk's clipboard
+        bridge.  The buffer is read in its entirety (capped at 500
+        lines by ``append_log``'s ring-buffer trim) so the user can
+        share complete subprocess output without manually selecting
+        text inside the read-only Text widget.
+        """
+        content = self._log_text.get("1.0", "end-1c")
+        if not content.strip():
+            self.set_status("Log is empty -- nothing to copy.")
+            return
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(content)
+            self.update_idletasks()  # flush to X selection on Linux.
+        except Exception as exc:
+            self.set_status(f"Copy failed: {exc}", error=True)
+            return
+        line_count = content.count("\n") + (0 if content.endswith("\n") else 1)
+        self.set_status(f"Copied {line_count} log line(s) to clipboard.")
 
     def _toggle_log(self) -> None:
         if self._log_visible:
