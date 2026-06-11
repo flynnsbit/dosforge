@@ -14,7 +14,7 @@ import pytest
 from dosforge._grow_impl import (
     _expected_cluster_size_for_new_size,
     _snapshot_vhd,
-    _validate_cluster_band_match,
+    _validate_extracted_payload_fits,
 )
 from dosforge.errors import ValidationError
 from dosforge.models import DiskFormat
@@ -139,18 +139,38 @@ class TestExpectedClusterSize:
         assert _expected_cluster_size_for_new_size(size, fmt) == cluster
 
 
-class TestValidateClusterBand:
-    def test_same_band_passes(self, tmp_path: Path) -> None:
-        vhd = tmp_path / "exo.vhd"
-        _write_fake_vhd_with_partition(vhd)  # 2048-byte clusters
-        snap = _snapshot_vhd(vhd)
-        # Old: 32 MiB, 2 KiB clusters. New: 128 MiB still in same band.
-        _validate_cluster_band_match(snap, 128 * 1024 * 1024)
+class TestValidateExtractedPayloadFits:
+    def _make_extract(self, root: Path, files: dict[str, int]) -> None:
+        for rel, size in files.items():
+            p = root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"\x00" * size)
 
-    def test_different_band_rejected(self, tmp_path: Path) -> None:
-        vhd = tmp_path / "exo.vhd"
-        _write_fake_vhd_with_partition(vhd)
-        snap = _snapshot_vhd(vhd)
-        # Grow from 32 MiB to 256 MiB crosses the 2KiB→4KiB band.
-        with pytest.raises(ValidationError, match="cluster size"):
-            _validate_cluster_band_match(snap, 256 * 1024 * 1024)
+    def test_small_payload_fits_in_large_target(self, tmp_path: Path) -> None:
+        extract = tmp_path / "x"
+        self._make_extract(extract, {
+            "KERNEL.SYS": 50_000,
+            "COMMAND.COM": 90_000,
+            "FDOS/BIN/EDIT.EXE": 60_000,
+        })
+        # 200 KB of files into a 128 MiB target -- trivially fits.
+        _validate_extracted_payload_fits(extract, 128 * 1024 * 1024, DiskFormat.FAT16)
+
+    def test_oversized_payload_rejected(self, tmp_path: Path) -> None:
+        extract = tmp_path / "x"
+        self._make_extract(extract, {
+            "BIG.DAT": 40 * 1024 * 1024,  # 40 MiB
+        })
+        # 40 MiB into a 32 MiB target -- won't fit.
+        with pytest.raises(ValidationError, match="won't fit"):
+            _validate_extracted_payload_fits(extract, 32 * 1024 * 1024, DiskFormat.FAT16)
+
+    def test_many_tiny_files_account_for_cluster_slack(self, tmp_path: Path) -> None:
+        extract = tmp_path / "x"
+        # 5000 tiny 100-byte files -- bytes total = 500 KB, but with
+        # 8 KiB cluster slack per file = 40 MiB estimated, which
+        # exceeds a 32 MiB target.
+        files = {f"f{i:04d}.txt": 100 for i in range(5000)}
+        self._make_extract(extract, files)
+        with pytest.raises(ValidationError, match="won't fit"):
+            _validate_extracted_payload_fits(extract, 32 * 1024 * 1024, DiskFormat.FAT16)

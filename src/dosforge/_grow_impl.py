@@ -217,28 +217,51 @@ def _expected_cluster_size_for_new_size(
     return bands[-1][1]
 
 
-def _validate_cluster_band_match(
-    snapshot: _VhdSnapshot, new_size_bytes: int
+def _validate_extracted_payload_fits(
+    extract_dir: Path, new_size_bytes: int, fat_format: DiskFormat
 ) -> None:
-    """Refuse grow when target size would force a different cluster band.
+    """Refuse grow when the extracted user-file payload won't fit in
+    the new partition.
 
-    Crossing a cluster-band boundary (e.g. 128 MiB → 256 MiB on FAT16
-    bumps cluster size from 2 KiB to 4 KiB) requires rewriting every
-    file's cluster chain in the new FAT.  That's not supported by the
-    v1 grow implementation; instead, refuse the request with an
-    actionable error telling the user to ``dosforge create`` a fresh
-    VHD at the new size and copy data over manually.
+    Computes a conservative estimate of disk space (host bytes + 8 KiB
+    cluster slack per file) and refuses with an actionable error
+    when it exceeds the new partition size minus filesystem overhead
+    (~5% headroom for FAT tables + reserved sectors + root dir).
+
+    Replaces the v0.9.26-era ``_validate_cluster_band_match``, which
+    falsely rejected legitimate grows (e.g. FreeDOS FAT32 with
+    512-byte clusters → larger size) by enforcing an Option-A
+    in-place-edit constraint that doesn't apply to the actual
+    Option-B (extract + rebuild + reinject) implementation.  In
+    Option B the old cluster size is irrelevant because the old
+    filesystem is discarded.
     """
 
-    expected = _expected_cluster_size_for_new_size(new_size_bytes, snapshot.fat_format)
-    if expected != snapshot.cluster_size_bytes:
+    total_bytes = 0
+    file_count = 0
+    try:
+        for entry in extract_dir.rglob("*"):
+            if entry.is_file():
+                file_count += 1
+                try:
+                    total_bytes += entry.stat().st_size
+                except OSError:
+                    continue
+    except OSError:
+        return  # Best-effort -- fail open if walk errors out.
+
+    # Add 8 KiB per file as a generous cluster-slack estimate.
+    estimated_bytes = total_bytes + (file_count * 8 * 1024)
+    # Reserve 5% of the new partition for FAT tables + reserved
+    # sectors + root dir overhead.
+    usable_bytes = int(new_size_bytes * 0.95)
+    if estimated_bytes > usable_bytes:
         raise ValidationError(
-            f"Grow target ({new_size_bytes} bytes) requires a "
-            f"{expected}-byte cluster size, but the existing VHD uses "
-            f"{snapshot.cluster_size_bytes}-byte clusters.  dosforge "
-            "grow v1 cannot relay out cluster chains across band "
-            "boundaries -- pick a target size within the same band, "
-            "or use 'dosforge create' to rebuild from scratch."
+            f"Extracted user-file payload ({estimated_bytes:,} bytes "
+            f"estimated with cluster slack across {file_count} files) "
+            f"won't fit in the {new_size_bytes:,}-byte target "
+            f"({usable_bytes:,} usable after filesystem overhead).  "
+            "Pick a larger --new-size."
         )
 
 
@@ -722,11 +745,16 @@ def perform_grow(
     Steps (see module docstring for the design rationale):
 
     1. Snapshot the existing VHD's MBR + BPB.
-    2. Validate the target size stays inside the same cluster band.
-    3. Extract every file from the old partition to a host scratch
+    2. Extract every file from the old partition to a host scratch
        directory (preserves mtimes, attributes, hidden/system bits).
+    3. Validate the extracted payload will fit in the new partition
+       size (with cluster slack + filesystem overhead headroom).
     4. Build a fresh empty bootable VHD at the new size via
        ``DiskManager.create_and_prepare`` (same boot mode + format).
+       The new VHD gets whatever cluster size ``mformat`` picks for
+       the requested size -- the OLD cluster size doesn't matter
+       because we're rebuilding the filesystem from scratch and
+       re-copying every file via ``mcopy``.
     5. Re-inject the extracted tree (skipping protected system files
        so the fresh VHD's authentic bootstrap survives).
     6. Stage every ``staging_sources`` entry.
@@ -754,7 +782,6 @@ def perform_grow(
 
     _report("Snapshotting source VHD geometry...")
     snapshot = _snapshot_vhd(manifest.target_vhd)
-    _validate_cluster_band_match(snapshot, manifest.new_size_bytes)
 
     # Auto-detect boot mode from the source VHD when the manifest
     # doesn't pin one.  The CLI / TUI both now leave this unset so
@@ -773,13 +800,21 @@ def perform_grow(
         extract_dir = work_root / "extract"
         new_vhd_temp = work_root / "new.vhd"
 
-        # Step 3: extract old → host
+        # Step 2: extract old → host
         _report("Step 3/8: Extracting files from source VHD via mtools...")
         _mtools_extract_partition_root(
             target_vhd=manifest.target_vhd,
             snapshot=snapshot,
             extract_dir=extract_dir,
             runner=runner,
+        )
+
+        # Step 3: validate the extracted payload will actually fit in
+        # the new partition.  Pure-rebuild model means cluster size
+        # mismatch between old and new isn't a problem -- but the
+        # total payload size still has to fit.
+        _validate_extracted_payload_fits(
+            extract_dir, manifest.new_size_bytes, snapshot.fat_format
         )
 
         # Step 4: build fresh VHD at the new size
