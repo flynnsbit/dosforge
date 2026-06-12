@@ -4,14 +4,20 @@ Exposes the same surface as the ``dosforge grow`` CLI:
 
 * Target VHD (pre-filled from the currently selected image).
 * New size (human-friendly: ``128M``, ``2G``).
-* Boot mode (one of the four growable modes).  Auto-detected from
-  the current VHD when the user picks one or refreshes.
 * Optional staging directories (host source + DOS dest path).
 * Boot-probe and keep-backup checkboxes.
 
+Boot mode is **auto-detected** from the source VHD's root files
+(KERNEL.SYS → FreeDOS, IBMBIO.COM → Compaq, ``[Paths]`` MSDOS.SYS
+→ MS-DOS 7.10, else MS-DOS 6.22) the same way the Linux CLI / TUI
+do since v0.9.35, so the user doesn't have to remember which DOS
+family the VHD was built with.
+
 Pressing **Grow** runs the same :func:`dosforge.grow.grow_vhd` API
 the CLI invokes, surfacing any :class:`ValidationError` in the
-status bar / log panel.
+status bar / log panel.  Per-step progress messages
+(``Step 3/8: Extracting...`` etc.) are streamed live into the
+output panel via ``progress_callback`` (v0.9.34 parity).
 """
 
 from __future__ import annotations
@@ -21,21 +27,10 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 
 from ..errors import DosForgeError, ValidationError
-from ..grow import GROWABLE_BOOT_MODES, GrowManifest, StagingSource, grow_vhd
+from ..grow import GrowManifest, StagingSource, grow_vhd
 from ..inspect import inspect_vhd
-from ..models import BootMode
 from ..size import parse_size
 from .widgets import Card
-
-
-# Map of (BootMode -> human label) for the boot-mode combo.  Kept in
-# sync with GROWABLE_BOOT_MODES; reorder only by changing this tuple.
-_GROW_BOOT_MODE_OPTIONS: tuple[tuple[BootMode, str], ...] = (
-    (BootMode.COMPAQ331, "Compaq DOS 3.31 (compaq331, FAT16 BIGDOS)"),
-    (BootMode.MSDOS622, "MS-DOS 6.22 (msdos622, FAT16)"),
-    (BootMode.MSDOS71, "MS-DOS 7.10 / Win95 OSR2 (msdos71, FAT16/32)"),
-    (BootMode.FREEDOS, "FreeDOS (freedos, FAT16/32)"),
-)
 
 
 class GrowView(ttk.Frame):
@@ -47,16 +42,9 @@ class GrowView(ttk.Frame):
         self.var_target = tk.StringVar()
         self.var_current = tk.StringVar(value="(select a VHD via Browse first)")
         self.var_new_size = tk.StringVar(value="")
-        self.var_boot_mode = tk.StringVar()
         self.var_boot_probe = tk.BooleanVar(value=True)
         self.var_keep_backup = tk.BooleanVar(value=True)
 
-        self._boot_mode_label_to_value: dict[str, BootMode] = {
-            label: mode for mode, label in _GROW_BOOT_MODE_OPTIONS
-        }
-        self._boot_mode_value_to_label: dict[BootMode, str] = {
-            mode: label for mode, label in _GROW_BOOT_MODE_OPTIONS
-        }
         self._staging: list[tuple[Path, str]] = []
 
         self._build()
@@ -67,7 +55,7 @@ class GrowView(ttk.Frame):
         card.pack(fill="both", expand=True, padx=2, pady=2)
         body = card.body
         body.columnconfigure(1, weight=1)
-        body.rowconfigure(9, weight=1)
+        body.rowconfigure(7, weight=1)
 
         # ── Target row ─────────────────────────────────────────────
         ttk.Label(body, text="Target VHD:").grid(row=0, column=0, sticky="w", pady=(0, 4))
@@ -94,22 +82,12 @@ class GrowView(ttk.Frame):
             style="Muted.TLabel",
         ).grid(row=3, column=1, sticky="w", pady=(0, 10))
 
-        # ── Boot mode ──────────────────────────────────────────────
-        ttk.Label(body, text="Boot mode:").grid(row=4, column=0, sticky="w", pady=(0, 4))
-        self._boot_combo = ttk.Combobox(
-            body,
-            textvariable=self.var_boot_mode,
-            state="readonly",
-            values=[label for _, label in _GROW_BOOT_MODE_OPTIONS],
-        )
-        self._boot_combo.grid(row=4, column=1, sticky="ew", pady=(0, 10))
-
         # ── Options ────────────────────────────────────────────────
         opts = ttk.Frame(body)
-        opts.grid(row=5, column=1, sticky="w", pady=(0, 10))
+        opts.grid(row=4, column=1, sticky="w", pady=(0, 10))
         ttk.Checkbutton(
             opts,
-            text="Headless boot probe (verify the grown VHD boots before swap)",
+            text="Headless boot probe (verify the grown VHD boots before swap; adds ~60-90s)",
             variable=self.var_boot_probe,
         ).pack(side="top", anchor="w")
         ttk.Checkbutton(
@@ -119,9 +97,9 @@ class GrowView(ttk.Frame):
         ).pack(side="top", anchor="w")
 
         # ── Staging sources ────────────────────────────────────────
-        ttk.Label(body, text="Staging sources:").grid(row=6, column=0, sticky="nw", pady=(0, 4))
+        ttk.Label(body, text="Staging sources:").grid(row=5, column=0, sticky="nw", pady=(0, 4))
         staging_frame = ttk.Frame(body)
-        staging_frame.grid(row=6, column=1, sticky="ew", pady=(0, 4))
+        staging_frame.grid(row=5, column=1, sticky="ew", pady=(0, 4))
         staging_frame.columnconfigure(0, weight=1)
 
         self._staging_list = tk.Listbox(staging_frame, height=4)
@@ -139,11 +117,11 @@ class GrowView(ttk.Frame):
             body,
             text="Each staging source: pick a host directory, then enter the DOS destination (e.g. C:\\GAMES).",
             style="Muted.TLabel",
-        ).grid(row=7, column=1, sticky="w", pady=(0, 10))
+        ).grid(row=6, column=1, sticky="w", pady=(0, 10))
 
         # ── Grow button + output ───────────────────────────────────
         action_row = ttk.Frame(body)
-        action_row.grid(row=8, column=1, sticky="w", pady=(0, 10))
+        action_row.grid(row=7, column=1, sticky="w", pady=(0, 10))
         ttk.Button(
             action_row,
             text="Grow VHD",
@@ -153,13 +131,13 @@ class GrowView(ttk.Frame):
         ).pack(side="left")
         ttk.Button(
             action_row,
-            text="Refresh inferred boot mode",
+            text="Refresh VHD info",
             command=self.refresh_target,
             takefocus=False,
         ).pack(side="left", padx=(8, 0))
 
         out = tk.Text(body, height=12, wrap="word", relief="flat", borderwidth=0)
-        out.grid(row=9, column=0, columnspan=2, sticky="nsew")
+        out.grid(row=8, column=0, columnspan=2, sticky="nsew")
         out.configure(state="disabled")
         self._output = out
         self._apply_text_theme()
@@ -194,10 +172,12 @@ class GrowView(ttk.Frame):
             self.var_current.set("(select a VHD via Browse first)")
 
     def _try_autoinfer(self, target: Path) -> None:
-        """Read VHD metadata and pre-fill current-size + boot-mode.
+        """Read VHD metadata and pre-fill current-size + inferred boot mode.
 
         Errors (file missing, malformed VHD) are silently ignored;
         the form just stays empty/unchanged so the user can hand-fill.
+        The inferred boot mode is *displayed only* — the grow backend
+        auto-detects independently from root files at run time.
         """
         try:
             info = inspect_vhd(target)
@@ -208,12 +188,8 @@ class GrowView(ttk.Frame):
         self.var_current.set(
             f"Current: {current_size_mb:.0f} MiB  •  "
             f"{info.fat_format.value}  •  cluster {info.cluster_size_bytes:,} bytes  •  "
-            f"inferred boot: {info.inferred_boot_mode.value if info.inferred_boot_mode else 'unknown'}"
+            f"inferred boot: {info.inferred_boot_mode.value if info.inferred_boot_mode else 'unknown (auto-detect at grow time)'}"
         )
-        if info.inferred_boot_mode in self._boot_mode_value_to_label:
-            self.var_boot_mode.set(
-                self._boot_mode_value_to_label[info.inferred_boot_mode]
-            )
 
     def _browse_target(self) -> None:
         path_str = filedialog.askopenfilename(
@@ -276,7 +252,6 @@ class GrowView(ttk.Frame):
     def _grow(self) -> None:
         target_str = self.var_target.get().strip()
         new_size_str = self.var_new_size.get().strip()
-        boot_label = self.var_boot_mode.get().strip()
 
         if not target_str:
             self.app.status.set_status("Pick a target VHD first.", error=True)
@@ -286,11 +261,6 @@ class GrowView(ttk.Frame):
                 "Enter a new size (e.g. 256M or 1G).", error=True
             )
             return
-        if boot_label not in self._boot_mode_label_to_value:
-            self.app.status.set_status(
-                "Pick a boot mode from the list.", error=True
-            )
-            return
 
         try:
             new_size_bytes = parse_size(new_size_str)
@@ -298,11 +268,10 @@ class GrowView(ttk.Frame):
             self.app.status.set_status(str(exc), error=True)
             return
 
-        boot_mode = self._boot_mode_label_to_value[boot_label]
         manifest = GrowManifest(
             target_vhd=Path(target_str),
             new_size_bytes=new_size_bytes,
-            boot_mode=boot_mode,
+            boot_mode=None,
             staging_sources=tuple(
                 StagingSource(src=src, dest=dest) for src, dest in self._staging
             ),
@@ -310,8 +279,17 @@ class GrowView(ttk.Frame):
             keep_backup=self.var_keep_backup.get(),
         )
 
+        # Reset output panel so the user sees a fresh per-step trace.
+        self._write_output("")
+
         def work():
-            grow_vhd(manifest)
+            # Each progress message just print()s -- the GUI worker
+            # has redirected sys.stdout to a queue that pumps onto
+            # the main thread and into the status log + this panel.
+            def _on_progress(stage: str) -> None:
+                print(stage, flush=True)
+
+            grow_vhd(manifest, progress_callback=_on_progress)
             return manifest
 
         def done(_):
@@ -320,8 +298,9 @@ class GrowView(ttk.Frame):
                 if manifest.keep_backup
                 else "  (no backup kept)"
             )
-            self._write_output(
-                f"Grew {manifest.target_vhd} to {manifest.new_size_bytes:,} bytes.\n{backup}"
+            self._append_output(
+                f"\nGrew {manifest.target_vhd} to "
+                f"{manifest.new_size_bytes:,} bytes.\n{backup}\n"
             )
 
         self.app.run_operation(
@@ -337,3 +316,10 @@ class GrowView(ttk.Frame):
         self._output.delete("1.0", "end")
         self._output.insert("1.0", text)
         self._output.configure(state="disabled")
+
+    def _append_output(self, text: str) -> None:
+        self._output.configure(state="normal")
+        self._output.insert("end", text)
+        self._output.see("end")
+        self._output.configure(state="disabled")
+

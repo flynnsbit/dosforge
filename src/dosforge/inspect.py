@@ -21,9 +21,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .commands import CommandRunner, subprocess_no_window_kwargs
+from .commands import CommandRunner, runner_for_backend, subprocess_no_window_kwargs
 from .errors import DependencyError, ValidationError
 from .models import BootMode, DiskFormat
+from ._platform import get_backend
 
 
 # OEM string → likely boot mode lookup. Matches the BPB OEM stamp
@@ -321,7 +322,7 @@ def _list_root_system_files(
     """
 
     if runner is None:
-        runner = CommandRunner()
+        runner = runner_for_backend(get_backend())
     found: list[str] = []
     partition_image = f"{path}@@{partition_offset}"
     for name in _DOS_SYSTEM_FILES:

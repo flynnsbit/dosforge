@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from .commands import CommandRunner, subprocess_no_window_kwargs
+from .commands import CommandRunner, runner_for_backend, subprocess_no_window_kwargs
 from .disk import DiskManager
 from .errors import DependencyError, ValidationError
 from .models import (
@@ -778,7 +778,9 @@ def perform_grow(
             except Exception:
                 pass
 
-    runner = CommandRunner()
+    from ._platform import get_backend
+
+    runner = runner_for_backend(get_backend())
 
     _report("Snapshotting source VHD geometry...")
     snapshot = _snapshot_vhd(manifest.target_vhd)
