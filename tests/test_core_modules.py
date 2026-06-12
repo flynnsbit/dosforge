@@ -130,9 +130,12 @@ def test_read_partition_entry_returns_none_for_empty_slot(tmp_path):
     assert mbr.read_partition_entry(path, slot=1) is None
 
 
-def test_partition_entry_uses_high_chs_when_cylinder_overflows():
-    # 16 heads × 63 spt × 1024 cylinders = 1,032,192 sectors; LBAs
-    # past that get the 0xFE/FF/FF marker per the MBR spec.
+def test_partition_entry_clamps_chs_when_cylinder_overflows():
+    # 16 heads × 63 spt × 1024 cylinders ≈ 1,032,192 sectors; LBAs
+    # past that get clamped to (1023, heads-1, spt) — head=15,
+    # sec=63, cyl=1023 → 0F FF FF — rather than the canonical
+    # 0xFE/FF/FF "use LBA" marker (which broke FreeDOS boot32lb
+    # chains on QEMU/86Box AUTO IDE).
     entry = mbr.PartitionEntry(
         bootable=False,
         partition_type=0x06,
@@ -142,7 +145,10 @@ def test_partition_entry_uses_high_chs_when_cylinder_overflows():
         chs_spt=63,
     )
     encoded = entry.encode()
-    assert encoded[1:4] == b"\xfe\xff\xff"
+    # head, sec_byte (cyl_hi<<6 | sec), cyl_lo
+    # cyl=1023 (0x3FF) -> cyl_hi=3, cyl_lo=0xFF.  sec=63 (0x3F).
+    # sec_byte = (3<<6) | 0x3F = 0xFF
+    assert encoded[1:4] == bytes([15, 0xFF, 0xFF])
 
 
 def test_write_mbr_rejects_oversized_boot_code(tmp_path):

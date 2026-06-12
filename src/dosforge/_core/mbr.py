@@ -55,9 +55,26 @@ class PartitionEntry:
 def _lba_to_chs(lba: int, *, heads: int, spt: int) -> bytes:
     """Convert ``lba`` to a 3-byte packed CHS triplet.
 
-    Returns ``00 ff ff`` if the LBA cannot be represented in the
-    24-bit CHS encoding (cylinder > 1023) — DOS treats that as
-    "use LBA reads instead" via INT 13h AH=42.
+    When the LBA exceeds the 24-bit CHS reach (cyl > 1023) the entry
+    is clamped to ``(1023, heads - 1, spt)`` — the maximum CHS that
+    the *disk's actual geometry* supports.
+
+    We deliberately do NOT emit the Microsoft-canonical ``00 FE FF FF``
+    "use LBA" marker (head=254 / cyl=1023 / sec=63) that parted writes
+    for >504 MiB partitions on 16-head VHDs.  FreeDOS boot32lb (and
+    the standard MS-DOS MBR boot loader chained to it) interpret that
+    marker as "the BIOS supports INT 13h Extended" and switch to AH=42
+    reads — but the IDE / floppy configurations dosforge uses in
+    headless QEMU and 86Box AUTO IDE do not always honor INT 13h AH=42
+    against the C: drive at sector 0 chain time, so the load of the
+    partition's VBR silently fails and boot stalls before any DOS
+    code runs.
+
+    Clamping to the geometry's max CHS keeps the partition entry
+    sensible: the MBR boot loader uses INT 13h AH=02 (CHS read) to
+    load the partition's first sector (LBA 63 — always within CHS
+    reach), and FreeDOS boot32lb then uses its own LBA logic to load
+    KERNEL.SYS anywhere on disk.
     """
 
     if heads <= 0 or spt <= 0:
@@ -66,7 +83,9 @@ def _lba_to_chs(lba: int, *, heads: int, spt: int) -> bytes:
     head, sector_zero = divmod(remainder, spt)
     sector = sector_zero + 1
     if cylinder > 1023:
-        return b"\xfe\xff\xff"
+        cylinder = 1023
+        head = max(heads - 1, 0)
+        sector = spt
     cyl_low = cylinder & 0xFF
     cyl_high = (cylinder >> 8) & 0x03
     return bytes([head & 0xFF, ((cyl_high << 6) | (sector & 0x3F)), cyl_low])
