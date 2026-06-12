@@ -204,19 +204,41 @@ class GrowView(ttk.Frame):
         host_dir = filedialog.askdirectory(title="Choose host directory to stage")
         if not host_dir:
             return
-        # Quick prompt for DOS destination path.
+        # Modal dialog asking for the DOS destination path.  Built as a
+        # proper Toplevel that is centered over the main app window and
+        # styled with header/body/footer rows so the user can't miss it
+        # (early versions landed in the screen top-left at 1x1 px).
         dialog = tk.Toplevel(self)
         dialog.title("DOS destination path")
-        dialog.transient(self)
-        dialog.grab_set()
+        dialog.transient(self.winfo_toplevel())
+        dialog.resizable(False, False)
+
+        # Body container with consistent padding.
+        container = ttk.Frame(dialog, padding=18)
+        container.pack(fill="both", expand=True)
+
         ttk.Label(
-            dialog,
-            text=f"Stage {host_dir}\nto which DOS path? (e.g. C:\\GAMES)",
-        ).pack(padx=16, pady=(16, 8))
+            container,
+            text="Stage directory to DOS path",
+            font=("Segoe UI", 11, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            container,
+            text=f"Host source:\n{host_dir}",
+            justify="left",
+            wraplength=420,
+        ).pack(anchor="w", pady=(8, 4))
+        ttk.Label(
+            container,
+            text="DOS destination path (e.g. C:\\GAMES):",
+            justify="left",
+        ).pack(anchor="w", pady=(8, 4))
+
         var_dest = tk.StringVar(value="C:\\")
-        entry = ttk.Entry(dialog, textvariable=var_dest, width=32)
-        entry.pack(padx=16, pady=(0, 8))
+        entry = ttk.Entry(container, textvariable=var_dest, width=40)
+        entry.pack(fill="x", pady=(0, 12))
         entry.focus_set()
+        entry.icursor("end")
 
         result: dict[str, str | None] = {"dest": None}
 
@@ -227,12 +249,47 @@ class GrowView(ttk.Frame):
         def _cancel():
             dialog.destroy()
 
-        btn_row = ttk.Frame(dialog)
-        btn_row.pack(pady=(0, 12))
-        ttk.Button(btn_row, text="OK", command=_ok).pack(side="left", padx=4)
-        ttk.Button(btn_row, text="Cancel", command=_cancel).pack(side="left", padx=4)
+        btn_row = ttk.Frame(container)
+        btn_row.pack(fill="x")
+        ttk.Button(
+            btn_row, text="Cancel", command=_cancel, takefocus=False
+        ).pack(side="right")
+        ttk.Button(
+            btn_row,
+            text="OK",
+            command=_ok,
+            takefocus=False,
+            style="Accent.TButton",
+        ).pack(side="right", padx=(0, 8))
+
         dialog.bind("<Return>", lambda _e: _ok())
         dialog.bind("<Escape>", lambda _e: _cancel())
+        dialog.protocol("WM_DELETE_WINDOW", _cancel)
+
+        # Center over the parent app window so the user can't miss it
+        # in a corner of the screen.
+        dialog.update_idletasks()
+        parent = self.winfo_toplevel()
+        try:
+            parent.update_idletasks()
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            pw = parent.winfo_width()
+            ph = parent.winfo_height()
+        except tk.TclError:
+            px = py = 0
+            pw = parent.winfo_screenwidth()
+            ph = parent.winfo_screenheight()
+        dw = max(dialog.winfo_reqwidth(), 460)
+        dh = max(dialog.winfo_reqheight(), 220)
+        x = px + max(0, (pw - dw) // 2)
+        y = py + max(0, (ph - dh) // 3)
+        dialog.geometry(f"{dw}x{dh}+{x}+{y}")
+        dialog.deiconify()
+        dialog.lift()
+        dialog.focus_force()
+        dialog.grab_set()
+
         dialog.wait_window()
 
         if result["dest"]:
