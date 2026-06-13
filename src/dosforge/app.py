@@ -14,6 +14,7 @@ from dataclasses import replace as fl_replace
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import (
     Button,
@@ -174,6 +175,105 @@ _FLOPPY_OPTIONS = [
     ("1.44M", FloppyType.F1440K.value),
     ("2.88M", FloppyType.F2880K.value),
 ]
+
+
+_GROW_HELP_TEXT = """Grow VHD — supported modes and limits
+
+Supported boot modes (4):
+  • FreeDOS              — FAT16 (up to ~2 GiB) or FAT32 (up to ~32 GiB practical)
+  • MS-DOS 7.10 / Win95  — FAT16 (up to ~2 GiB) or FAT32 (up to ~32 GiB practical)
+  • MS-DOS 6.22          — FAT16 (up to ~2 GiB)
+  • Compaq DOS 3.31      — FAT16 BIGDOS (up to ~504 MiB)
+
+dosforge auto-detects the boot mode from the source VHD's root files
+(KERNEL.SYS → FreeDOS, IBMBIO.COM → Compaq, MSDOS.SYS '[Paths]' header
+→ MS-DOS 7.10, else MS-DOS 6.22).  You don't have to pick anything.
+
+Hard limits:
+  • Container        : VHD only (fixed-format Microsoft Virtual PC).
+                       No dynamic / differencing VHDs.
+                       No floppy IMGs (.img / .ima / .vfd) — those
+                       have fixed geometry; rebuild with 'dosforge create'.
+  • Direction        : grow only.  Never shrinks.
+  • Cluster band     : the new size must stay within the same cluster
+                       band as the source (mformat picks different
+                       cluster sizes at certain size thresholds).
+                       Crossing a band is rejected after extraction
+                       with a clear error.
+
+What it preserves:
+  • All system files (IO.SYS / KERNEL.SYS / MSDOS.SYS / COMMAND.COM /
+    IBMBIO.COM / IBMDOS.COM / …).
+  • CONFIG.SYS, AUTOEXEC.BAT, FDCONFIG.SYS, FDAUTO.BAT.
+  • Every user directory and file under C:\\, with mtimes preserved.
+
+What it does NOT support — rebuild via 'dosforge create':
+  • MS-DOS 2.x / 3.3 / 3.31 (32 MiB FAT12 cap)
+  • DR-DOS 6.0 / 7.x
+  • IBM PC-DOS 7.0 / 7.1 SGTK / PC-DOS 2000
+  • MS-DOS 5.0
+  • Any image that isn't a fixed-format VHD
+
+The grow pipeline runs 8 steps end-to-end:
+  1. Snapshot source VHD geometry
+  2. Validate new size + cluster band
+  3. Extract files from source VHD via mtools
+  4. Build fresh VHD at the new size (may need sudo for qemu-nbd on Linux)
+  5. Inject extracted files into new VHD via batched mcopy
+  6. Stage any additional host → DOS directories
+  7. Headless boot probe (optional; ~60-90s) — verifies the new VHD
+     actually boots before the swap
+  8. Atomic swap (original → <target>.bak, new → target)
+
+Press Esc, Enter, or Close to dismiss this help."""
+
+
+class _GrowHelpScreen(ModalScreen):
+    """Modal popup with the full Grow-VHD supported-modes + limits table."""
+
+    BINDINGS = [
+        ("escape", "dismiss", "Close"),
+        ("enter", "dismiss", "Close"),
+    ]
+
+    DEFAULT_CSS = """
+    _GrowHelpScreen {
+        align: center middle;
+    }
+    _GrowHelpScreen > Vertical {
+        width: 90%;
+        max-width: 96;
+        height: auto;
+        max-height: 90%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    _GrowHelpScreen #grow-help-body {
+        height: auto;
+        max-height: 30;
+        padding: 0 1;
+    }
+    _GrowHelpScreen #grow-help-actions {
+        height: auto;
+        align: right middle;
+        padding-top: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            with VerticalScroll(id="grow-help-body"):
+                yield Static(_GROW_HELP_TEXT)
+            with Horizontal(id="grow-help-actions"):
+                yield Button("Close", id="grow-help-close", classes="btn-primary")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "grow-help-close":
+            self.dismiss()
+
+    def action_dismiss(self) -> None:
+        self.dismiss()
 
 
 class DosForgeApp(App[None]):
@@ -798,10 +898,19 @@ class DosForgeApp(App[None]):
             with TabPane("Grow Disk", id="tab-grow"):
                 with Vertical(id="grow-tab"):
                     yield Label(
-                        "Resize an existing VHD (FAT16 BIGDOS / FAT32 LBA) "
-                        "while preserving system files, CONFIG.SYS / "
-                        "AUTOEXEC.BAT, and user directories.  Optionally "
-                        "stage a new directory tree at the same time."
+                        "Resize an existing VHD in place (preserves system + "
+                        "user files, CONFIG.SYS / AUTOEXEC.BAT, and any "
+                        "directory tree).  Optionally stage new directories "
+                        "at the same time."
+                    )
+                    yield Static(
+                        "Supported boot modes:\n"
+                        "  • FreeDOS / MS-DOS 7.10  - FAT16 ≤ 2 GiB,  FAT32 ≤ 32 GiB\n"
+                        "  • MS-DOS 6.22            - FAT16 ≤ 2 GiB\n"
+                        "  • Compaq DOS 3.31        - FAT16 BIGDOS ≤ 504 MiB\n"
+                        "Other boot modes must be rebuilt via 'dosforge create'.  "
+                        "Press ? for full details.",
+                        id="grow-supported-info",
                     )
                     yield Static("Target VHD: (select via Browse tab first)", id="grow-target-info")
                     with Horizontal(classes="path-row", id="grow-target-row"):
@@ -832,11 +941,17 @@ class DosForgeApp(App[None]):
                         value=True,
                         id="grow-keep-backup-check",
                     )
-                    yield Button(
-                        "Grow VHD",
-                        id="grow-btn",
-                        classes="btn-primary",
-                    )
+                    with Horizontal(classes="path-row", id="grow-actions-row"):
+                        yield Button(
+                            "Grow VHD",
+                            id="grow-btn",
+                            classes="btn-primary",
+                        )
+                        yield Button(
+                            "?",
+                            id="grow-help-btn",
+                            classes="btn-ghost",
+                        )
                     yield Static("", id="grow-output")
 
             # ── Mounts ───────────────────────────────────────────────
@@ -967,6 +1082,14 @@ class DosForgeApp(App[None]):
                 self.query_one("#floppy-type", Select).value = floppy_type.value
             self.query_one("#img-system-format", Checkbox).value = False
         self._sync_create_form_visibility()
+        try:
+            self.query_one("#grow-target-input", Input).value = str(selected)
+        except Exception:
+            pass
+        try:
+            self._refresh_grow_target_info()
+        except Exception:
+            pass
         self._set_status(f"Selected {selected}")
 
     def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
@@ -1025,6 +1148,8 @@ class DosForgeApp(App[None]):
             self._handle_grow_add_staging()
         elif button_id == "grow-btn":
             self._handle_grow()
+        elif button_id == "grow-help-btn":
+            self._handle_grow_help()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if len(self.query("#create-path")) == 0:
@@ -1083,6 +1208,22 @@ class DosForgeApp(App[None]):
                 self.query_one("#boot-mode", Select).value = BootMode.NONE.value
             self._sync_create_form_visibility()
 
+    def on_tabbed_content_tab_activated(self, event) -> None:
+        """Refresh the Grow tab pre-read whenever the user switches to it.
+
+        Re-runs inspect_vhd on the currently selected image so the
+        info line always reflects whatever was last picked, even if
+        the selection happened on a different tab.
+        """
+        try:
+            active = getattr(event, "tab", None)
+            tab_id = getattr(active, "id", None)
+            # Textual's tab IDs are prefixed; normalize to suffix.
+            if tab_id and tab_id.endswith("tab-grow"):
+                self._refresh_grow_target_info()
+        except Exception:
+            pass
+
     def on_input_changed(self, event: Input.Changed) -> None:
         """Refresh the live geometry preview as the user types.
 
@@ -1096,6 +1237,11 @@ class DosForgeApp(App[None]):
             try:
                 preview = self.query_one("#geometry-preview", Static)
                 preview.update(fl.geometry_preview_text(self._current_form_state()))
+            except Exception:
+                pass
+        elif event.input.id == "grow-target-input":
+            try:
+                self._refresh_grow_target_info()
             except Exception:
                 pass
 
@@ -1736,6 +1882,78 @@ class DosForgeApp(App[None]):
         )
         self._set_status(f"Staged {src} -> {dest_str}.")
 
+    def _handle_grow_help(self) -> None:
+        """Open the Grow VHD reference modal (supported modes + hard limits)."""
+        self.push_screen(_GrowHelpScreen())
+
+    def _refresh_grow_target_info(self) -> None:
+        """Pre-read the selected VHD and update #grow-target-info.
+
+        Updates the static info line above the Grow form with the
+        source VHD's size, FAT format, cluster size, inferred boot
+        mode, and a Growable / Not-growable verdict.  Silent no-op
+        when no image is selected or it can't be parsed (e.g. the
+        user pasted a path that isn't a VHD yet).
+        """
+        from .grow import GROWABLE_BOOT_MODES
+        from .inspect import inspect_vhd
+
+        try:
+            info_widget = self.query_one("#grow-target-info", Static)
+        except Exception:
+            return
+
+        image = self.selected_image
+        target_str: str | None = None
+        if image is not None:
+            target_str = str(image)
+        else:
+            try:
+                raw = self.query_one("#grow-target-input", Input).value.strip()
+                if raw:
+                    target_str = raw
+            except Exception:
+                pass
+
+        if not target_str:
+            info_widget.update("Target VHD: (select via Browse tab first)")
+            return
+
+        target = Path(target_str).expanduser()
+        if not target.exists():
+            info_widget.update(
+                f"Target VHD: {target}  (file not found — pick another)"
+            )
+            return
+
+        try:
+            info = inspect_vhd(target)
+        except (DosForgeError, OSError) as exc:
+            info_widget.update(
+                f"Target VHD: {target.name}  (cannot inspect: {exc})"
+            )
+            return
+
+        size_mib = info.file_size_bytes / (1024 * 1024)
+        inferred = (
+            info.inferred_boot_mode.value
+            if info.inferred_boot_mode
+            else "unknown (auto-detect at grow time)"
+        )
+        if info.inferred_boot_mode and info.inferred_boot_mode in GROWABLE_BOOT_MODES:
+            verdict = "✓ Growable"
+        elif info.inferred_boot_mode:
+            verdict = "✗ Not growable — rebuild via 'dosforge create' (press ? for details)"
+        else:
+            verdict = "? Verdict unknown — boot mode auto-detect runs at grow time"
+
+        info_widget.update(
+            f"Target VHD: {target.name}\n"
+            f"  Current: {size_mib:.0f} MiB  •  {info.fat_format.value}  •  "
+            f"cluster {info.cluster_size_bytes:,} bytes  •  inferred boot: {inferred}\n"
+            f"  {verdict}"
+        )
+
     def _handle_grow(self) -> None:
         """Build a GrowManifest from the Grow tab form and run grow_vhd.
 
@@ -2352,6 +2570,11 @@ class DosForgeApp(App[None]):
                 )
                 return
             self.query_one("#grow-target-input", Input).value = str(selected)
+            self.selected_image = selected
+            try:
+                self._refresh_grow_target_info()
+            except Exception:
+                pass
             self._set_status(f"Grow target VHD set: {selected}")
         self.path_picker_target = None
 
