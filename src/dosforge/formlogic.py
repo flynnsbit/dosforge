@@ -483,8 +483,23 @@ def coerce_on_media_change(state: FormState) -> FormState:
 def apply_ibm_default_size(state: FormState, *, force: bool) -> FormState:
     if not _is_vhd(state):
         return state
-    if force or state.size_text.strip().upper() in {"", "512M"}:
-        return replace(state, size_text="32M")
+    # DOS 3.3 caps FAT16 partitions at exactly 32 MiB.  With MFM
+    # auto-derived geometry (heads/spt/cyl rounded UP to fit the
+    # requested size) a typed "32M" lands at 964 cyl x 4 head x 17
+    # spt = 32.008 MiB -- 16 sectors over the cap -- which would
+    # then fail validate_size_for_ibm_dos.  Default to "31M"
+    # (~31.0 MiB after cylinder rounding) so the form's out-of-the-box
+    # state is creatable.  IDE/custom-CHS and DOS 5.0 (504 MiB cap)
+    # still default to "32M".
+    use_31m_default = (
+        state.disk_controller == DiskController.MFM.value
+        and state.ibm_dos_version == IBMDOSVersion.DOS33.value
+        and not state.bios_drive_type
+        and (state.geometry_source or GeometrySource.SIZE.value) == GeometrySource.SIZE.value
+    )
+    default_size = "31M" if use_31m_default else "32M"
+    if force or state.size_text.strip().upper() in {"", "31M", "32M", "512M"}:
+        return replace(state, size_text=default_size)
     return state
 
 

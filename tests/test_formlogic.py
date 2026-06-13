@@ -471,9 +471,23 @@ def test_coerce_boot_to_compaq2_sets_mfm_fat12_type1():
 
 def test_coerce_boot_to_ibm8088_sets_default_size_and_mfm():
     new = f.coerce_on_boot_change(_state(boot_mode=BootMode.IBM8088.value, size_text="512M"))
-    assert new.size_text == "32M"
+    # IBM 8088 defaults to DOS 3.3 + MFM auto-derive geometry.  DOS 3.3
+    # caps FAT16 at exactly 32 MiB; MFM cylinder rounding pushes a
+    # typed "32M" to 32.008 MiB (16 sectors over), so the default must
+    # be "31M" to stay creatable out-of-the-box.
+    assert new.size_text == "31M"
     assert new.disk_controller == DiskController.MFM.value
     assert new.ibm_dos_version == IBMDOSVersion.DOS33.value
+
+
+def test_coerce_ibm_version_to_dos50_uses_32m_default():
+    """Flipping IBM DOS version 3.3 -> 5.0 grows the cap to 504 MiB,
+    so the conservative 31M default for DOS33+MFM should snap back to
+    32M (no cap-clipping concern with DOS 5.0)."""
+    state = f.coerce_on_boot_change(_state(boot_mode=BootMode.IBM8088.value, size_text="512M"))
+    assert state.size_text == "31M"
+    flipped = f.coerce_on_ibm_version_change(dataclasses.replace(state, ibm_dos_version=IBMDOSVersion.DOS50.value))
+    assert flipped.size_text == "32M"
 
 
 def test_coerce_uncheck_system_format_clears_boot():
