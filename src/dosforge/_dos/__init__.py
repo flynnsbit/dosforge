@@ -26,6 +26,7 @@ from . import (
     msdos71,
     pcdos2000,
     pcdos3,
+    pcdos5,
     pcdos7,
     pcdos71,
 )
@@ -41,6 +42,7 @@ _PROFILES: dict[str, DosProfile] = {
     "msdos622": msdos622.PROFILE,
     "msdos71": msdos71.PROFILE,
     "pcdos3": pcdos3.PROFILE,
+    "pcdos5": pcdos5.PROFILE,
     "pcdos7": pcdos7.PROFILE,
     "pcdos2000": pcdos2000.PROFILE,
     "pcdos71": pcdos71.PROFILE,

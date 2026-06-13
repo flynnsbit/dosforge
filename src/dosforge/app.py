@@ -143,8 +143,10 @@ _DOS_INSTALL_PROFILE_OPTIONS = [
     ("Core DOS tools + startup files", MSDOSInstallProfile.FULL.value),
 ]
 _IBM_DOS_VERSION_OPTIONS = [
-    ("IBM DOS 3.3 (max 32MB)", IBMDOSVersion.DOS33.value),
-    ("IBM DOS 5.0 (max ~504MB)", IBMDOSVersion.DOS50.value),
+    ("MS-DOS 3.3 (max 32MB)", IBMDOSVersion.MSDOS33.value),
+    ("PC-DOS 3.x (max 16MB, FAT12)", IBMDOSVersion.PCDOS3.value),
+    ("MS-DOS 5.0 (max ~504MB)", IBMDOSVersion.MSDOS5.value),
+    ("PC-DOS 5.x (max ~504MB)", IBMDOSVersion.PCDOS5.value),
 ]
 _DISK_CONTROLLER_OPTIONS = [
     ("Auto-detect from boot mode", ""),
@@ -685,16 +687,6 @@ class DosForgeApp(App[None]):
                                     value=BootMode.NONE.value,
                                     id="boot-mode",
                                 )
-                                yield Label("Boot assets directory or install image", id="boot-assets-label")
-                                with Horizontal(classes="path-row", id="boot-assets-row"):
-                                    yield Input(
-                                        placeholder=(
-                                            "Boot assets: bare name like 'msdos33' "
-                                            "(looks in ./dosassets/), or full path"
-                                        ),
-                                        id="boot-assets",
-                                    )
-                                    yield Button("...", id="browse-boot-assets-btn", classes="btn-ghost")
                                 yield Label("FreeDOS source", id="freedos-source-label")
                                 yield SingleClickSelect(
                                     options=[
@@ -713,12 +705,30 @@ class DosForgeApp(App[None]):
                                     value=MSDOSInstallProfile.MINIMAL.value,
                                     id="dos-profile",
                                 )
-                                yield Label("IBM DOS version", id="ibm-dos-version-label")
+                                yield Label("DOS version", id="ibm-dos-version-label")
                                 yield SingleClickSelect(
                                     options=_IBM_DOS_VERSION_OPTIONS,
                                     value=IBMDOSVersion.DOS33.value,
                                     id="ibm-dos-version",
                                 )
+                                # Boot assets directory is the LAST field in
+                                # Step 1 so the user picks an OS (and, for
+                                # IBM 8088 mode, the DOS version) FIRST --
+                                # which lets coerce_on_boot_change /
+                                # coerce_on_ibm_version_change pre-populate
+                                # this Input with the right dosassets/<subdir>
+                                # default (e.g. picking PC-DOS 3.x under
+                                # IBM 8088 fills in "pcdos3").
+                                yield Label("Boot assets directory or install image", id="boot-assets-label")
+                                with Horizontal(classes="path-row", id="boot-assets-row"):
+                                    yield Input(
+                                        placeholder=(
+                                            "Boot assets: bare name like 'msdos33' "
+                                            "(looks in ./dosassets/), or full path"
+                                        ),
+                                        id="boot-assets",
+                                    )
+                                    yield Button("...", id="browse-boot-assets-btn", classes="btn-ghost")
 
                             # Step 2: Media (constraints inherited from Step 1)
                             with Container(id="step-2", classes="wizard-step"):

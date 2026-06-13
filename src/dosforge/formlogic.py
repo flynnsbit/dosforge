@@ -362,6 +362,10 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
     # COMPAQ331_MAX_BYTES in size.py).
     BootMode.COMPAQ331: _BootMediaRule(frozenset({DiskFormat.FAT16}), max_mb=504),
     BootMode.MSDOS5: _BootMediaRule(frozenset({DiskFormat.FAT16})),
+    # IBM PC-DOS 5.00 (1991): branded sibling of MS-DOS 5.0.  Same
+    # FAT12/FAT16 support as MSDOS5 (FAT12 covers floppy install
+    # media; FAT16 is the normal target for hard disks).
+    BootMode.PCDOS5: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16})),
     BootMode.MSDOS6: _BootMediaRule(frozenset({DiskFormat.FAT16})),
     BootMode.MSDOS622: _BootMediaRule(frozenset({DiskFormat.FAT16})),
     BootMode.PCDOS7: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16})),
@@ -405,13 +409,14 @@ def _state_aware_max_mb(state: FormState, rule: "_BootMediaRule", fmt: DiskForma
         boot_mode = BootMode(state.boot_mode)
     except ValueError:
         return base
-    # IBM 8088/V20 mode: DOS33 -> 32 MiB, DOS50 -> 504 MiB.
+    # IBM 8088/V20 mode: per-version size cap.  See
+    # IBMDOSVersion.max_size_bytes for the 4-way matrix.
     if boot_mode is BootMode.IBM8088:
         try:
             ver = IBMDOSVersion(state.ibm_dos_version)
         except ValueError:
-            ver = IBMDOSVersion.DOS33
-        ibm_cap = 32 if ver is IBMDOSVersion.DOS33 else 504
+            ver = IBMDOSVersion.MSDOS33
+        ibm_cap = ver.max_size_bytes // (1024 * 1024)
         if base is None:
             return ibm_cap
         return min(base, ibm_cap)
@@ -483,22 +488,33 @@ def coerce_on_media_change(state: FormState) -> FormState:
 def apply_ibm_default_size(state: FormState, *, force: bool) -> FormState:
     if not _is_vhd(state):
         return state
-    # DOS 3.3 caps FAT16 partitions at exactly 32 MiB.  With MFM
-    # auto-derived geometry (heads/spt/cyl rounded UP to fit the
-    # requested size) a typed "32M" lands at 964 cyl x 4 head x 17
-    # spt = 32.008 MiB -- 16 sectors over the cap -- which would
-    # then fail validate_size_for_ibm_dos.  Default to "31M"
-    # (~31.0 MiB after cylinder rounding) so the form's out-of-the-box
-    # state is creatable.  IDE/custom-CHS and DOS 5.0 (504 MiB cap)
-    # still default to "32M".
-    use_31m_default = (
+    # 4-way IBM 8088 default-size matrix:
+    # * MSDOS33 + MFM auto-derive: 31M (DOS 3.3 caps at exactly 32 MiB
+    #   and MFM cylinder rounding pushes a typed 32M slightly over)
+    # * PCDOS3 + MFM auto-derive: 15M (PC-DOS 3.0 is FAT12-only, 16 MiB
+    #   partition cap; pick safely below cap)
+    # * MSDOS33/PCDOS3 + IDE or explicit preset: stay at version cap
+    # * MSDOS5/PCDOS5: 32M (well under 504 MiB cap, sensible starter
+    #   size; user can grow up to ~127 MiB on MFM auto-derive or 504
+    #   MiB on IDE/preset paths)
+    try:
+        ver = IBMDOSVersion(state.ibm_dos_version)
+    except ValueError:
+        ver = IBMDOSVersion.MSDOS33
+    auto_mfm = (
         state.disk_controller == DiskController.MFM.value
-        and state.ibm_dos_version == IBMDOSVersion.DOS33.value
         and not state.bios_drive_type
         and (state.geometry_source or GeometrySource.SIZE.value) == GeometrySource.SIZE.value
     )
-    default_size = "31M" if use_31m_default else "32M"
-    if force or state.size_text.strip().upper() in {"", "31M", "32M", "512M"}:
+    if ver is IBMDOSVersion.PCDOS3 and auto_mfm:
+        default_size = "15M"
+    elif ver is IBMDOSVersion.PCDOS3:
+        default_size = "16M"
+    elif ver is IBMDOSVersion.MSDOS33 and auto_mfm:
+        default_size = "31M"
+    else:
+        default_size = "32M"
+    if force or state.size_text.strip().upper() in {"", "15M", "16M", "31M", "32M", "512M"}:
         return replace(state, size_text=default_size)
     return state
 
@@ -517,22 +533,23 @@ def default_boot_assets_for(
     Empty string for ``BootMode.NONE`` since data-disk-only builds
     have no boot assets.
 
-    For ``BootMode.IBM8088`` the assets live in one of the real
-    per-DOS directories (``dosassets/msdos33/`` or
-    ``dosassets/msdos5/``) -- there is no standalone
+    For ``BootMode.IBM8088`` the assets live in one of the four
+    per-DOS directories (``dosassets/msdos33/``, ``pcdos3/``,
+    ``msdos5/``, ``pcdos5/``) -- there is no standalone
     ``dosassets/ibm8088/`` folder.  Pass ``ibm_dos_version`` to pick
-    the correct one; omitting it falls back to the DOS 3.3 default
-    (``IBMDOSVersion.DOS33``).
+    the correct one; omitting it falls back to the MS-DOS 3.3 default.
     """
     if boot_mode is BootMode.NONE:
         return ""
     if boot_mode is BootMode.IBM8088:
-        version = ibm_dos_version or IBMDOSVersion.DOS33.value
+        version = ibm_dos_version or IBMDOSVersion.MSDOS33.value
         try:
             ver = IBMDOSVersion(version)
         except ValueError:
-            ver = IBMDOSVersion.DOS33
-        return "msdos33" if ver is IBMDOSVersion.DOS33 else "msdos5"
+            ver = IBMDOSVersion.MSDOS33
+        # Each IBMDOSVersion's wire value IS the asset subdir name
+        # (msdos33 / pcdos3 / msdos5 / pcdos5).
+        return ver.asset_dir_name
     return boot_mode.value
 
 
@@ -586,16 +603,28 @@ def coerce_on_boot_change(state: FormState) -> FormState:
             img_system_format=False,
             ibm_dos_version=IBMDOSVersion.DOS33.value,
         )
-    if boot_mode is BootMode.MSDOS33 or (
-        boot_mode is BootMode.IBM8088 and IBMDOSVersion(state.ibm_dos_version) is IBMDOSVersion.DOS33
-    ):
-        state = replace(state, disk_controller=DiskController.MFM.value, ibm_dos_version=IBMDOSVersion.DOS33.value)
+    if boot_mode is BootMode.MSDOS33:
+        # Pure MS-DOS 3.3 boot mode: always MFM XT-class layout.
+        state = replace(state, disk_controller=DiskController.MFM.value, ibm_dos_version=IBMDOSVersion.MSDOS33.value)
+        if _is_vhd(state):
+            state = apply_ibm_default_size(state, force=True)
+    elif boot_mode is BootMode.IBM8088:
+        # 4-way IBM 8088 + DOS version coercion:
+        # * DOS 3-class (MSDOS33, PCDOS3) -> MFM auto-controller
+        # * DOS 5-class (MSDOS5, PCDOS5) -> auto-detect (IDE)
+        try:
+            ver = IBMDOSVersion(state.ibm_dos_version)
+        except ValueError:
+            ver = IBMDOSVersion.MSDOS33
+            state = replace(state, ibm_dos_version=ver.value)
+        if ver.is_dos3_class:
+            state = replace(state, disk_controller=DiskController.MFM.value)
+        else:
+            state = replace(state, disk_controller="")
         if _is_vhd(state):
             state = apply_ibm_default_size(state, force=True)
     else:
         state = replace(state, disk_controller="")
-        if _is_vhd(state) and boot_mode is BootMode.IBM8088:
-            state = apply_ibm_default_size(state, force=True)
     # Default geometry source for the non-early-return branches is
     # SIZE -- those branches snap size_text but not bios_drive_type
     # or custom_chs, so the user lands on the simple static-size
@@ -651,8 +680,13 @@ def validate_media_step(state: FormState) -> str | None:
             try:
                 ver = IBMDOSVersion(state.ibm_dos_version)
             except ValueError:
-                ver = IBMDOSVersion.DOS33
-            ver_label = "MS-DOS 3.3" if ver is IBMDOSVersion.DOS33 else "MS-DOS 5.0"
+                ver = IBMDOSVersion.MSDOS33
+            ver_label = {
+                IBMDOSVersion.MSDOS33: "MS-DOS 3.3",
+                IBMDOSVersion.PCDOS3: "IBM PC-DOS 3.x",
+                IBMDOSVersion.MSDOS5: "MS-DOS 5.0",
+                IBMDOSVersion.PCDOS5: "IBM PC-DOS 5.x",
+            }.get(ver, "MS-DOS 3.3")
             return (
                 f"IBM 8088/V20 + {ver_label} partitions cannot exceed "
                 f"{_render_mb(max_mb)}."
@@ -679,24 +713,51 @@ def build_time_hint_for_boot_mode(boot_mode: BootMode) -> str | None:
 
 
 def coerce_on_ibm_version_change(state: FormState) -> FormState:
-    # Re-snap the Boot assets path so picking DOS 3.3 -> "msdos33"
-    # and DOS 5.0 -> "msdos5" when the user is in IBM 8088 mode.
-    # Skips boot_assets the user has manually customized to a
-    # non-default value (anything other than the previously-defaulted
-    # "msdos33" / "msdos5") so we don't trample custom paths.
+    # 4-way IBM 8088 + DOS version flip handling.
+    # 1) Re-snap the Boot assets path to the canonical dir for the
+    #    new pick (msdos33 / pcdos3 / msdos5 / pcdos5) -- skips when
+    #    the user has customized to a non-default value.
+    # 2) Flip the disk controller: DOS 3-class -> MFM, DOS 5-class
+    #    -> auto-detect (IDE).
+    # 3) Re-snap size_text to the new per-version default (PCDOS3
+    #    16 MiB cap is much tighter than MSDOS5/PCDOS5 504 MiB).
+    # 4) Re-snap filesystem: PCDOS3 is FAT12-only.
     boot_mode = BootMode(state.boot_mode)
-    if boot_mode is BootMode.IBM8088 and state.boot_assets in ("", "msdos33", "msdos5", "ibm8088"):
+    legacy_defaults = ("", "msdos33", "msdos5", "pcdos3", "pcdos5", "ibm8088")
+    if boot_mode is BootMode.IBM8088 and state.boot_assets in legacy_defaults:
         state = replace(
             state,
             boot_assets=default_boot_assets_for(boot_mode, state.ibm_dos_version),
         )
+    if boot_mode is BootMode.IBM8088:
+        try:
+            ver = IBMDOSVersion(state.ibm_dos_version)
+        except ValueError:
+            ver = IBMDOSVersion.MSDOS33
+        if ver.is_dos3_class:
+            state = replace(state, disk_controller=DiskController.MFM.value)
+        else:
+            state = replace(state, disk_controller="")
+        # PCDOS3 is FAT12-only (it predates FAT16 by ~1 release).
+        # All other IBM 8088 picks default to FAT16 (the natural
+        # FORMAT C: /S target).
+        if ver is IBMDOSVersion.PCDOS3:
+            state = replace(state, disk_format=DiskFormat.FAT12.value)
+        elif DiskFormat(state.disk_format) is DiskFormat.FAT12:
+            # Flipping AWAY from PCDOS3 should restore the standard
+            # FAT16 default rather than leaving the user on an
+            # unusable FAT12-and-too-big combo.
+            state = replace(state, disk_format=DiskFormat.FAT16.value)
     if _is_vhd(state):
-        # Re-snap to the new ibm_dos_version's cap (DOS33=32 MiB,
-        # DOS50=504 MiB) -- _snap_size_for_boot_mode reads
-        # ibm_dos_version through _state_aware_max_mb so changing the
-        # version now clamps size DOWN (if user goes 504->32) or
-        # leaves room to grow (if user goes 32->504).
+        # Use force=False so user-customized sizes are preserved; the
+        # legacy-default set in apply_ibm_default_size recognizes the
+        # previous per-version defaults (15M/16M/31M/32M/512M) so
+        # flipping versions snaps to the new per-version default
+        # without trampling a custom 100M-ish typed value.  Then
+        # _snap_size_for_boot_mode clamps any over-cap survivors
+        # (e.g. flipping MSDOS5 200M -> MSDOS33 -> clamped to 32M).
         state = apply_ibm_default_size(state, force=False)
+        state = _snap_format_for_boot_mode(state, force_preferred=True)
         return _snap_size_for_boot_mode(state)
     return state
 

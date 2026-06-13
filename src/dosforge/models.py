@@ -116,6 +116,19 @@ class BootMode(str, Enum):
     # both IDE and MFM controllers; defaults to MFM since that's the
     # 1984-authentic hardware target.
     PCDOS3 = "pcdos3"
+    # IBM PC-DOS 5.00 (June 1991) -- IBM's branded counterpart to
+    # Microsoft MS-DOS 5.0.  Adds HMA/UMB memory support and the
+    # DOSSHELL.  Uses ``IBMBIO.COM`` + ``IBMDOS.COM`` + ``COMMAND.COM``
+    # naming (IBM kept the PC-DOS system-file names).  Install
+    # pipeline mirrors PCDOS7: ``FORMAT C: /S`` driven from a raw
+    # 1.44 MB ``Disk01.img`` extracted from the WinWorldPC
+    # ``IBM PC-DOS 5.00 (1991) (3.5)`` archive (drop the .7z or the
+    # raw IMG into ``dosassets/pcdos5/``).  Supports FAT12/FAT16,
+    # with the IBM 8088 profile capped at ~504 MiB (matching MS-DOS
+    # 5.0).  Sibling of the MSDOS5 install pipeline; selectable via
+    # the IBM 8088 boot mode's *DOS version* dropdown alongside
+    # MS-DOS 5.0, or directly as ``--boot-mode pcdos5``.
+    PCDOS5 = "pcdos5"
     # Microsoft MS-DOS 3.00 [Compaq OEM] (1985-04-22) — Compaq-branded
     # MS-DOS 3.0 sibling of PCDOS3.  Same DOS-3.0 BPB (has
     # hidden_sectors) so HDD boot works on any standard MFM/IDE BIOS.
@@ -172,8 +185,82 @@ class MSDOSInstallProfile(str, Enum):
 
 
 class IBMDOSVersion(str, Enum):
-    DOS33 = "dos33"
-    DOS50 = "dos50"
+    """Which DOS variant the *IBM 8088* boot mode should install.
+
+    Four picks: two from Microsoft (MS-DOS 3.3 / 5.0) and two from
+    IBM (PC-DOS 3.x / 5.x).  The *wire values* are the canonical
+    asset-directory names (``msdos33`` / ``pcdos3`` / ``msdos5`` /
+    ``pcdos5``) so each pick maps 1:1 onto a ``dosassets/<dir>/``
+    folder and there's no UI/asset-name mismatch.
+
+    Back-compat:
+
+    * Python attribute aliases ``DOS33`` / ``DOS50`` are kept (they
+      point to ``MSDOS33`` / ``MSDOS5`` respectively) so legacy
+      callers using ``IBMDOSVersion.DOS33`` continue to work without
+      a wave of churn.
+    * The legacy wire values ``"dos33"`` and ``"dos50"`` (used by
+      state.json files written before v0.9.47) are still accepted
+      via ``_missing_`` below and normalized to ``MSDOS33`` /
+      ``MSDOS5`` on load.
+    """
+
+    MSDOS33 = "msdos33"
+    PCDOS3 = "pcdos3"
+    MSDOS5 = "msdos5"
+    PCDOS5 = "pcdos5"
+    # Python attribute aliases for pre-v0.9.47 call sites.  Enum
+    # automatically treats same-value members as aliases of the first
+    # declaration, so ``IBMDOSVersion.DOS33 is IBMDOSVersion.MSDOS33``
+    # is True at runtime.
+    DOS33 = "msdos33"
+    DOS50 = "msdos5"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "IBMDOSVersion | None":
+        # Accept legacy wire values from pre-v0.9.47 state.json files.
+        aliases = {"dos33": cls.MSDOS33, "dos50": cls.MSDOS5}
+        if isinstance(value, str):
+            mapped = aliases.get(value)
+            if mapped is not None:
+                return mapped
+        return None
+
+    @property
+    def is_dos3_class(self) -> bool:
+        """True when this picks a DOS 3.x install (FAT12 / 16 MiB-32
+        MiB era).  Used by guards that need MFM/XT-class layout or the
+        ``msdos33``-style FORMAT pipeline (``FORMAT C: /S`` against a
+        FAT laid down by FORMAT, not mformat)."""
+        return self in (IBMDOSVersion.MSDOS33, IBMDOSVersion.PCDOS3)
+
+    @property
+    def is_dos5_class(self) -> bool:
+        """True when this picks a DOS 5.x install (FAT12/FAT16, IBM
+        8088 profile cap = 504 MiB).  Used by guards that pick the
+        msdos5-style FORMAT pipeline + AT/IDE-friendly defaults."""
+        return self in (IBMDOSVersion.MSDOS5, IBMDOSVersion.PCDOS5)
+
+    @property
+    def asset_dir_name(self) -> str:
+        """The canonical ``dosassets/<name>/`` subdir for this DOS
+        variant -- happens to be the same as the wire value."""
+        return self.value
+
+    @property
+    def max_size_bytes(self) -> int:
+        """Per-version IBM 8088 profile size cap.
+
+        * ``PCDOS3``  -> 16 MiB (FAT12-only, DOS 3.0 partition cap)
+        * ``MSDOS33`` -> 32 MiB (DOS 3.3 FAT16 uint16 sector cap)
+        * ``MSDOS5``  -> 504 MiB (FAT16 max under the IBM 8088 profile)
+        * ``PCDOS5``  -> 504 MiB (matches MSDOS5)
+        """
+        if self is IBMDOSVersion.PCDOS3:
+            return 16 * 1024 * 1024
+        if self is IBMDOSVersion.MSDOS33:
+            return 32 * 1024 * 1024
+        return 504 * 1024 * 1024
 
 
 class DiskController(str, Enum):
@@ -573,7 +660,7 @@ class CreateRequest:
     boot_assets_path: Path | None = None
     freedos_download_url: str | None = None
     msdos_install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL
-    ibm_dos_version: IBMDOSVersion = IBMDOSVersion.DOS33
+    ibm_dos_version: IBMDOSVersion = IBMDOSVersion.MSDOS33
     custom_payload_path: Path | None = None
     # Optional classic-AT-BIOS hard-drive preset. When set as a
     # ``(vendor, type_id)`` tuple, the VHD's footer CHS + total size
@@ -630,7 +717,7 @@ class CreateRequest:
             return DiskController.MFM
         if (
             self.boot_mode is BootMode.IBM8088
-            and self.ibm_dos_version is IBMDOSVersion.DOS33
+            and self.ibm_dos_version.is_dos3_class
         ):
             return DiskController.MFM
         return DiskController.IDE

@@ -35,6 +35,7 @@ from .legacy_dos_install import (
     msdos33_profile,
     pcdos3_profile,
     msdos5_profile,
+    pcdos5_profile,
     msdos6_profile,
     msdos622_profile,
     msdos71_profile,
@@ -237,6 +238,25 @@ _LEGACY_DOS_INSTALL_DESCRIPTORS: dict[BootMode, _LegacyDosInstallDescriptor] = {
         system_file_marker="IO.SYS",
         profile_builder=msdos5_profile,
     ),
+    # IBM PC-DOS 5.00 (June 1991) -- IBM-branded sibling of MS-DOS 5.0.
+    # Sources from either a pre-extracted 1.44 MB ``Disk01.img`` in
+    # dosassets/pcdos5/ or the WinWorldPC
+    # ``IBM PC-DOS 5.00 (1991) (3.5).7z`` archive (auto-extracted via
+    # ``_legacy_dos_archive.extract_legacy_dos_install_archive``).
+    # IBM-style ``IBMBIO.COM`` + ``IBMDOS.COM`` + ``COMMAND.COM``
+    # system files.  Install pipeline mirrors PCDOS7 / MSDOS5 (FORMAT
+    # C: /S in QEMU).  Supports FAT12 / FAT16, up to the same ~504
+    # MiB IBM 8088 profile cap as MSDOS5.
+    BootMode.PCDOS5: _LegacyDosInstallDescriptor(
+        label="IBM PC-DOS 5.0",
+        asset_fallback_dirs=("pcdos5",),
+        preferred_image_names=(
+            "Disk01.img", "Disk1.img", "DISK01.IMG", "DISK1.IMG",
+            "disk01.img", "disk1.img",
+        ),
+        system_file_marker="IBMBIO.COM",
+        profile_builder=pcdos5_profile,
+    ),
     BootMode.MSDOS6: _LegacyDosInstallDescriptor(
         label="MS-DOS 6.0",
         asset_fallback_dirs=("msdos6", "dos6", "dos60"),
@@ -434,6 +454,7 @@ def _uses_legacy_dos_qemu_install(request: CreateRequest) -> bool:
         BootMode.MSDOS622,
         BootMode.MSDOS71,
         BootMode.PCDOS3,
+        BootMode.PCDOS5,
         BootMode.PCDOS7,
         BootMode.PCDOS2000,
         BootMode.PCDOS71,
@@ -450,16 +471,25 @@ def _legacy_dos_install_descriptor(request: CreateRequest) -> _LegacyDosInstallD
     """Pick the QEMU install descriptor for ``request``.
 
     IBM8088 reuses per-version DOS descriptors: DOS 3.3 -> MSDOS33,
-    DOS 5.0 -> MSDOS5.  Same install media, same FORMAT C: /S flow.
+    PC-DOS 3.x -> PCDOS3, MS-DOS 5.0 -> MSDOS5, PC-DOS 5.x -> PCDOS5.
+    Same install media, same FORMAT C: /S flow.
 
     PCDOS71 swaps profile based on disk_format: FAT32 uses FORMAT32.COM
     (``pcdos71_profile``) and FAT16/FAT12 uses the regular FORMAT.COM
     (``pcdos71_fat16_profile``).  Both ship with the SGTK install media.
     """
     if request.boot_mode is BootMode.IBM8088:
-        if request.ibm_dos_version is IBMDOSVersion.DOS33:
-            return _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.MSDOS33]
-        return _LEGACY_DOS_INSTALL_DESCRIPTORS[BootMode.MSDOS5]
+        # Route the IBM 8088 boot mode's DOS-version picker to the
+        # underlying DOS variant's install descriptor.  See the
+        # ``IBMDOSVersion`` docstring for the 4 picks.
+        per_version: dict[IBMDOSVersion, BootMode] = {
+            IBMDOSVersion.MSDOS33: BootMode.MSDOS33,
+            IBMDOSVersion.PCDOS3: BootMode.PCDOS3,
+            IBMDOSVersion.MSDOS5: BootMode.MSDOS5,
+            IBMDOSVersion.PCDOS5: BootMode.PCDOS5,
+        }
+        target = per_version.get(request.ibm_dos_version, BootMode.MSDOS33)
+        return _LEGACY_DOS_INSTALL_DESCRIPTORS[target]
     if (
         request.boot_mode is BootMode.PCDOS71
         and request.disk_format is not DiskFormat.FAT32
@@ -493,7 +523,7 @@ def _uses_msdos33_filesystem_layout(request: CreateRequest) -> bool:
         return True
     if (
         request.boot_mode is BootMode.IBM8088
-        and request.ibm_dos_version is IBMDOSVersion.DOS33
+        and request.ibm_dos_version.is_dos3_class
     ):
         return True
     return False
@@ -1635,13 +1665,14 @@ class DiskManager:
         # Re-apply boot-mode size caps now that the BIOS preset has
         # potentially raised the size above the requested value.
         if request.boot_mode is BootMode.IBM8088:
-            ibm_max = (
-                IBM_DOS33_MAX_BYTES
-                if request.ibm_dos_version is IBMDOSVersion.DOS33
-                else IBM_DOS50_MAX_BYTES
-            )
+            ibm_max = request.ibm_dos_version.max_size_bytes
             if spec.size_bytes > ibm_max:
-                version_label = "DOS 3.3" if request.ibm_dos_version is IBMDOSVersion.DOS33 else "DOS 5.0"
+                version_label = {
+                    IBMDOSVersion.MSDOS33: "MS-DOS 3.3",
+                    IBMDOSVersion.PCDOS3: "PC-DOS 3.x",
+                    IBMDOSVersion.MSDOS5: "MS-DOS 5.0",
+                    IBMDOSVersion.PCDOS5: "PC-DOS 5.x",
+                }.get(request.ibm_dos_version, "DOS 3.3")
                 raise ValidationError(
                     f"BIOS drive-type preset {spec.slug} ({spec.description}) "
                     f"exceeds the IBM 8088/V20 {version_label} {ibm_max // 1024 // 1024} MiB "
@@ -1942,12 +1973,7 @@ class DiskManager:
             min_bytes = FAT16_MIN_BYTES
             max_bytes = FAT16_MAX_BYTES
             if request.boot_mode is BootMode.IBM8088:
-                ibm_max = (
-                    IBM_DOS33_MAX_BYTES
-                    if request.ibm_dos_version is IBMDOSVersion.DOS33
-                    else IBM_DOS50_MAX_BYTES
-                )
-                max_bytes = min(max_bytes, ibm_max)
+                max_bytes = min(max_bytes, request.ibm_dos_version.max_size_bytes)
             # MS-DOS 3.30 (msdos33) predates FAT16B and only reads
             # BPB.total_sectors_16 (uint16, max 65535 sectors ~= 31.99 MiB).
             # Anything larger trips the same boot failure (BPB.total16
@@ -2212,6 +2238,7 @@ class DiskManager:
             BootMode.MSDOS5,
             BootMode.MSDOS6,
             BootMode.MSDOS622,
+            BootMode.PCDOS5,
             BootMode.PCDOS7,
             BootMode.PCDOS2000,
             BootMode.DRDOS6,
@@ -2221,7 +2248,7 @@ class DiskManager:
             request.boot_mode in format_from_scratch_modes
             or (
                 request.boot_mode is BootMode.IBM8088
-                and request.ibm_dos_version is IBMDOSVersion.DOS50
+                and request.ibm_dos_version.is_dos5_class
             )
         )
         if msdos33_layout or msdos5_layout:
@@ -3155,24 +3182,27 @@ class DiskManager:
         label: str,
     ) -> Path:
         # IBM8088 mode keeps version-specific assets under a versioned
-        # subdir (e.g. <root>/dos33/DISK01.IMG, mirroring the directory
-        # layout used by the BootAssetResolver). Try that first so users
-        # who organize their boot assets that way don't get a confusing
-        # "no install diskette found" error.
-        version_subdir = (
-            "dos33"
-            if (
-                request.boot_mode is BootMode.IBM8088
-                and request.ibm_dos_version is IBMDOSVersion.DOS33
-            )
-            else None
-        )
+        # subdir (e.g. <root>/msdos33/DISK01.IMG, mirroring the
+        # directory layout used by the BootAssetResolver).  v0.9.47:
+        # the canonical version subdir is the wire value of
+        # ``ibm_dos_version`` (msdos33 / pcdos3 / msdos5 / pcdos5),
+        # but legacy ``dos33`` / ``dos50`` subdirs from pre-v0.9.47
+        # layouts are still tried as fallbacks so users don't have
+        # to reorganize their dosassets/ folder.
+        version_subdirs: tuple[str, ...] = ()
+        if request.boot_mode is BootMode.IBM8088:
+            ver = request.ibm_dos_version
+            legacy_aliases = {
+                IBMDOSVersion.MSDOS33: ("dos33",),
+                IBMDOSVersion.MSDOS5: ("dos50", "dos5"),
+            }
+            version_subdirs = (ver.asset_dir_name,) + legacy_aliases.get(ver, ())
         if request.boot_assets_path is not None:
             # Bare names (e.g. "msdos33") map to ./dosassets/msdos33/.
             resolved = resolve_dos_asset_dir(request.boot_assets_path)
             root = resolved if resolved is not None else request.boot_assets_path.expanduser().resolve()
-            if version_subdir is not None:
-                versioned = (root / version_subdir).resolve()
+            for subdir in version_subdirs:
+                versioned = (root / subdir).resolve()
                 if versioned.is_dir():
                     return versioned
             return root
@@ -3180,8 +3210,8 @@ class DiskManager:
             candidate = resolve_dos_asset_dir(fallback)
             if candidate is None:
                 continue
-            if version_subdir is not None:
-                versioned = (candidate / version_subdir).resolve()
+            for subdir in version_subdirs:
+                versioned = (candidate / subdir).resolve()
                 if versioned.is_dir():
                     return versioned
             return candidate

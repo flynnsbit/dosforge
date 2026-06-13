@@ -559,7 +559,7 @@ def _use_pre_dos5_config_sys(request: "CreateRequest") -> bool:
         return True
     if (
         request.boot_mode is BootMode.IBM8088
-        and request.ibm_dos_version is IBMDOSVersion.DOS33
+        and request.ibm_dos_version.is_dos3_class
     ):
         return True
     return False
@@ -1296,21 +1296,42 @@ class BootAssetResolver:
         )
 
     def _resolve_ibm8088(self, request: CreateRequest) -> BootAssets:
-        version_dir_name = "dos33" if request.ibm_dos_version is IBMDOSVersion.DOS33 else "dos50"
-        version_label = "DOS 3.3" if request.ibm_dos_version is IBMDOSVersion.DOS33 else "DOS 5.0"
-        default_asset_dirs = ("msdos33", "dos33") if request.ibm_dos_version is IBMDOSVersion.DOS33 else (
-            "msdos5",
-            "dos5",
-            "dos50",
-        )
+        # v0.9.47: 4-way IBM DOS version picker.  Each picks its
+        # canonical dosassets/<dir>/ subdir (matches the wire value)
+        # plus legacy fallbacks for older state.json layouts.
+        version = request.ibm_dos_version
+        per_version_label: dict[IBMDOSVersion, str] = {
+            IBMDOSVersion.MSDOS33: "DOS 3.3 (MS-DOS)",
+            IBMDOSVersion.PCDOS3: "DOS 3.x (PC-DOS)",
+            IBMDOSVersion.MSDOS5: "DOS 5.0 (MS-DOS)",
+            IBMDOSVersion.PCDOS5: "DOS 5.x (PC-DOS)",
+        }
+        # ``default_asset_dirs`` controls the root dosassets/<name>/ search;
+        # ``version_subdir_aliases`` controls the legacy *subdir* names
+        # inside a user-supplied --boot-assets-path root.  Both lists
+        # preserve back-compat with pre-v0.9.47 dosassets layouts that
+        # used ``dos33`` / ``dos50`` instead of ``msdos33`` / ``msdos5``.
+        per_version_fallbacks: dict[IBMDOSVersion, tuple[str, ...]] = {
+            IBMDOSVersion.MSDOS33: ("msdos33", "dos33"),
+            IBMDOSVersion.PCDOS3: ("pcdos3",),
+            IBMDOSVersion.MSDOS5: ("msdos5", "dos5", "dos50"),
+            IBMDOSVersion.PCDOS5: ("pcdos5",),
+        }
+        per_version_subdir_aliases: dict[IBMDOSVersion, tuple[str, ...]] = {
+            IBMDOSVersion.MSDOS33: ("dos33",),
+            IBMDOSVersion.MSDOS5: ("dos50", "dos5"),
+        }
+        version_label = per_version_label.get(version, "DOS 3.3 (MS-DOS)")
+        default_asset_dirs = per_version_fallbacks.get(version, ("msdos33", "dos33"))
         return self._resolve_legacy_dos(
             request=request,
             profile_label=f"IBM 8088/V20 {version_label}",
-            version_subdir_name=version_dir_name,
-            cache_tag=f"ibm8088-{request.ibm_dos_version.value}",
-            prefer_install_image_boot_sector=request.ibm_dos_version is IBMDOSVersion.DOS33,
+            version_subdir_name=version.asset_dir_name,
+            cache_tag=f"ibm8088-{version.value}",
+            prefer_install_image_boot_sector=version.is_dos3_class,
             default_asset_dirs=default_asset_dirs,
             install_profile=request.msdos_install_profile,
+            version_subdir_aliases=per_version_subdir_aliases.get(version, ()),
         )
 
     def _resolve_msdos33(self, request: CreateRequest) -> BootAssets:
@@ -1530,6 +1551,7 @@ class BootAssetResolver:
         prefer_directory_boot_template: bool = True,
         install_profile: MSDOSInstallProfile = MSDOSInstallProfile.MINIMAL,
         boot_template_required: bool = True,
+        version_subdir_aliases: tuple[str, ...] = (),
     ) -> BootAssets:
         if request.disk_format not in (DiskFormat.FAT16, DiskFormat.FAT12, DiskFormat.FAT32):
             raise ValidationError(
@@ -1546,8 +1568,17 @@ class BootAssetResolver:
         pre_dos5 = _use_pre_dos5_config_sys(request)
 
         candidate_directories: list[Path] = [directory]
+        # Canonical version subdir first, then legacy aliases (e.g.
+        # "dos33"/"dos50" from pre-v0.9.47 layouts) so we honor older
+        # user-organized dosassets/ folders.
+        subdir_candidates: list[str] = []
         if version_subdir_name:
-            version_subdir = self._find_directory_case_insensitive(directory, version_subdir_name)
+            subdir_candidates.append(version_subdir_name)
+        for alias in version_subdir_aliases:
+            if alias and alias not in subdir_candidates:
+                subdir_candidates.append(alias)
+        for subdir_name in subdir_candidates:
+            version_subdir = self._find_directory_case_insensitive(directory, subdir_name)
             if version_subdir is not None and version_subdir not in candidate_directories:
                 candidate_directories.append(version_subdir)
 

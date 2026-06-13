@@ -178,9 +178,23 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
     )
     create.add_argument(
         "--ibm-dos-version",
-        choices=[version.value for version in IBMDOSVersion],
-        default=IBMDOSVersion.DOS33.value,
-        help="IBM PC 8088/V20 DOS version: dos33 (max 32MB) or dos50 (max ~504MB).",
+        choices=[
+            IBMDOSVersion.MSDOS33.value,
+            IBMDOSVersion.PCDOS3.value,
+            IBMDOSVersion.MSDOS5.value,
+            IBMDOSVersion.PCDOS5.value,
+            # Legacy v0.9.46-and-earlier wire values, accepted via
+            # IBMDOSVersion._missing_ for back-compat with scripted CLIs.
+            "dos33",
+            "dos50",
+        ],
+        default=IBMDOSVersion.MSDOS33.value,
+        help=(
+            "DOS version for IBM PC 8088/V20 boot mode: "
+            "msdos33 (MS-DOS 3.3, max 32MB), pcdos3 (PC-DOS 3.x, max 16MB FAT12), "
+            "msdos5 (MS-DOS 5.0, max ~504MB), pcdos5 (PC-DOS 5.x, max ~504MB). "
+            "Legacy aliases 'dos33'/'dos50' accepted for back-compat."
+        ),
     )
     create.add_argument(
         "--custom-payload-path",

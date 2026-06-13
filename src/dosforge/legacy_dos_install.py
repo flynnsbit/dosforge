@@ -574,6 +574,43 @@ def msdos6_profile(install_image: Path, boot_assets_dir: Path | None = None) -> 
     )
 
 
+def pcdos5_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
+    """IBM PC-DOS 5.0 install profile.
+
+    IBM PC-DOS 5.00 (June 1991) was IBM's branded counterpart to
+    Microsoft MS-DOS 5.0 -- same era, same FAT12/FAT16 + FORMAT C: /S
+    install topology, but IBM-style ``IBMBIO.COM`` + ``IBMDOS.COM``
+    + ``COMMAND.COM`` system-file naming (instead of Microsoft's
+    ``IO.SYS`` + ``MSDOS.SYS``).  VBR OEM stamp is ``IBM  5.0``.
+
+    ``install_image`` is the raw 1.44 MB ``Disk01.img`` extracted
+    from the WinWorldPC ``IBM PC-DOS 5.00 (1991) (3.5)`` archive
+    (the descriptor in ``disk.py`` auto-extracts the .7z if no raw
+    IMG is found in ``dosassets/pcdos5/``).  Disk01 ships
+    IBMBIO.COM + IBMDOS.COM + COMMAND.COM + FORMAT.COM + FDISK.COM
+    + SYS.COM at its root.
+
+    Drives the same FORMAT C: /S sequence as ``pcdos7_profile`` and
+    ``msdos5_profile``: PC-DOS 5's FORMAT lays down the BPB, FAT,
+    system files, and an IBM-stamped VBR in one shot.  PC-DOS 5
+    also introduced ``FDISK /MBR`` so ``supports_fdisk_mbr=True``
+    writes an authentic PC-DOS 5 MBR boot record.
+    """
+    _ = boot_assets_dir
+    return LegacyDosInstallProfile(
+        label="IBM PC-DOS 5.0",
+        install_image=install_image,
+        required_system_files=("IBMBIO.COM", "IBMDOS.COM", "COMMAND.COM"),
+        install_method="format",
+        timeout_seconds=300.0,
+        # PC-DOS 5.0 FDISK supports /MBR.
+        supports_fdisk_mbr=True,
+        # See msdos5_profile for the Y, Y, ENTER explanation (DOS 5+
+        # FORMAT double-prompts when an existing FAT differs from spec).
+        format_yes_input=b"Y\r\nY\r\n\r\n",
+    )
+
+
 def pcdos7_profile(install_image: Path, boot_assets_dir: Path | None = None) -> LegacyDosInstallProfile:
     """IBM PC-DOS 7.0 install profile.
 
@@ -1733,6 +1770,7 @@ __all__ = [
     "msdos6_profile",
     "msdos622_profile",
     "pcdos7_profile",
+    "pcdos5_profile",
     "pcdos2000_profile",
     "pcdos71_profile",
     "pcdos71_fat16_profile",

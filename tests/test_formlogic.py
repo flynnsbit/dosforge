@@ -490,6 +490,44 @@ def test_coerce_ibm_version_to_dos50_uses_32m_default():
     assert flipped.size_text == "32M"
 
 
+def test_coerce_ibm_version_to_pcdos3_clamps_to_fat12_and_15m():
+    """v0.9.47: PCDOS3 is FAT12-only with a 16 MiB partition cap.
+    Flipping any other IBM DOS version to PCDOS3 must force FAT12
+    (its rule rejects FAT16) AND drop the default size below the
+    16 MiB cap (15M for MFM auto-derive)."""
+    base = f.coerce_on_boot_change(_state(boot_mode=BootMode.IBM8088.value))
+    assert base.size_text == "31M"
+    flipped = f.coerce_on_ibm_version_change(
+        dataclasses.replace(base, ibm_dos_version=IBMDOSVersion.PCDOS3.value)
+    )
+    assert flipped.size_text == "15M"
+    assert flipped.disk_format == DiskFormat.FAT12.value
+
+
+def test_coerce_ibm_version_to_pcdos5_uses_32m_and_ide_class():
+    """v0.9.47: PCDOS5 is a DOS-5-class profile (504 MiB cap, IDE
+    auto-controller).  Flipping from MSDOS33 (DOS-3-class, MFM) to
+    PCDOS5 must clear MFM, restore FAT16, and default size to 32M."""
+    base = f.coerce_on_boot_change(_state(boot_mode=BootMode.IBM8088.value))
+    assert base.disk_controller == "mfm"
+    assert base.disk_format == DiskFormat.FAT16.value
+    flipped = f.coerce_on_ibm_version_change(
+        dataclasses.replace(base, ibm_dos_version=IBMDOSVersion.PCDOS5.value)
+    )
+    assert flipped.size_text == "32M"
+    assert flipped.disk_controller == ""
+    assert flipped.disk_format == DiskFormat.FAT16.value
+
+
+def test_ibm_dos_version_legacy_wire_values_accepted():
+    """Old state.json files persisted ``dos33`` / ``dos50``; the
+    v0.9.47 enum hook must keep parsing those for back-compat."""
+    assert IBMDOSVersion("dos33") is IBMDOSVersion.MSDOS33
+    assert IBMDOSVersion("dos50") is IBMDOSVersion.MSDOS5
+    assert IBMDOSVersion.DOS33 is IBMDOSVersion.MSDOS33
+    assert IBMDOSVersion.DOS50 is IBMDOSVersion.MSDOS5
+
+
 def test_coerce_uncheck_system_format_clears_boot():
     new = f.coerce_on_img_system_format_change(_state(media_type=MediaType.IMG.value, img_system_format=False, boot_mode=BootMode.MSDOS5.value))
     assert new.boot_mode == BootMode.NONE.value

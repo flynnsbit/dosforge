@@ -145,7 +145,7 @@ class CreateView(ttk.Frame):
         )
         self._add_field(bb, fl.FIELD_DOS_PROFILE, "DOS install profile",
                         self.combo_profile.build, row=4)
-        self._add_field(bb, fl.FIELD_IBM_DOS_VERSION, "IBM DOS version",
+        self._add_field(bb, fl.FIELD_IBM_DOS_VERSION, "DOS version",
                         self.combo_ibm.build, row=5)
         # Boot assets directory is the LAST field in this card so the
         # user picks an OS (and, for IBM 8088 mode, the DOS version)

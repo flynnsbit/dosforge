@@ -128,11 +128,26 @@ def validate_size_for_format(size_bytes: int, disk_format: DiskFormat) -> None:
 
 
 def validate_size_for_ibm_dos(size_bytes: int, dos_version: IBMDOSVersion) -> None:
-    max_size = IBM_DOS33_MAX_BYTES if dos_version is IBMDOSVersion.DOS33 else IBM_DOS50_MAX_BYTES
-    if size_bytes > max_size:
-        limit_mb = 32 if dos_version is IBMDOSVersion.DOS33 else 504
-        label = "MS-DOS 3.3" if dos_version is IBMDOSVersion.DOS33 else "MS-DOS 5.0"
-        raise ValidationError(f"{label} IBM 8088/V20 profile images must not exceed {limit_mb} MiB.")
+    """4-way IBM 8088 profile size validation.
+
+    PCDOS3 -> 16 MiB (FAT12-only, 1984 DOS 3.0 partition cap).
+    MSDOS33 -> 32 MiB (DOS 3.3 FAT16 uint16 sector cap).
+    MSDOS5 / PCDOS5 -> 504 MiB (FAT16 max under the IBM 8088 profile).
+    """
+    max_size = dos_version.max_size_bytes
+    if size_bytes <= max_size:
+        return
+    label_map = {
+        IBMDOSVersion.MSDOS33: "MS-DOS 3.3",
+        IBMDOSVersion.PCDOS3: "IBM PC-DOS 3.x",
+        IBMDOSVersion.MSDOS5: "MS-DOS 5.0",
+        IBMDOSVersion.PCDOS5: "IBM PC-DOS 5.x",
+    }
+    label = label_map.get(dos_version, "MS-DOS 3.3")
+    limit_mb = max_size // (1024 * 1024)
+    raise ValidationError(
+        f"{label} IBM 8088/V20 profile images must not exceed {limit_mb} MiB."
+    )
 
 
 def validate_size_for_floppy(size_bytes: int, floppy_type: FloppyType) -> None:
