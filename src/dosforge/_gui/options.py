@@ -30,11 +30,12 @@ DISK_CONTROLLER_OPTIONS = [
     ("Auto-detect from boot mode", ""),
     ("IDE (AT-class)", DiskController.IDE.value),
     ("MFM (XT-class, ST-225 era)", DiskController.MFM.value),
+    ("XT-IDE (XT-class, MartyPC default)", DiskController.XTIDE.value),
 ]
 
 GEOMETRY_SOURCE_OPTIONS = [
     ("Static size (auto geometry)", GeometrySource.SIZE.value),
-    ("BIOS preset (Phoenix / AMI type table)", GeometrySource.PRESET.value),
+    ("BIOS preset (Phoenix / AMI / MartyPC-Xebec type table)", GeometrySource.PRESET.value),
     ("Custom CHS (cylinders, heads, sectors)", GeometrySource.CUSTOM_CHS.value),
 ]
 
@@ -43,7 +44,7 @@ BIOS_CUSTOM_VALUE = ""
 BIOS_DRIVE_TYPE_OPTIONS: list[tuple[str, str]] = [
     ("Custom - use size field", BIOS_CUSTOM_VALUE),
 ]
-for _vendor in (BIOSVendor.PHOENIX, BIOSVendor.AMI):
+for _vendor in (BIOSVendor.PHOENIX, BIOSVendor.AMI, BIOSVendor.MARTYPC_XEBEC):
     for _spec in iter_bios_drive_types(_vendor):
         BIOS_DRIVE_TYPE_OPTIONS.append((_spec.description, _spec.slug))
 

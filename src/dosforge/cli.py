@@ -205,7 +205,13 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
         "--disk-controller",
         choices=[controller.value for controller in DiskController],
         default=None,
-        help="Hard-disk controller class for VHD output (auto-detected from boot mode if unset).",
+        help=(
+            "Hard-disk controller class for VHD output (auto-detected from boot "
+            "mode if unset). Use 'xtide' for MartyPC compatibility (XT-class, "
+            "8088-only; geometry is auto-snapped to MartyPC's XT-IDE format "
+            "whitelist). Use 'mfm' for 86Box / PCem ST-225-era Xebec builds. "
+            "See docs/martypc-compatibility.md for the full reference."
+        ),
     )
     create.add_argument(
         "--custom-chs",

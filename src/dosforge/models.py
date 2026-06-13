@@ -267,21 +267,33 @@ class DiskController(str, Enum):
     """Hard-disk controller class targeted by a VHD build.
 
     ``IDE`` (the default) targets AT-class IDE/ATA controllers found in
-    any 86Box / DOSBox-X / PCem / MartyPC AT machine from 1988 onward.
+    any 86Box / DOSBox-X / PCem AT-class machine from 1988 onward.
     Geometry is canonical 16h/63s unless overridden via
-    ``bios_drive_type`` or ``custom_chs``.
+    ``bios_drive_type`` or ``custom_chs``.  **Not** compatible with
+    MartyPC — MartyPC is 8088-only and has no AT-class IDE.
 
     ``MFM`` targets pre-IDE ST-506/ST-412 controllers (Western Digital
     WD1002A-WX1, Adaptec 4070, IBM/Xebec, etc.) from XT-class machines
     (1984-1990).  Produces a track-aligned partition (start LBA = spt)
     with an XT-class CHS-only MBR loader -- the layout DOS 2.x's 1984
     boot code requires.  Geometry must come from ``bios_drive_type``
-    (Phoenix/AMI Types 1-15 cover all standard MFM drives) or
-    ``custom_chs`` (free-form for unusual MFM emulator presets).
+    (Phoenix/AMI Types 1-15 cover all standard MFM drives, plus
+    ``martypc_xebec`` for the 4 MartyPC-Xebec-supported geometries)
+    or ``custom_chs`` (free-form for unusual MFM emulator presets).
+
+    ``XTIDE`` targets the XT-IDE controller (open-source 8-bit ISA AT
+    register-set bridge for XT-class machines, MartyPC's default since
+    0.4.0).  Geometry must match one of the ~80 entries in MartyPC's
+    XT-IDE format whitelist (the historical AT BIOS drive type table:
+    spt in {17, 26, 34, 35, 38, 40}, sizes 10-100+ MiB).  Selecting
+    this controller lets dosforge produce VHDs that boot directly in
+    MartyPC's default machine config without ROM-hunting for the
+    Xebec adapter.
     """
 
     IDE = "ide"
     MFM = "mfm"
+    XTIDE = "xtide"
 
 
 # =====================================================================
@@ -302,6 +314,13 @@ class DiskController(str, Enum):
 class BIOSVendor(str, Enum):
     PHOENIX = "phoenix"
     AMI     = "ami"
+    # MartyPC-Xebec is a 4-entry "drive type" table hard-coded in
+    # MartyPC's IBM/Xebec hard-disk controller emulation
+    # (crates/marty_core/src/devices/hdc/xebec.rs).  MartyPC only
+    # mounts a VHD on the Xebec controller if its footer CHS exactly
+    # matches one of these 4 geometries -- selecting this vendor in
+    # dosforge locks the VHD to one of them.
+    MARTYPC_XEBEC = "martypc-xebec"
 
 
 class GeometrySource(str, Enum):
@@ -342,7 +361,12 @@ class BIOSDriveSpec:
 
     @property
     def description(self) -> str:
-        vendor_label = self.vendor.value.capitalize()
+        vendor_labels = {
+            BIOSVendor.PHOENIX: "Phoenix",
+            BIOSVendor.AMI: "AMI",
+            BIOSVendor.MARTYPC_XEBEC: "MartyPC-Xebec",
+        }
+        vendor_label = vendor_labels.get(self.vendor, self.vendor.value.capitalize())
         pre = "auto" if self.write_precomp_cylinder < 0 else str(self.write_precomp_cylinder)
         lz = self.landing_zone_cylinder
         return (
@@ -480,9 +504,26 @@ def _build_bios_drive_table(
     return out
 
 
+# MartyPC's IBM/Xebec Fixed Disk Adapter format whitelist.  Source:
+# https://github.com/dbalsom/martypc/blob/main/crates/marty_core/src/devices/hdc/xebec.rs
+# (the ``supported_formats`` vec in ``HardDiskController::default``).
+# A VHD only mounts on MartyPC's Xebec controller if its footer CHS
+# exactly matches one of these 4 entries -- pick this vendor to lock
+# dosforge's geometry to one of them.  Type IDs here match the
+# historical IBM Xebec DIP-switch numbering MartyPC uses internally.
+_BIOS_MARTYPC_XEBEC_DRIVE_ROWS: tuple[tuple[int, int, int, int, int, int], ...] = (
+    # (type, cyl, hd, pre, lz, spt)
+    ( 1, 306, 4,   0, 305, 17),  # 10 MB, ST-225 / IBM 5160 stock
+    ( 2, 615, 4, 300, 615, 17),  # 20 MB, ST-251 (matches Phoenix Type 2)
+    (13, 306, 8, 128, 305, 17),  # 20 MB, dual-platter ST-225 variant
+    (16, 612, 4,   0, 612, 17),  # 20 MB, MartyPC-specific (no Phoenix equiv)
+)
+
+
 BIOS_AT_DRIVE_TYPES: dict[tuple[BIOSVendor, int], BIOSDriveSpec] = {
     **_build_bios_drive_table(BIOSVendor.PHOENIX, _BIOS_PHOENIX_DRIVE_ROWS),
     **_build_bios_drive_table(BIOSVendor.AMI, _BIOS_AMI_DRIVE_ROWS),
+    **_build_bios_drive_table(BIOSVendor.MARTYPC_XEBEC, _BIOS_MARTYPC_XEBEC_DRIVE_ROWS),
 }
 
 

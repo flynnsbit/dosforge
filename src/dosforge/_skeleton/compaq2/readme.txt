@@ -29,6 +29,19 @@ disk in one of two layouts:
          --bios-drive-type phoenix:1 \\
          --path C:\\my-vhds\\compaq2-mfm.vhd
 
+   Equivalent MartyPC-Xebec preset (v0.9.48+, identical CHS but
+   declared as the MartyPC-Xebec table entry for clarity):
+
+     dosforge create \\
+         --media-type vhd --boot-mode compaq2 \\
+         --format fat12 \\
+         --disk-controller mfm \\
+         --bios-drive-type martypc-xebec:1 \\
+         --path C:\\my-vhds\\compaq2-martypc.vhd
+
+   See docs/martypc-compatibility.md for the full list of
+   MartyPC-Xebec / XT-IDE geometries.
+
 Floppy IMG build command:
 
   dosforge create \\

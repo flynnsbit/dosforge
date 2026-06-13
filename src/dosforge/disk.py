@@ -578,6 +578,110 @@ def _xt_class_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
     )
 
 
+# MartyPC's XT-IDE controller format whitelist.  Source of truth:
+# https://github.com/dbalsom/martypc/blob/main/crates/marty_core/src/devices/hdc/at_formats.rs
+# (the ``AtFormats::vec`` function).  MartyPC's XT-IDE BIOS will only
+# accept a VHD whose footer CHS exactly matches one of these tuples;
+# unrecognized geometries fail to mount silently.  Kept in the order
+# MartyPC declares them so the auto-picker prefers the smallest fit.
+_MARTYPC_XTIDE_FORMATS: tuple[tuple[int, int, int], ...] = (
+    (306, 4, 17), (615, 2, 17), (306, 4, 26), (1024, 2, 17),
+    (697, 3, 17), (306, 8, 17), (614, 4, 17), (615, 4, 17),
+    (670, 4, 17), (697, 4, 17), (987, 3, 17), (820, 4, 17),
+    (670, 5, 17), (697, 5, 17), (733, 5, 17), (615, 6, 17),
+    (462, 8, 17), (306, 8, 26), (615, 4, 26), (1024, 4, 17),
+    (855, 5, 17), (925, 5, 17), (932, 5, 17), (1024, 2, 40),
+    (809, 6, 17), (976, 5, 17), (977, 5, 17), (698, 7, 17),
+    (699, 7, 17), (981, 5, 17), (615, 8, 17), (989, 5, 17),
+    (820, 4, 26), (1024, 5, 17), (733, 7, 17), (754, 7, 17),
+    (733, 5, 26), (940, 6, 17), (615, 6, 26), (462, 8, 26),
+    (830, 7, 17), (855, 7, 17), (751, 8, 17), (1024, 4, 26),
+    (918, 7, 17), (925, 7, 17), (855, 5, 26), (977, 7, 17),
+    (987, 7, 17), (1024, 7, 17), (823, 4, 38), (925, 8, 17),
+    (809, 6, 26), (976, 5, 26), (977, 5, 26), (698, 7, 26),
+    (699, 7, 26), (940, 8, 17), (615, 8, 26), (1024, 5, 26),
+    (733, 7, 26), (1024, 8, 17), (823, 10, 17), (754, 11, 17),
+    (830, 10, 17), (925, 9, 17), (1224, 7, 17), (940, 6, 26),
+    (855, 7, 26), (751, 8, 26), (1024, 9, 17), (965, 10, 17),
+    (969, 5, 34), (980, 10, 17), (960, 5, 35), (918, 11, 17),
+    (1024, 10, 17), (977, 7, 26), (1024, 7, 26), (1024, 11, 17),
+    (940, 8, 26), (776, 8, 33), (755, 16, 17), (1024, 12, 17),
+    (1024, 8, 26), (823, 10, 26), (830, 10, 26), (925, 9, 26),
+    (960, 9, 26), (1024, 13, 17), (1224, 11, 17), (900, 15, 17),
+    (969, 7, 34), (917, 15, 17), (918, 15, 17), (1524, 4, 39),
+    (1024, 9, 26), (1024, 14, 17), (965, 10, 26), (980, 10, 26),
+    (1020, 15, 17), (1023, 15, 17), (1024, 15, 17), (1024, 16, 17),
+    (1224, 15, 17), (755, 16, 26), (903, 8, 46), (984, 10, 34),
+    (900, 15, 26), (917, 15, 26), (1023, 15, 26), (684, 16, 38),
+    (1930, 4, 62), (967, 16, 31), (1013, 10, 63), (1218, 15, 36),
+    (654, 16, 63), (659, 16, 63), (702, 16, 63), (1002, 13, 63),
+    (854, 16, 63), (987, 16, 63), (995, 16, 63), (1024, 16, 63),
+    (1036, 16, 63), (1120, 16, 59), (1054, 16, 63),
+)
+
+
+# Whitelist set for O(1) validation lookups.
+_MARTYPC_XTIDE_FORMAT_SET: frozenset[tuple[int, int, int]] = frozenset(_MARTYPC_XTIDE_FORMATS)
+
+
+def _xtide_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
+    """Return (cylinders, heads, spt, size_bytes) for XT-IDE (MartyPC) VHDs.
+
+    Picks the smallest entry in MartyPC's XT-IDE format whitelist
+    (see ``_MARTYPC_XTIDE_FORMATS``) that is large enough to hold
+    ``request.size_bytes``.  If a ``bios_drive_type`` or ``custom_chs``
+    is provided, that geometry is used verbatim — validation will
+    later confirm the explicit CHS is in the whitelist.
+    """
+    spec = request.bios_drive_spec
+    if spec is not None:
+        return (spec.cylinders, spec.heads, spec.sectors_per_track, spec.size_bytes)
+    if request.custom_chs is not None:
+        cylinders, heads, sectors_per_track = request.custom_chs
+        return (
+            cylinders,
+            heads,
+            sectors_per_track,
+            cylinders * heads * sectors_per_track * 512,
+        )
+    size_bytes = request.size_bytes
+    if size_bytes <= 0:
+        cyl, h, spt = _MARTYPC_XTIDE_FORMATS[0]
+        return (cyl, h, spt, cyl * h * spt * 512)
+    # Auto-pick: smallest whitelist entry that fits the request.
+    best: tuple[int, int, int, int] | None = None
+    for cyl, h, spt in _MARTYPC_XTIDE_FORMATS:
+        candidate_size = cyl * h * spt * 512
+        if candidate_size < size_bytes:
+            continue
+        if best is None or candidate_size < best[3]:
+            best = (cyl, h, spt, candidate_size)
+    if best is not None:
+        return best
+    # No whitelist entry fits the request.  Largest XTIDE format is
+    # 1054x16x63 ~= 520 MiB; anything bigger is XT-class out of bounds.
+    max_mib = max(c * h * s for (c, h, s) in _MARTYPC_XTIDE_FORMATS) * 512 // (1024 * 1024)
+    req_mib = size_bytes // (1024 * 1024)
+    raise ValidationError(
+        f"XT-IDE controller auto-geometry cannot fit a {req_mib} MiB disk -- "
+        f"MartyPC's XT-IDE format whitelist tops out near {max_mib} MiB. "
+        "Pick a smaller size or switch to --disk-controller ide (AT-class, "
+        "which MartyPC does not currently emulate)."
+    )
+
+
+def _resolved_xt_class_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
+    """Return locked CHS geometry for either XT-class controller (MFM or XTIDE)."""
+    if request.effective_disk_controller is DiskController.XTIDE:
+        return _xtide_geometry(request)
+    return _xt_class_geometry(request)
+
+
+def _is_xt_class_controller(controller: DiskController) -> bool:
+    """True for both MFM and XTIDE -- both target XT-class 8088-era machines."""
+    return controller in (DiskController.MFM, DiskController.XTIDE)
+
+
 def _ide_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
     """Return (cylinders, heads, spt, size_bytes) for IDE/AT-class VHDs."""
     spec = request.bios_drive_spec
@@ -613,7 +717,7 @@ def _needs_xt_class_mbr_rewrite(request: CreateRequest) -> bool:
     fine when the BIOS exposes LBA-aware INT 13h extensions.
     """
     return (
-        request.effective_disk_controller is DiskController.MFM
+        _is_xt_class_controller(request.effective_disk_controller)
         and _uses_msdos33_filesystem_layout(request)
     )
 
@@ -628,7 +732,7 @@ def _partition_offset_bytes_for(request: CreateRequest) -> int:
     produces).
     """
     if _needs_xt_class_mbr_rewrite(request):
-        _, _, spt, _ = _xt_class_geometry(request)
+        _, _, spt, _ = _resolved_xt_class_geometry(request)
         return spt * 512
     return 63 * 512
 
@@ -836,7 +940,7 @@ class DiskManager:
         # subsequent FORMAT C: /S at LBA = spt, which is exactly the
         # layout real DOS 3.3 FDISK produces on MFM controllers.
         if _needs_xt_class_mbr_rewrite(request):
-            cylinders, heads, sectors_per_track, _ = _xt_class_geometry(request)
+            cylinders, heads, sectors_per_track, _ = _resolved_xt_class_geometry(request)
             fs_type = 0x01 if request.disk_format is DiskFormat.FAT12 else 0x04
             self._rewrite_mbr_for_xt_class(
                 vhd_path=target_path,
@@ -1357,6 +1461,8 @@ class DiskManager:
 
         if request.effective_disk_controller is DiskController.MFM:
             self._validate_mfm_request(request)
+        elif request.effective_disk_controller is DiskController.XTIDE:
+            self._validate_xtide_request(request)
 
         # Compaq DOS 2.11 hard-disk boot requires an XT-class MFM controller;
         # IDE/AT-class emulators lack the Compaq-era BIOS behavior it expects.
@@ -1375,9 +1481,10 @@ class DiskManager:
             )
         validate_size_for_format(request.size_bytes, request.disk_format)
         if request.disk_format is DiskFormat.FAT12:
-            if request.effective_disk_controller is not DiskController.MFM:
+            if not _is_xt_class_controller(request.effective_disk_controller):
                 raise ValidationError(
-                    "FAT12 on VHD is only supported with an MFM controller and 10 MiB-class CHS geometry."
+                    "FAT12 on VHD is only supported with an MFM or XT-IDE controller "
+                    "and 10 MiB-class CHS geometry."
                 )
             if not _uses_msdos33_filesystem_layout(request):
                 raise ValidationError(
@@ -1648,6 +1755,40 @@ class DiskManager:
                 "MFM disk-controller requests are limited to 504 MiB or smaller CHS geometries."
             )
 
+    def _validate_xtide_request(self, request: CreateRequest) -> None:
+        """Validate an XT-IDE (MartyPC) request and lock geometry to the whitelist.
+
+        MartyPC's XT-IDE BIOS only accepts a VHD whose footer CHS matches
+        an entry in ``_MARTYPC_XTIDE_FORMATS`` exactly.  Auto-picker
+        picks the smallest fit; explicit ``bios_drive_type`` /
+        ``custom_chs`` must land on a whitelisted geometry.
+        """
+        if request.media_type is not MediaType.VHD:
+            raise ValidationError("XT-IDE disk-controller requests require VHD media.")
+        if request.boot_mode in (BootMode.MSDOS71, BootMode.PCDOS71):
+            raise ValidationError(
+                "XT-IDE disk-controller requests do not support msdos71 or pcdos71 boot modes; "
+                "those DOS versions ship with FDISK that only recognizes AT-class "
+                "geometries -- use --disk-controller ide for them."
+            )
+        if request.disk_format is DiskFormat.FAT32:
+            raise ValidationError(
+                "XT-IDE disk-controller requests do not support FAT32 (XT-class DOS "
+                "does not understand FAT32); use FAT12/FAT16 or --disk-controller ide."
+            )
+        cylinders, heads, spt, size_bytes = _xtide_geometry(request)
+        if (cylinders, heads, spt) not in _MARTYPC_XTIDE_FORMAT_SET:
+            raise ValidationError(
+                f"CHS {cylinders}x{heads}x{spt} is not in MartyPC's XT-IDE format "
+                "whitelist.  Use --bios-drive-type to pick a compatible preset, "
+                "or omit --custom-chs to let dosforge auto-pick a valid geometry. "
+                "See docs/martypc-compatibility.md for the full whitelist."
+            )
+        # Reject explicit bios_drive_type / custom_chs that resolve to a
+        # NON-whitelisted geometry even when the auto-picker would have
+        # rejected it (defense in depth -- explicit user input must match).
+        request.size_bytes = size_bytes
+
     def _validate_bios_drive_type_request(self, request: CreateRequest) -> None:
         """Validate a Phoenix/AMI BIOS drive-type preset and lock the size."""
         if request.media_type is not MediaType.VHD:
@@ -1704,7 +1845,7 @@ class DiskManager:
         if request.media_type is not MediaType.VHD:
             return
         if (
-            request.effective_disk_controller is DiskController.MFM
+            _is_xt_class_controller(request.effective_disk_controller)
             or request.bios_drive_type is not None
             or request.custom_chs is not None
         ):
@@ -1772,9 +1913,13 @@ class DiskManager:
 
     @staticmethod
     def _describe_machine_drive(request: CreateRequest) -> str:
-        if request.effective_disk_controller is DiskController.MFM:
+        controller = request.effective_disk_controller
+        if controller is DiskController.MFM:
             cylinders, heads, sectors_per_track, _ = _xt_class_geometry(request)
             return f"MFM {cylinders}x{heads}x{sectors_per_track}"
+        if controller is DiskController.XTIDE:
+            cylinders, heads, sectors_per_track, _ = _xtide_geometry(request)
+            return f"XT-IDE {cylinders}x{heads}x{sectors_per_track}"
         bios_spec = request.bios_drive_spec
         if bios_spec is not None:
             return f"BIOS preset {bios_spec.slug} ({bios_spec.description})"
@@ -1788,8 +1933,8 @@ class DiskManager:
         request: CreateRequest,
     ) -> tuple[int, int, int] | None:
         """Return locked (cyl, heads, spt) from controller/BIOS/custom CHS."""
-        if request.effective_disk_controller is DiskController.MFM:
-            cylinders, heads, sectors_per_track, _ = _xt_class_geometry(request)
+        if _is_xt_class_controller(request.effective_disk_controller):
+            cylinders, heads, sectors_per_track, _ = _resolved_xt_class_geometry(request)
             return (cylinders, heads, sectors_per_track)
         spec = request.bios_drive_spec
         if spec is not None:
@@ -1947,8 +2092,8 @@ class DiskManager:
           respect the requested DOS / FAT format (DOS-3.3 partition uint16
           cap, FAT16 2 GiB, FAT32 2 TiB).
         """
-        if request.effective_disk_controller is DiskController.MFM:
-            _, _, _, size = _xt_class_geometry(request)
+        if _is_xt_class_controller(request.effective_disk_controller):
+            _, _, _, size = _resolved_xt_class_geometry(request)
             return size
         if request.bios_drive_type is not None:
             return request.bios_drive_spec.size_bytes
@@ -2281,7 +2426,7 @@ class DiskManager:
         # at LBA = spt, which is what real DOS 3.3 FDISK produces on MFM
         # controllers.
         if _needs_xt_class_mbr_rewrite(request):
-            cylinders, heads, sectors_per_track, _ = _xt_class_geometry(request)
+            cylinders, heads, sectors_per_track, _ = _resolved_xt_class_geometry(request)
             fs_type = 0x01 if request.disk_format is DiskFormat.FAT12 else 0x04
             self._rewrite_mbr_for_xt_class(
                 vhd_path=target_path,
