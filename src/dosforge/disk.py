@@ -512,8 +512,40 @@ def _xt_class_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
             sectors_per_track,
             cylinders * heads * sectors_per_track * 512,
         )
-    spec = lookup_bios_drive_type(BIOSVendor.PHOENIX, 1)
-    return (spec.cylinders, spec.heads, spec.sectors_per_track, spec.size_bytes)
+    # No BIOS preset and no explicit custom CHS: derive an MFM-friendly
+    # geometry from the user's requested size_bytes (rounded UP to the
+    # nearest cylinder boundary).  Picks the smallest head count that
+    # keeps cylinders <= 1024 (the XT-class BIOS limit) so the result
+    # boots on real MFM hardware and emulators like MartyPC.
+    #
+    # Previously this fell back to Phoenix Type 1 (10 MiB), which
+    # silently clobbered the user's size and triggered confusing
+    # "FAT16 images must be at least 16 MiB" errors for 32M+ requests.
+    size_bytes = request.size_bytes
+    if size_bytes <= 0:
+        spec = lookup_bios_drive_type(BIOSVendor.PHOENIX, 1)
+        return (spec.cylinders, spec.heads, spec.sectors_per_track, spec.size_bytes)
+    spt = 17  # Universal MFM/RLL value (matches every Phoenix preset).
+    for heads in (4, 6, 8, 15):
+        cyl_bytes = heads * spt * 512
+        cylinders = (size_bytes + cyl_bytes - 1) // cyl_bytes
+        if cylinders <= 1024:
+            actual_size = cylinders * heads * spt * 512
+            return (cylinders, heads, spt, actual_size)
+    # No (cyl<=1024, heads<=15, spt=17) shape fits the request.  The
+    # practical MFM ceiling is 1024 x 15 x 17 x 512 ~= 127 MiB, well
+    # under the 504-MiB cap in _validate_mfm_request.  Refuse loudly
+    # so the user knows MFM can't accommodate their size, rather than
+    # silently shrinking to ~127 MiB and producing a wrong-size VHD.
+    max_mib = (1024 * 15 * 17 * 512) // (1024 * 1024)
+    req_mib = size_bytes // (1024 * 1024)
+    raise ValidationError(
+        f"MFM controller auto-geometry cannot fit a {req_mib} MiB disk -- "
+        f"the BIOS-compatible MFM ceiling is ~{max_mib} MiB (1024 cyl x 15 "
+        f"head x 17 spt). Pick a smaller size, switch to "
+        f"--disk-controller ide, or pass --bios-drive-type / --custom-chs "
+        f"with a specific geometry."
+    )
 
 
 def _ide_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
