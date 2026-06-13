@@ -488,7 +488,9 @@ def apply_ibm_default_size(state: FormState, *, force: bool) -> FormState:
     return state
 
 
-def default_boot_assets_for(boot_mode: BootMode) -> str:
+def default_boot_assets_for(
+    boot_mode: BootMode, ibm_dos_version: str | None = None
+) -> str:
     """Return the canonical ``dosassets/<subdir>`` name for a boot mode.
 
     Used to pre-populate the Boot assets directory Input in both TUI
@@ -499,9 +501,23 @@ def default_boot_assets_for(boot_mode: BootMode) -> str:
 
     Empty string for ``BootMode.NONE`` since data-disk-only builds
     have no boot assets.
+
+    For ``BootMode.IBM8088`` the assets live in one of the real
+    per-DOS directories (``dosassets/msdos33/`` or
+    ``dosassets/msdos5/``) -- there is no standalone
+    ``dosassets/ibm8088/`` folder.  Pass ``ibm_dos_version`` to pick
+    the correct one; omitting it falls back to the DOS 3.3 default
+    (``IBMDOSVersion.DOS33``).
     """
     if boot_mode is BootMode.NONE:
         return ""
+    if boot_mode is BootMode.IBM8088:
+        version = ibm_dos_version or IBMDOSVersion.DOS33.value
+        try:
+            ver = IBMDOSVersion(version)
+        except ValueError:
+            ver = IBMDOSVersion.DOS33
+        return "msdos33" if ver is IBMDOSVersion.DOS33 else "msdos5"
     return boot_mode.value
 
 
@@ -510,7 +526,12 @@ def coerce_on_boot_change(state: FormState) -> FormState:
     # Snap the Boot assets path FIRST so every early-return branch
     # below inherits the right default (dataclass.replace preserves
     # boot_assets when later replace() calls only touch other fields).
-    state = replace(state, boot_assets=default_boot_assets_for(boot_mode))
+    # For IBM 8088 mode the default tracks the selected DOS version
+    # (DOS33 -> msdos33, DOS50 -> msdos5).
+    state = replace(
+        state,
+        boot_assets=default_boot_assets_for(boot_mode, state.ibm_dos_version),
+    )
     if boot_mode is BootMode.COMPAQ2:
         return replace(
             state,
@@ -643,6 +664,17 @@ def build_time_hint_for_boot_mode(boot_mode: BootMode) -> str | None:
 
 
 def coerce_on_ibm_version_change(state: FormState) -> FormState:
+    # Re-snap the Boot assets path so picking DOS 3.3 -> "msdos33"
+    # and DOS 5.0 -> "msdos5" when the user is in IBM 8088 mode.
+    # Skips boot_assets the user has manually customized to a
+    # non-default value (anything other than the previously-defaulted
+    # "msdos33" / "msdos5") so we don't trample custom paths.
+    boot_mode = BootMode(state.boot_mode)
+    if boot_mode is BootMode.IBM8088 and state.boot_assets in ("", "msdos33", "msdos5", "ibm8088"):
+        state = replace(
+            state,
+            boot_assets=default_boot_assets_for(boot_mode, state.ibm_dos_version),
+        )
     if _is_vhd(state):
         # Re-snap to the new ibm_dos_version's cap (DOS33=32 MiB,
         # DOS50=504 MiB) -- _snap_size_for_boot_mode reads

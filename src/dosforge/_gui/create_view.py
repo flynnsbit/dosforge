@@ -121,14 +121,8 @@ class CreateView(ttk.Frame):
         bb.columnconfigure(0, weight=1)
         self._add_field(bb, fl.FIELD_BOOT_MODE, "Boot OS",
                         self.combo_boot.build, row=0)
-        self._add_field(
-            bb, fl.FIELD_BOOT_ASSETS, "Boot assets directory",
-            lambda p: ttk.Entry(p, textvariable=self.var_boot_assets),
-            row=1,
-            browse_command=self._browse_boot_assets,
-        )
         self._add_field(bb, fl.FIELD_FREEDOS_SOURCE, "FreeDOS source",
-                        self.combo_freedos.build, row=2)
+                        self.combo_freedos.build, row=1)
         self._add_field(
             bb, fl.FIELD_FETCH_FREEDOS, "",
             lambda p: ttk.Button(
@@ -137,7 +131,7 @@ class CreateView(ttk.Frame):
                 command=self._fetch_freedos,
                 takefocus=False,
             ),
-            row=3,
+            row=2,
         )
         self._add_field(
             bb, fl.FIELD_FETCH_PCDOS71, "",
@@ -147,12 +141,23 @@ class CreateView(ttk.Frame):
                 command=self._fetch_pcdos71,
                 takefocus=False,
             ),
-            row=4,
+            row=3,
         )
         self._add_field(bb, fl.FIELD_DOS_PROFILE, "DOS install profile",
-                        self.combo_profile.build, row=5)
+                        self.combo_profile.build, row=4)
         self._add_field(bb, fl.FIELD_IBM_DOS_VERSION, "IBM DOS version",
-                        self.combo_ibm.build, row=6)
+                        self.combo_ibm.build, row=5)
+        # Boot assets directory is the LAST field in this card so the
+        # user picks an OS (and, for IBM 8088 mode, the DOS version)
+        # FIRST -- which lets coerce_on_boot_change /
+        # coerce_on_ibm_version_change pre-populate this Entry with
+        # the right dosassets/<subdir> default.
+        self._add_field(
+            bb, fl.FIELD_BOOT_ASSETS, "Boot assets directory",
+            lambda p: ttk.Entry(p, textvariable=self.var_boot_assets),
+            row=6,
+            browse_command=self._browse_boot_assets,
+        )
 
         # ── Card: Output ───────────────────────────────────────────────
         out_card = Card(body, theme, title="Output")

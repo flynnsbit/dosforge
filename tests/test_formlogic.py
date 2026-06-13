@@ -494,7 +494,7 @@ def test_coerce_uncheck_system_format_clears_boot():
         (BootMode.COMPAQ3, "compaq3"),
         (BootMode.DRDOS6, "drdos6"),
         (BootMode.DRDOS7, "drdos7"),
-        (BootMode.IBM8088, "ibm8088"),
+        (BootMode.IBM8088, "msdos33"),
         (BootMode.MSDOS71, "msdos71"),
     ],
 )
