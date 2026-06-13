@@ -248,3 +248,54 @@ def test_xtide_accepts_custom_chs_in_whitelist(manager: DiskManager) -> None:
     r.custom_chs = (1024, 16, 17)  # is in whitelist
     manager._validate_xtide_request(r)
     assert r.size_bytes == 1024 * 16 * 17 * 512
+
+
+# ---------------------------------------------------------------------------
+# Form coercion: picking a MartyPC-Xebec preset forces FAT12 default
+# ---------------------------------------------------------------------------
+
+from dataclasses import replace as _dc_replace
+
+from dosforge import formlogic as fl
+
+
+@pytest.mark.parametrize("slug", [
+    "martypc-xebec:1",
+    "martypc-xebec:2",
+    "martypc-xebec:13",
+    "martypc-xebec:16",
+])
+def test_coerce_on_bios_drive_change_forces_fat12_for_xebec(slug: str) -> None:
+    """Picking any martypc-xebec preset should default disk_format to FAT12.
+
+    Type 1 is 10 MiB (below FAT16's 16 MiB minimum) -- defaulting to
+    FAT12 prevents a confusing 'FAT16 needs >=16 MiB' error.  The
+    20 MiB Types 2/13/16 also default to FAT12 since they pair with
+    FAT12-only DOS 2.x/3.x; user can still flip to FAT16 manually.
+    """
+    state = fl.FormState(
+        bios_drive_type=slug,
+        disk_format=DiskFormat.FAT16.value,
+    )
+    snapped = fl.coerce_on_bios_drive_change(state)
+    assert snapped.disk_format == DiskFormat.FAT12.value
+
+
+def test_coerce_on_bios_drive_change_leaves_phoenix_untouched() -> None:
+    """Phoenix / AMI presets keep whatever format the user already picked."""
+    state = fl.FormState(
+        bios_drive_type="phoenix:1",
+        disk_format=DiskFormat.FAT16.value,
+    )
+    snapped = fl.coerce_on_bios_drive_change(state)
+    assert snapped.disk_format == DiskFormat.FAT16.value
+
+
+def test_coerce_on_bios_drive_change_leaves_unset_untouched() -> None:
+    """Empty bios_drive_type (Custom -- use size field) is a no-op."""
+    state = fl.FormState(
+        bios_drive_type="",
+        disk_format=DiskFormat.FAT16.value,
+    )
+    snapped = fl.coerce_on_bios_drive_change(state)
+    assert snapped.disk_format == DiskFormat.FAT16.value

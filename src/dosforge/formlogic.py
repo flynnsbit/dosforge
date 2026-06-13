@@ -237,6 +237,25 @@ def infer_geometry_source(state: FormState) -> GeometrySource:
     return GeometrySource.SIZE
 
 
+def coerce_on_bios_drive_change(state: FormState) -> FormState:
+    """When the user picks a BIOS drive-type preset, snap dependent fields.
+
+    Currently:
+    - MartyPC-Xebec presets (``martypc-xebec:1/2/13/16``) are tiny
+      (10-20 MiB) and historically pair with FAT12-only DOS
+      generations (Compaq DOS 2.x, MS-DOS 3.x).  FAT16 would also
+      validate at 20 MiB, but the smallest preset (Type 1, 10 MiB)
+      falls below FAT16's 16 MiB minimum and triggers a confusing
+      "FAT16 needs >=16 MiB" error.  Defaulting to FAT12 makes the
+      whole MartyPC-Xebec family pick-and-build with no further
+      surprises -- the user can still flip back to FAT16 for the
+      20 MiB Types 2/13/16 if they want.
+    """
+    if state.bios_drive_type.startswith("martypc-xebec:"):
+        return replace(state, disk_format=DiskFormat.FAT12.value)
+    return state
+
+
 def coerce_on_geometry_source_change(state: FormState) -> FormState:
     """Clear the inactive geometry inputs when the user picks a source.
 

@@ -100,7 +100,7 @@ class CreateView(ttk.Frame):
         self.combo_media = _Combo(opt.MEDIA_TYPE_OPTIONS, self._on_media_change)
         self.combo_controller = _Combo(opt.DISK_CONTROLLER_OPTIONS, self._on_change)
         self.combo_geometry_source = _Combo(opt.GEOMETRY_SOURCE_OPTIONS, self._on_geometry_source_change)
-        self.combo_bios = _Combo(opt.BIOS_DRIVE_TYPE_OPTIONS, self._on_change)
+        self.combo_bios = _Combo(opt.BIOS_DRIVE_TYPE_OPTIONS, self._on_bios_drive_change)
         self.combo_format = _Combo(opt.DISK_FORMAT_OPTIONS, self._on_format_change)
         self.combo_floppy = _Combo(opt.FLOPPY_OPTIONS, self._on_change)
         self.combo_boot = _Combo(opt.BOOT_MODE_OPTIONS, self._on_boot_change)
@@ -379,6 +379,9 @@ class CreateView(ttk.Frame):
 
     def _on_img_sysfmt_change(self) -> None:
         self._coerce(fl.coerce_on_img_system_format_change)
+
+    def _on_bios_drive_change(self) -> None:
+        self._coerce(fl.coerce_on_bios_drive_change)
 
     # ── visibility / summary ───────────────────────────────────────────
     def _sync(self) -> None:

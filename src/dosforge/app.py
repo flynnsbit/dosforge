@@ -1206,6 +1206,7 @@ class DosForgeApp(App[None]):
             self._sync_create_form_visibility()
             return
         if event.select.id == "bios-drive-type":
+            self._apply_bios_drive_snap()
             self._sync_create_form_visibility()
             return
         if event.select.id == "geometry-source":
@@ -2770,6 +2771,19 @@ class DosForgeApp(App[None]):
             self.query_one("#bios-drive-type", Select).value = snapped.bios_drive_type
         if snapped.custom_chs != state.custom_chs:
             self.query_one("#custom-chs", Input).value = snapped.custom_chs
+        self._clear_status()
+
+    def _apply_bios_drive_snap(self) -> None:
+        """Snap dependent fields when the user picks a BIOS preset.
+
+        Mirrors :func:`formlogic.coerce_on_bios_drive_change` -- the
+        MartyPC-Xebec family forces FAT12 because Type 1 (10 MiB) is
+        below the FAT16 minimum.
+        """
+        state = self._current_form_state()
+        snapped = fl.coerce_on_bios_drive_change(state)
+        if snapped.disk_format != state.disk_format:
+            self.query_one("#create-format", Select).value = snapped.disk_format
         self._clear_status()
 
     def _apply_format_snap(self) -> None:
