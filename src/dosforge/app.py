@@ -486,10 +486,16 @@ class DosForgeApp(App[None]):
       margin-bottom: 0;
       margin-left: 0;
     }
+    /* Compact `?` help buttons. Textual's Button widget has an
+       implicit `border: tall` (2 cells) and we add `padding: 0 2`
+       (4 cells), so a 1-char label needs 1 + 6 = 7 cells minimum.
+       Earlier we forced width 5, which clipped the border/hover
+       background and left a stair-step artifact protruding into
+       the row gap when the button was hovered. */
     Button.grow-help-btn {
-      width: 5;
-      min-width: 5;
-      max-width: 5;
+      width: 7;
+      min-width: 7;
+      max-width: 7;
     }
 
     /* ── Button palette: single blue primary, neutral secondary,
