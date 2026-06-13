@@ -130,9 +130,20 @@ def _normalize_dos_path(path: str) -> str:
     Accepts forward and backslash separators. A bare ``/`` or empty
     path becomes ``::/`` (root). Always returns a string starting with
     ``::`` so callers can pass it straight to mtools.
+
+    Also tolerates DOS drive-letter prefixes (``C:\\CONFIG.SYS`` or
+    ``C:CONFIG.SYS``). mtools' own drive bookkeeping is configured
+    via the ``-i <image>`` flag, so any caller-supplied drive letter
+    must be stripped before the path reaches mcopy — otherwise mcopy
+    sees ``::/C:/CONFIG.SYS`` and reports the file not found.
     """
 
     cleaned = (path or "/").replace("\\", "/")
+    # Strip a leading DOS drive letter ("C:", "c:", etc.). mtools
+    # treats the image bound by ``-i`` as the only drive, so any
+    # drive prefix the user types is redundant and breaks the path.
+    if len(cleaned) >= 2 and cleaned[0].isalpha() and cleaned[1] == ":":
+        cleaned = cleaned[2:] or "/"
     # Strip any leading ':' the caller may have included.
     while cleaned.startswith(":"):
         cleaned = cleaned[1:]

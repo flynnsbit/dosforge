@@ -52,7 +52,7 @@ class ToolsView(ttk.Frame):
         ).grid(row=0, column=1, padx=(8, 0))
         ttk.Label(
             body,
-            text="Enter a DOS path to extract, e.g. /CONFIG.SYS",
+            text="Enter a DOS path to extract, e.g. /CONFIG.SYS or C:\\CONFIG.SYS",
             style="Muted.TLabel",
         ).grid(row=3, column=0, sticky="w", pady=(2, 12))
 

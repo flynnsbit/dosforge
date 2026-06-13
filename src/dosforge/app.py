@@ -904,7 +904,7 @@ class DosForgeApp(App[None]):
                     )
                     with Horizontal(classes="path-row", id="extract-row"):
                         yield Input(
-                            placeholder="DOS path inside image (e.g. /CONFIG.SYS)",
+                            placeholder="DOS path inside image (e.g. /CONFIG.SYS or C:\\CONFIG.SYS)",
                             id="extract-input",
                         )
                         yield Button("Extract", id="extract-btn", classes="btn-secondary")
