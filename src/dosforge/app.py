@@ -472,6 +472,26 @@ class DosForgeApp(App[None]):
       padding: 0;
     }
 
+    /* Horizontal row of action buttons (e.g. Grow tab footer). Unlike
+       .path-row this does NOT force a fixed 5-char button width, so
+       multi-word labels like "Grow VHD" don't wrap. Compact `?`
+       help buttons opt into a tighter width via .grow-help-btn. */
+    .actions-row {
+      height: 3;
+      margin: 0 0 1 0;
+    }
+    .actions-row Button {
+      margin-top: 0;
+      margin-right: 1;
+      margin-bottom: 0;
+      margin-left: 0;
+    }
+    Button.grow-help-btn {
+      width: 5;
+      min-width: 5;
+      max-width: 5;
+    }
+
     /* ── Button palette: single blue primary, neutral secondary,
        red only for destructive. Drops the cyan/orange/green mix.
        NB: hover/focus backgrounds use SOLID colors only. Alpha
@@ -941,7 +961,7 @@ class DosForgeApp(App[None]):
                         value=True,
                         id="grow-keep-backup-check",
                     )
-                    with Horizontal(classes="path-row", id="grow-actions-row"):
+                    with Horizontal(classes="actions-row", id="grow-actions-row"):
                         yield Button(
                             "Grow VHD",
                             id="grow-btn",
@@ -950,7 +970,7 @@ class DosForgeApp(App[None]):
                         yield Button(
                             "?",
                             id="grow-help-btn",
-                            classes="btn-ghost",
+                            classes="btn-ghost grow-help-btn",
                         )
                     yield Static("", id="grow-output")
 
