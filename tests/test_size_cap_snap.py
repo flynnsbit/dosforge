@@ -146,6 +146,67 @@ class TestEffectiveSizeCapBytes:
         )
         assert _effective_size_cap_bytes(req) == 504 * 1024 * 1024
 
+    def test_ibm8088_pcdos3_caps_at_16_mib_for_fat12(self) -> None:
+        """v0.9.57: IBM 8088 + PCDOS3 + FAT12 should cap at 16 MiB
+        (PC-DOS 3.0's FAT12 partition addressing limit)."""
+        req = _make_request(
+            boot_mode=BootMode.IBM8088,
+            disk_format=DiskFormat.FAT12,
+            size_bytes=16 * 1024 * 1024,
+            ibm_dos_version=IBMDOSVersion.PCDOS3,
+        )
+        assert _effective_size_cap_bytes(req) == 16 * 1024 * 1024
+
+    def test_ibm8088_pcdos3_caps_at_32_mib_for_fat16(self) -> None:
+        """v0.9.57: IBM 8088 + PCDOS3 + FAT16 should cap at 32 MiB.
+        PC-DOS 3.0 introduced FAT16 in Aug 1984; FORMAT.COM picks
+        FAT16 automatically for partitions in the 16-32 MiB range."""
+        req = _make_request(
+            boot_mode=BootMode.IBM8088,
+            disk_format=DiskFormat.FAT16,
+            size_bytes=32 * 1024 * 1024,
+            ibm_dos_version=IBMDOSVersion.PCDOS3,
+        )
+        assert _effective_size_cap_bytes(req) == 32 * 1024 * 1024
+
+    def test_ibmdosversion_pcdos3_max_size_bytes_for_format(self) -> None:
+        """v0.9.57: IBMDOSVersion.PCDOS3.max_size_bytes_for_format is
+        format-aware (FAT12=16 MiB, FAT16=32 MiB)."""
+        assert (
+            IBMDOSVersion.PCDOS3.max_size_bytes_for_format(DiskFormat.FAT12)
+            == 16 * 1024 * 1024
+        )
+        assert (
+            IBMDOSVersion.PCDOS3.max_size_bytes_for_format(DiskFormat.FAT16)
+            == 32 * 1024 * 1024
+        )
+        # None defaults to the conservative FAT12 cap for back-compat
+        assert (
+            IBMDOSVersion.PCDOS3.max_size_bytes_for_format(None) == 16 * 1024 * 1024
+        )
+        # max_size_bytes property still returns the FAT12 cap
+        assert IBMDOSVersion.PCDOS3.max_size_bytes == 16 * 1024 * 1024
+
+    def test_ibmdosversion_other_versions_ignore_format(self) -> None:
+        """Format-aware cap only matters for PCDOS3; others return a
+        flat per-version cap regardless of format."""
+        assert (
+            IBMDOSVersion.MSDOS33.max_size_bytes_for_format(DiskFormat.FAT16)
+            == 32 * 1024 * 1024
+        )
+        assert (
+            IBMDOSVersion.MSDOS33.max_size_bytes_for_format(DiskFormat.FAT12)
+            == 32 * 1024 * 1024
+        )
+        assert (
+            IBMDOSVersion.MSDOS5.max_size_bytes_for_format(DiskFormat.FAT16)
+            == 504 * 1024 * 1024
+        )
+        assert (
+            IBMDOSVersion.PCDOS5.max_size_bytes_for_format(DiskFormat.FAT16)
+            == 504 * 1024 * 1024
+        )
+
     def test_freedos_no_mode_cap_falls_back_to_fat_format_cap(self) -> None:
         # FreeDOS has no per-boot-mode cap; the FAT format cap is the
         # only constraint.  FAT16 = 2 GiB.

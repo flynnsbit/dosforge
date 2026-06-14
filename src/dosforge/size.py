@@ -127,14 +127,19 @@ def validate_size_for_format(size_bytes: int, disk_format: DiskFormat) -> None:
         raise ValidationError("FAT32 images larger than 2 TiB are not supported.")
 
 
-def validate_size_for_ibm_dos(size_bytes: int, dos_version: IBMDOSVersion) -> None:
+def validate_size_for_ibm_dos(
+    size_bytes: int,
+    dos_version: IBMDOSVersion,
+    disk_format: DiskFormat | None = None,
+) -> None:
     """4-way IBM 8088 profile size validation.
 
-    PCDOS3 -> 16 MiB (FAT12-only, 1984 DOS 3.0 partition cap).
+    PCDOS3 -> FAT12 <=16 MiB, FAT16 <=32 MiB (1984 PC-DOS 3.0; FAT16
+        was introduced here and the partition table cap is 32 MiB).
     MSDOS33 -> 32 MiB (DOS 3.3 FAT16 uint16 sector cap).
     MSDOS5 / PCDOS5 -> 504 MiB (FAT16 max under the IBM 8088 profile).
     """
-    max_size = dos_version.max_size_bytes
+    max_size = dos_version.max_size_bytes_for_format(disk_format)
     if size_bytes <= max_size:
         return
     label_map = {
@@ -145,6 +150,11 @@ def validate_size_for_ibm_dos(size_bytes: int, dos_version: IBMDOSVersion) -> No
     }
     label = label_map.get(dos_version, "MS-DOS 3.3")
     limit_mb = max_size // (1024 * 1024)
+    if dos_version is IBMDOSVersion.PCDOS3 and disk_format is DiskFormat.FAT12:
+        raise ValidationError(
+            f"{label} IBM 8088/V20 profile images must not exceed {limit_mb} MiB "
+            "for FAT12.  Use --format fat16 for partitions up to 32 MiB."
+        )
     raise ValidationError(
         f"{label} IBM 8088/V20 profile images must not exceed {limit_mb} MiB."
     )

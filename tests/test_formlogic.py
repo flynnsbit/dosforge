@@ -491,10 +491,11 @@ def test_coerce_ibm_version_to_dos50_uses_32m_default():
 
 
 def test_coerce_ibm_version_to_pcdos3_clamps_to_fat12_and_15m():
-    """v0.9.47: PCDOS3 is FAT12-only with a 16 MiB partition cap.
-    Flipping any other IBM DOS version to PCDOS3 must force FAT12
-    (its rule rejects FAT16) AND drop the default size below the
-    16 MiB cap (15M for MFM auto-derive)."""
+    """v0.9.47: PCDOS3 defaults to FAT12 with a 16 MiB partition cap
+    when first selected (1984-authentic FORMAT C: /S behavior for
+    small drives).  Users can then flip the format dropdown to FAT16
+    to unlock the 32 MiB FAT16 partition cap PC-DOS 3.0 introduced
+    in Aug 1984."""
     base = f.coerce_on_boot_change(_state(boot_mode=BootMode.IBM8088.value))
     assert base.size_text == "31M"
     flipped = f.coerce_on_ibm_version_change(
@@ -502,6 +503,23 @@ def test_coerce_ibm_version_to_pcdos3_clamps_to_fat12_and_15m():
     )
     assert flipped.size_text == "15M"
     assert flipped.disk_format == DiskFormat.FAT12.value
+
+
+def test_coerce_ibm8088_pcdos3_format_flip_to_fat16_bumps_to_32m():
+    """v0.9.57: After landing on IBM 8088 + PCDOS3 (FAT12 + 15M),
+    flipping the format dropdown to FAT16 should re-default the size
+    to 32M (the FAT16 partition cap PC-DOS 3.0 introduced in Aug 1984)."""
+    base = f.coerce_on_boot_change(_state(boot_mode=BootMode.IBM8088.value))
+    state = f.coerce_on_ibm_version_change(
+        dataclasses.replace(base, ibm_dos_version=IBMDOSVersion.PCDOS3.value)
+    )
+    assert state.disk_format == DiskFormat.FAT12.value
+    assert state.size_text == "15M"
+    flipped = f.coerce_on_format_change(
+        dataclasses.replace(state, disk_format=DiskFormat.FAT16.value)
+    )
+    assert flipped.disk_format == DiskFormat.FAT16.value
+    assert flipped.size_text == "32M"
 
 
 def test_coerce_ibm_version_to_pcdos5_uses_32m_and_ide_class():

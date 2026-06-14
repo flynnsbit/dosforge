@@ -612,7 +612,7 @@ def _effective_size_cap_bytes(request: "CreateRequest") -> int | None:
 
     mode_cap: int | None = None
     if request.boot_mode is BootMode.IBM8088:
-        mode_cap = request.ibm_dos_version.max_size_bytes
+        mode_cap = request.ibm_dos_version.max_size_bytes_for_format(fmt)
     elif request.boot_mode is BootMode.MSDOS33:
         mode_cap = IBM_DOS33_MAX_BYTES
     elif request.boot_mode is BootMode.MSDOS331:
@@ -1621,7 +1621,11 @@ class DiskManager:
                 raise ValidationError(
                     "IBM PC 8088/V20 mode supports FAT16 (and FAT12 for 10 MiB MFM presets)."
                 )
-            validate_size_for_ibm_dos(request.size_bytes, request.ibm_dos_version)
+            validate_size_for_ibm_dos(
+                request.size_bytes,
+                request.ibm_dos_version,
+                request.disk_format,
+            )
         # MS-DOS 3.30 (msdos33) predates FAT16B and only reads
         # BPB.total_sectors_16 (uint16, max 65535 sectors ~= 31.99 MiB). The
         # post-CHS-alignment size effectively caps at IBM_DOS33_MAX_BYTES, but
@@ -1936,7 +1940,9 @@ class DiskManager:
         # Re-apply boot-mode size caps now that the BIOS preset has
         # potentially raised the size above the requested value.
         if request.boot_mode is BootMode.IBM8088:
-            ibm_max = request.ibm_dos_version.max_size_bytes
+            ibm_max = request.ibm_dos_version.max_size_bytes_for_format(
+                request.disk_format
+            )
             if spec.size_bytes > ibm_max:
                 version_label = {
                     IBMDOSVersion.MSDOS33: "MS-DOS 3.3",
@@ -2263,7 +2269,12 @@ class DiskManager:
             min_bytes = FAT16_MIN_BYTES
             max_bytes = FAT16_MAX_BYTES
             if request.boot_mode is BootMode.IBM8088:
-                max_bytes = min(max_bytes, request.ibm_dos_version.max_size_bytes)
+                max_bytes = min(
+                    max_bytes,
+                    request.ibm_dos_version.max_size_bytes_for_format(
+                        DiskFormat.FAT16
+                    ),
+                )
             # MS-DOS 3.30 (msdos33) predates FAT16B and only reads
             # BPB.total_sectors_16 (uint16, max 65535 sectors ~= 31.99 MiB).
             # Anything larger trips the same boot failure (BPB.total16

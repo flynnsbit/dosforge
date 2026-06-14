@@ -249,14 +249,32 @@ class IBMDOSVersion(str, Enum):
 
     @property
     def max_size_bytes(self) -> int:
-        """Per-version IBM 8088 profile size cap.
+        """Per-version IBM 8088 profile size cap (FAT12 default for
+        PCDOS3 back-compat).
 
-        * ``PCDOS3``  -> 16 MiB (FAT12-only, DOS 3.0 partition cap)
+        For format-aware caps, prefer :meth:`max_size_bytes_for_format`.
+
+        * ``PCDOS3``  -> 16 MiB (FAT12 default; FAT16 reaches 32 MiB --
+          PC-DOS 3.0 introduced FAT16 in August 1984 with a 32 MiB
+          partition cap)
         * ``MSDOS33`` -> 32 MiB (DOS 3.3 FAT16 uint16 sector cap)
         * ``MSDOS5``  -> 504 MiB (FAT16 max under the IBM 8088 profile)
         * ``PCDOS5``  -> 504 MiB (matches MSDOS5)
         """
+        return self.max_size_bytes_for_format(None)
+
+    def max_size_bytes_for_format(self, disk_format: DiskFormat | None) -> int:
+        """Per-version IBM 8088 cap, format-aware.
+
+        ``PCDOS3`` returns 16 MiB for FAT12 and 32 MiB for FAT16 (the
+        two formats PC-DOS 3.0's FORMAT.COM produces).  Other DOS
+        versions ignore ``disk_format`` and return their flat cap.
+        Passing ``None`` falls back to the conservative FAT12 cap for
+        PCDOS3 (matches legacy behavior).
+        """
         if self is IBMDOSVersion.PCDOS3:
+            if disk_format is DiskFormat.FAT16:
+                return 32 * 1024 * 1024
             return 16 * 1024 * 1024
         if self is IBMDOSVersion.MSDOS33:
             return 32 * 1024 * 1024

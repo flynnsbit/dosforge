@@ -442,13 +442,14 @@ def _state_aware_max_mb(state: FormState, rule: "_BootMediaRule", fmt: DiskForma
     except ValueError:
         return base
     # IBM 8088/V20 mode: per-version size cap.  See
-    # IBMDOSVersion.max_size_bytes for the 4-way matrix.
+    # IBMDOSVersion.max_size_bytes_for_format for the 4-way matrix.
+    # PCDOS3's cap is format-aware: 16 MiB FAT12 / 32 MiB FAT16.
     if boot_mode is BootMode.IBM8088:
         try:
             ver = IBMDOSVersion(state.ibm_dos_version)
         except ValueError:
             ver = IBMDOSVersion.MSDOS33
-        ibm_cap = ver.max_size_bytes // (1024 * 1024)
+        ibm_cap = ver.max_size_bytes_for_format(fmt) // (1024 * 1024)
         if base is None:
             return ibm_cap
         return min(base, ibm_cap)
@@ -523,8 +524,11 @@ def apply_ibm_default_size(state: FormState, *, force: bool) -> FormState:
     # 4-way IBM 8088 default-size matrix:
     # * MSDOS33 + MFM auto-derive: 31M (DOS 3.3 caps at exactly 32 MiB
     #   and MFM cylinder rounding pushes a typed 32M slightly over)
-    # * PCDOS3 + MFM auto-derive: 15M (PC-DOS 3.0 is FAT12-only, 16 MiB
-    #   partition cap; pick safely below cap)
+    # * PCDOS3 + FAT12 + MFM auto-derive: 15M (PC-DOS 3.0 FAT12 caps
+    #   at 16 MiB; pick safely below cap)
+    # * PCDOS3 + FAT12 + IDE / preset: 16M (the version cap)
+    # * PCDOS3 + FAT16: 32M (PC-DOS 3.0 introduced FAT16 in 1984 with
+    #   a 32 MiB partition cap)
     # * MSDOS33/PCDOS3 + IDE or explicit preset: stay at version cap
     # * MSDOS5/PCDOS5: 32M (well under 504 MiB cap, sensible starter
     #   size; user can grow up to ~127 MiB on MFM auto-derive or 504
@@ -533,12 +537,18 @@ def apply_ibm_default_size(state: FormState, *, force: bool) -> FormState:
         ver = IBMDOSVersion(state.ibm_dos_version)
     except ValueError:
         ver = IBMDOSVersion.MSDOS33
+    try:
+        fmt = DiskFormat(state.disk_format)
+    except ValueError:
+        fmt = DiskFormat.FAT16
     auto_mfm = (
         state.disk_controller == DiskController.MFM.value
         and not state.bios_drive_type
         and (state.geometry_source or GeometrySource.SIZE.value) == GeometrySource.SIZE.value
     )
-    if ver is IBMDOSVersion.PCDOS3 and auto_mfm:
+    if ver is IBMDOSVersion.PCDOS3 and fmt is DiskFormat.FAT16:
+        default_size = "32M"
+    elif ver is IBMDOSVersion.PCDOS3 and auto_mfm:
         default_size = "15M"
     elif ver is IBMDOSVersion.PCDOS3:
         default_size = "16M"
@@ -672,6 +682,16 @@ def coerce_on_boot_change(state: FormState) -> FormState:
 
 
 def coerce_on_format_change(state: FormState) -> FormState:
+    # When user changes format on IBM 8088 + PCDOS3 (e.g. FAT12 -> FAT16),
+    # also re-apply the per-format default size so 15M FAT12 jumps to
+    # 32M FAT16 (the new FAT16 cap unlocked in v0.9.57).  Otherwise
+    # just clamp size to current rules.
+    try:
+        boot_mode = BootMode(state.boot_mode)
+    except ValueError:
+        return _snap_size_for_boot_mode(state)
+    if boot_mode is BootMode.IBM8088:
+        state = apply_ibm_default_size(state, force=False)
     return _snap_size_for_boot_mode(state)
 
 
@@ -753,7 +773,9 @@ def coerce_on_ibm_version_change(state: FormState) -> FormState:
     #    -> auto-detect (IDE).
     # 3) Re-snap size_text to the new per-version default (PCDOS3
     #    16 MiB cap is much tighter than MSDOS5/PCDOS5 504 MiB).
-    # 4) Re-snap filesystem: PCDOS3 is FAT12-only.
+    # 4) Re-snap filesystem: PCDOS3 defaults to FAT12 (1984-authentic
+    #    16 MiB) but supports FAT16 up to 32 MiB; preserve a
+    #    user-selected FAT16 when flipping into PCDOS3.
     boot_mode = BootMode(state.boot_mode)
     legacy_defaults = ("", "msdos33", "msdos5", "pcdos3", "pcdos5", "ibm8088")
     if boot_mode is BootMode.IBM8088 and state.boot_assets in legacy_defaults:
@@ -770,9 +792,10 @@ def coerce_on_ibm_version_change(state: FormState) -> FormState:
             state = replace(state, disk_controller=DiskController.MFM.value)
         else:
             state = replace(state, disk_controller="")
-        # PCDOS3 is FAT12-only (it predates FAT16 by ~1 release).
-        # All other IBM 8088 picks default to FAT16 (the natural
-        # FORMAT C: /S target).
+        # PCDOS3: default to FAT12 (1984-authentic FORMAT C: /S for
+        # small drives).  Users can flip the format dropdown to FAT16
+        # afterward to access the 32 MiB partition cap PC-DOS 3.0
+        # introduced in Aug 1984.
         if ver is IBMDOSVersion.PCDOS3:
             state = replace(state, disk_format=DiskFormat.FAT12.value)
         elif DiskFormat(state.disk_format) is DiskFormat.FAT12:

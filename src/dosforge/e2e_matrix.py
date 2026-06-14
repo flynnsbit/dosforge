@@ -32,6 +32,11 @@ _LEGACY_FAT16_ONLY = {
     # IBM PC-DOS 2000 is a re-release of PC-DOS 7.0 (1998) -- FAT12/FAT16
     # only, no FAT32 install path.
     BootMode.PCDOS2000,
+    # PC-DOS 3.00 (1984) + MS-DOS 3.00 Compaq OEM (1985): introduced
+    # FAT16 with a 32 MiB partition cap.  Exercised here at the FAT16
+    # path; FAT12 (<=16 MiB) and floppy paths covered separately.
+    BootMode.PCDOS3,
+    BootMode.COMPAQ3,
 }
 
 # Boot modes whose install media is FAT12-only and therefore have no
@@ -40,8 +45,6 @@ _LEGACY_FAT16_ONLY = {
 # outside the standard matrix).
 _FAT12_ONLY_NO_VHD = {
     BootMode.COMPAQ2,   # 1984 era; 360k DSDD or MartyPC Xebec 10MiB
-    BootMode.COMPAQ3,   # 1985 era; FAT12 ≤16 MiB
-    BootMode.PCDOS3,    # 1984; FAT12 ≤16 MiB
 }
 
 

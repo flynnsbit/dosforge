@@ -144,7 +144,7 @@ _DOS_INSTALL_PROFILE_OPTIONS = [
 ]
 _IBM_DOS_VERSION_OPTIONS = [
     ("MS-DOS 3.3 (max 32MB)", IBMDOSVersion.MSDOS33.value),
-    ("PC-DOS 3.x (max 16MB, FAT12)", IBMDOSVersion.PCDOS3.value),
+    ("PC-DOS 3.x (max 32MB, FAT12/16)", IBMDOSVersion.PCDOS3.value),
     ("MS-DOS 5.0 (max ~504MB)", IBMDOSVersion.MSDOS5.value),
     ("PC-DOS 5.x (max ~504MB)", IBMDOSVersion.PCDOS5.value),
 ]
