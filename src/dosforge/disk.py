@@ -69,6 +69,7 @@ from .paths import (
     resolve_dos_asset_dir,
 )
 from .size import (
+    FAT12_MAX_BYTES,
     FAT16_MAX_BYTES,
     FAT16_MIN_BYTES,
     FAT32_MAX_BYTES,
@@ -578,6 +579,64 @@ def _xt_class_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
     )
 
 
+def _effective_size_cap_bytes(request: "CreateRequest") -> int | None:
+    """Return the tightest applicable size cap for ``request``, in bytes.
+
+    Combines per-boot-mode hard caps (PCDOS3 16 MiB, MSDOS33/MSDOS331
+    32 MiB, COMPAQ331/MSDOS5/PCDOS5 504 MiB, COMPAQ2 16 MiB,
+    IBM8088 + ``ibm_dos_version`` 16/32/504 MiB, ...) with the FAT
+    format hard cap (FAT12 32 MiB, FAT16 2 GiB, FAT32 2 TiB).
+
+    Returns ``None`` when no per-boot-mode cap applies and the
+    request isn't bounded by a FAT format (e.g. NONE boot mode +
+    no FAT format ambiguity).  Callers should treat ``None`` as
+    "no extra constraint beyond what the geometry path already
+    enforces".
+
+    This is the disk-side mirror of formlogic's
+    ``_state_aware_max_mb`` so the form's displayed cap and the
+    backend's actual cap can never disagree.  When you add a new
+    per-boot-mode cap in formlogic, add it here too.
+    """
+
+    fmt = request.disk_format
+    fmt_cap: int | None
+    if fmt is DiskFormat.FAT12:
+        fmt_cap = FAT12_MAX_BYTES
+    elif fmt is DiskFormat.FAT16:
+        fmt_cap = FAT16_MAX_BYTES
+    elif fmt is DiskFormat.FAT32:
+        fmt_cap = FAT32_MAX_BYTES
+    else:
+        fmt_cap = None
+
+    mode_cap: int | None = None
+    if request.boot_mode is BootMode.IBM8088:
+        mode_cap = request.ibm_dos_version.max_size_bytes
+    elif request.boot_mode is BootMode.MSDOS33:
+        mode_cap = IBM_DOS33_MAX_BYTES
+    elif request.boot_mode is BootMode.MSDOS331:
+        mode_cap = MSDOS331_MAX_BYTES
+    elif request.boot_mode is BootMode.COMPAQ331:
+        mode_cap = COMPAQ331_MAX_BYTES
+    elif request.boot_mode is BootMode.COMPAQ2:
+        # Compaq DOS 2.11 hard-disk boot tops out at 16 MiB (the
+        # 1984-era partition cap for IBM PC-DOS 2.x compatible
+        # FAT12 hard disks).
+        mode_cap = 16 * 1024 * 1024
+    elif request.boot_mode is BootMode.PCDOS3:
+        # IBM PC-DOS 3.00 cap: FAT12-only, 16 MiB.  Mirrors
+        # IBMDOSVersion.PCDOS3.max_size_bytes for users picking
+        # the pcdos3 boot mode directly (vs. ibm8088 + DOS33).
+        mode_cap = 16 * 1024 * 1024
+
+    if mode_cap is None:
+        return fmt_cap
+    if fmt_cap is None:
+        return mode_cap
+    return min(mode_cap, fmt_cap)
+
+
 # MartyPC's XT-IDE controller format whitelist.  Source of truth:
 # https://github.com/dbalsom/martypc/blob/main/crates/marty_core/src/devices/hdc/at_formats.rs
 # (the ``AtFormats::vec`` function).  MartyPC's XT-IDE BIOS will only
@@ -624,7 +683,9 @@ _MARTYPC_XTIDE_FORMATS: tuple[tuple[int, int, int], ...] = (
 _MARTYPC_XTIDE_FORMAT_SET: frozenset[tuple[int, int, int]] = frozenset(_MARTYPC_XTIDE_FORMATS)
 
 
-def _xtide_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
+def _xtide_geometry(
+    request: CreateRequest, *, max_size_bytes: int | None = None
+) -> tuple[int, int, int, int]:
     """Return (cylinders, heads, spt, size_bytes) for XT-IDE (MartyPC) VHDs.
 
     Picks the smallest entry in MartyPC's XT-IDE format whitelist
@@ -632,6 +693,19 @@ def _xtide_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
     ``request.size_bytes``.  If a ``bios_drive_type`` or ``custom_chs``
     is provided, that geometry is used verbatim — validation will
     later confirm the explicit CHS is in the whitelist.
+
+    When ``max_size_bytes`` is set and the smallest "fits-above"
+    candidate would exceed it (e.g. user picked PCDOS3 16 MiB cap
+    but the next whitelist entry above their request is 17 MiB),
+    fall back to the **largest** whitelist entry that fits
+    ``<= max_size_bytes``.  This keeps the "16M means 16M" contract:
+    the form's advertised max round-trips through create without
+    silently bumping past the boot-mode cap.
+
+    Only raises ``ValidationError`` when even the smallest
+    whitelist entry exceeds ``max_size_bytes`` (i.e. XT-IDE
+    fundamentally can't make a disk this small for this DOS) or
+    when the request exceeds the largest whitelist entry.
     """
     spec = request.bios_drive_spec
     if spec is not None:
@@ -657,7 +731,33 @@ def _xtide_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
         if best is None or candidate_size < best[3]:
             best = (cyl, h, spt, candidate_size)
     if best is not None:
-        return best
+        if max_size_bytes is None or best[3] <= max_size_bytes:
+            return best
+        # The smallest fits-above candidate exceeds the boot-mode
+        # cap.  Snap DOWN to the largest whitelist entry that fits
+        # within the cap so "16M" in the UI actually creates a
+        # <= 16 MiB disk.
+        snap_down: tuple[int, int, int, int] | None = None
+        for cyl, h, spt in _MARTYPC_XTIDE_FORMATS:
+            candidate_size = cyl * h * spt * 512
+            if candidate_size > max_size_bytes:
+                continue
+            if snap_down is None or candidate_size > snap_down[3]:
+                snap_down = (cyl, h, spt, candidate_size)
+        if snap_down is not None:
+            return snap_down
+        # Cap is below every whitelist entry — XT-IDE can't do this.
+        smallest_mib = (
+            min(c * h * s for (c, h, s) in _MARTYPC_XTIDE_FORMATS) * 512 // (1024 * 1024)
+        )
+        cap_mib = max_size_bytes // (1024 * 1024)
+        raise ValidationError(
+            f"XT-IDE controller auto-geometry cannot fit a disk under "
+            f"{cap_mib} MiB -- MartyPC's smallest XT-IDE format is "
+            f"~{smallest_mib} MiB.  Pick a different boot mode (this "
+            f"DOS caps below the smallest XT-IDE geometry), or switch "
+            "to --disk-controller ide."
+        )
     # No whitelist entry fits the request.  Largest XTIDE format is
     # 1054x16x63 ~= 520 MiB; anything bigger is XT-class out of bounds.
     max_mib = max(c * h * s for (c, h, s) in _MARTYPC_XTIDE_FORMATS) * 512 // (1024 * 1024)
@@ -673,7 +773,9 @@ def _xtide_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
 def _resolved_xt_class_geometry(request: CreateRequest) -> tuple[int, int, int, int]:
     """Return locked CHS geometry for either XT-class controller (MFM or XTIDE)."""
     if request.effective_disk_controller is DiskController.XTIDE:
-        return _xtide_geometry(request)
+        return _xtide_geometry(
+            request, max_size_bytes=_effective_size_cap_bytes(request)
+        )
     return _xt_class_geometry(request)
 
 
@@ -1776,7 +1878,9 @@ class DiskManager:
                 "XT-IDE disk-controller requests do not support FAT32 (XT-class DOS "
                 "does not understand FAT32); use FAT12/FAT16 or --disk-controller ide."
             )
-        cylinders, heads, spt, size_bytes = _xtide_geometry(request)
+        cylinders, heads, spt, size_bytes = _xtide_geometry(
+            request, max_size_bytes=_effective_size_cap_bytes(request)
+        )
         if (cylinders, heads, spt) not in _MARTYPC_XTIDE_FORMAT_SET:
             raise ValidationError(
                 f"CHS {cylinders}x{heads}x{spt} is not in MartyPC's XT-IDE format "
@@ -1862,6 +1966,21 @@ class DiskManager:
         )
         safety_buffer = max(16 * 1024 * 1024, estimated_payload // 5)
         required_size = self._round_up_to_alignment(estimated_payload + safety_buffer, 1024 * 1024)
+        # Refuse to auto-bump past the per-boot-mode size cap.  Without
+        # this, a 20 MiB custom payload on PCDOS3 (16 MiB cap) would
+        # silently raise request.size_bytes to ~36 MiB, producing an
+        # unbootable VHD that DOS 3.0 can't read past LBA 32768.
+        cap = _effective_size_cap_bytes(request)
+        if cap is not None and required_size > cap:
+            cap_mib = cap // (1024 * 1024)
+            payload_mib = estimated_payload // (1024 * 1024)
+            raise ValidationError(
+                f"Custom payload ({payload_mib} MiB on FAT, +20% safety = "
+                f"{required_size // (1024 * 1024)} MiB needed) exceeds the "
+                f"{request.boot_mode.value} {cap_mib} MiB size cap.  Trim "
+                "the payload directory or pick a boot mode that supports "
+                "larger disks (e.g. msdos5/msdos622/freedos)."
+            )
         if required_size > request.size_bytes:
             request.size_bytes = required_size
 

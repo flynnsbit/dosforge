@@ -86,6 +86,7 @@ _WINDOWS_ALLOWED_TEST_FILES = frozenset(
         "test_pcdos71_fetch.py",
         "test_platform_windows.py",
         "test_size.py",
+        "test_size_cap_snap.py",
         "test_strict_authenticity.py",
         "test_versioned_cache.py",
     }
