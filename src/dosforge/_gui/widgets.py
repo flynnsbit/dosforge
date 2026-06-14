@@ -19,6 +19,71 @@ from collections.abc import Callable
 from tkinter import ttk
 
 
+_COMBOBOX_POPDOWN_MARKERS = (".popdown.", "popdown.f.l")
+
+
+def apply_combobox_polish(root: tk.Misc) -> None:
+    """Make ttk.Combobox behave like a Win32 ComboBox in two ways.
+
+    1) Strip Tk's ``<MouseWheel>`` class binding from ``TCombobox`` so a
+       wheel scroll over a readonly combobox does NOT cycle its value
+       and never blocks the page-level scroll handler installed by
+       :class:`ScrollableFrame`.
+
+    2) Install a single ``bind_all("<Button-1>", …, add="+")`` handler
+       that releases focus from any focused combobox whenever the user
+       clicks outside it (or its popup listbox). Native Win32 ComboBoxes
+       lose focus this way; Tk does not by default, which is why the
+       focus highlight on (for example) the DOS Version picker persists
+       after the user clicks another field.
+
+    Idempotent — calling it more than once on the same root removes the
+    class binding (no-op the second time) and installs the click handler
+    with the same tag so duplicate registrations are still safe.
+    """
+
+    root.unbind_class("TCombobox", "<MouseWheel>")
+    root.unbind_class("TCombobox", "<Button-4>")
+    root.unbind_class("TCombobox", "<Button-5>")
+
+    def _release_combobox_focus(event: tk.Event) -> None:
+        target = event.widget
+        if isinstance(target, str):
+            try:
+                target = root.nametowidget(target)
+            except KeyError:
+                return
+        try:
+            path = str(target)
+        except Exception:
+            path = ""
+        if any(marker in path for marker in _COMBOBOX_POPDOWN_MARKERS):
+            return
+        node: tk.Misc | None = target
+        while node is not None:
+            if isinstance(node, ttk.Combobox):
+                return
+            node = node.master
+        try:
+            focused = root.focus_get()
+        except KeyError:
+            focused = None
+        if isinstance(focused, ttk.Combobox):
+            try:
+                focused.selection_clear()
+            except tk.TclError:
+                pass
+            try:
+                root.focus_set()
+            except tk.TclError:
+                pass
+
+    if getattr(root, "_dosforge_combo_polish_installed", False):
+        return
+    root.bind_all("<Button-1>", _release_combobox_focus, add="+")
+    root._dosforge_combo_polish_installed = True  # type: ignore[attr-defined]
+
+
 class ScrollableFrame(tk.Frame):
     """A vertically scrollable container. Add content to ``self.body``."""
 

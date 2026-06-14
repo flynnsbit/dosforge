@@ -63,7 +63,7 @@ class DosForgeGUI:
 
         from ..capabilities import ui_capabilities
         from .theme import ThemeManager, set_window_icon
-        from .widgets import NavRail, StatusBar
+        from .widgets import NavRail, StatusBar, apply_combobox_polish
         from .worker import OperationWorker
 
         self.manager = manager or DiskManager()
@@ -86,6 +86,12 @@ class DosForgeGUI:
         self.theme = ThemeManager(self.root)
         self.theme.apply()
         set_window_icon(self.root)
+
+        # Make ttk.Combobox behave like a Win32 ComboBox: wheel events
+        # always scroll the page, and clicks outside a combobox release
+        # its focus so the highlight doesn't linger on (e.g.) the DOS
+        # Version picker after the user moves to another field.
+        apply_combobox_polish(self.root)
 
         # Header: title + theme toggle.
         header = ttk.Frame(self.root, style="Header.TFrame", padding=(20, 14, 20, 8))

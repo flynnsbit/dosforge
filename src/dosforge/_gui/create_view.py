@@ -35,7 +35,26 @@ class _Combo:
             textvariable=self.var,
         )
         self.widget.bind("<<ComboboxSelected>>", lambda _e: self._on_change())
+        # Match Win32 ComboBox behavior: after a value is committed,
+        # release focus and clear the highlight so subsequent wheel
+        # events scroll the page instead of mutating this widget's
+        # value, and so the focus ring doesn't visually linger on
+        # (e.g.) the DOS Version picker after the user moves on.
+        self.widget.bind("<<ComboboxSelected>>", self._defocus, add="+")
         return self.widget
+
+    def _defocus(self, _event) -> None:
+        if self.widget is None:
+            return
+        try:
+            self.widget.selection_clear()
+        except tk.TclError:
+            pass
+        try:
+            top = self.widget.winfo_toplevel()
+            top.focus_set()
+        except tk.TclError:
+            pass
 
     def get_value(self) -> str:
         return self._value_by_label.get(self.var.get(), "")
