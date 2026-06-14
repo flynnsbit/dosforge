@@ -625,18 +625,23 @@ def _effective_size_cap_bytes(request: "CreateRequest") -> int | None:
         # FAT12 hard disks).
         mode_cap = 16 * 1024 * 1024
     elif request.boot_mode is BootMode.PCDOS3:
-        # IBM PC-DOS 3.00 cap: FAT12-only, 16 MiB.  Mirrors
-        # IBMDOSVersion.PCDOS3.max_size_bytes for users picking
-        # the pcdos3 boot mode directly (vs. ibm8088 + DOS33).
-        mode_cap = 16 * 1024 * 1024
+        # IBM PC-DOS 3.00 (Aug 1984) introduced FAT16 in DOS.  Its
+        # FORMAT.COM auto-picks FAT12 for partitions <=16 MiB and
+        # FAT16 for 16-32 MiB.  Cap matches:
+        # - FAT12: 16 MiB (FAT12 partition addressing cap on 1984 HW)
+        # - FAT16: 32 MiB (1984 partition-table addressing cap)
+        if fmt is DiskFormat.FAT12:
+            mode_cap = 16 * 1024 * 1024
+        else:
+            mode_cap = 32 * 1024 * 1024
     elif request.boot_mode is BootMode.COMPAQ3:
-        # Microsoft MS-DOS 3.00 (Compaq OEM, 1985): same 16 MiB
-        # FAT12 partition cap as PCDOS3 -- both pre-date FAT16.
-        # formlogic._BOOT_MODE_MEDIA_RULES already pins max_mb=16
-        # for COMPAQ3; this entry mirrors that on the disk side so
-        # XT-IDE auto-geometry snaps DOWN under the cap instead of
-        # bumping UP to the next whitelist entry above 16 MiB.
-        mode_cap = 16 * 1024 * 1024
+        # Microsoft MS-DOS 3.00 (Compaq OEM, 1985): same FAT16 +
+        # 16/32 MiB partition behavior as PCDOS3 (same Microsoft
+        # FORMAT.COM family).
+        if fmt is DiskFormat.FAT12:
+            mode_cap = 16 * 1024 * 1024
+        else:
+            mode_cap = 32 * 1024 * 1024
     elif request.boot_mode is BootMode.DRDOS6:
         # Digital Research DR DOS 6.0 (1991): IBM-3.3-class BPB
         # with FAT12 / FAT16 support; 32 MiB partition cap.
@@ -1677,43 +1682,46 @@ class DiskManager:
             raise ValidationError(
                 "Compaq DOS 2.11 (compaq2) requires FAT12 (DOS 2.x predates FAT16)."
             )
-        # IBM PC-DOS 3.00 is FAT12-only (FAT16 was added in PC-DOS 3.10)
-        # and caps practical partitions at ~16 MiB.  Larger partitions
-        # need msdos33 (FAT12/16 up to 32 MiB) or msdos331 / compaq331.
+        # IBM PC-DOS 3.00 (Aug 1984) introduced FAT16 -- its FORMAT.COM
+        # picks FAT12 for <=16 MiB partitions and FAT16 for 16-32 MiB.
+        # 32 MiB is the 1984 partition-table addressing cap.  Larger
+        # partitions need msdos331 / compaq331 / msdos5+.
         if (
             request.boot_mode is BootMode.PCDOS3
-            and request.size_bytes > 16 * 1024 * 1024
+            and request.size_bytes > 32 * 1024 * 1024
         ):
             raise ValidationError(
-                "IBM PC-DOS 3.00 (pcdos3) only supports FAT12 partitions up to "
-                "16 MiB. Use msdos33 (FAT12/FAT16<=32MiB) or msdos331 / compaq331 "
-                "for larger partitions."
+                "IBM PC-DOS 3.00 (pcdos3) supports FAT12 (<=16 MiB) and FAT16 "
+                "(16-32 MiB) partitions. For >32 MiB use compaq331 (FAT16B) "
+                "or msdos5 / msdos622."
             )
-        if (
-            request.boot_mode is BootMode.PCDOS3
-            and request.disk_format is not DiskFormat.FAT12
+        if request.boot_mode is BootMode.PCDOS3 and request.disk_format not in (
+            DiskFormat.FAT12,
+            DiskFormat.FAT16,
         ):
             raise ValidationError(
-                "IBM PC-DOS 3.00 (pcdos3) requires FAT12 (FAT16 was added in PC-DOS 3.10)."
+                "IBM PC-DOS 3.00 (pcdos3) supports FAT12 or FAT16; "
+                "FAT32 was introduced in MS-DOS 7.10 / Win95 OSR2."
             )
-        # Microsoft MS-DOS 3.00 [Compaq OEM] -- same FAT12-only + 16 MiB cap
-        # as IBM PC-DOS 3.00.
-        if (
-            request.boot_mode is BootMode.COMPAQ3
-            and request.size_bytes > 16 * 1024 * 1024
-        ):
-            raise ValidationError(
-                "Microsoft MS-DOS 3.00 [Compaq OEM] (compaq3) only supports FAT12 "
-                "partitions up to 16 MiB. Use msdos33 (FAT12/FAT16<=32MiB) or "
-                "msdos331 / compaq331 for larger partitions."
-            )
+        # Microsoft MS-DOS 3.00 [Compaq OEM] -- same Microsoft FORMAT.COM
+        # family as PC-DOS 3.00, same FAT12 (<=16 MiB) + FAT16 (16-32 MiB)
+        # behavior.
         if (
             request.boot_mode is BootMode.COMPAQ3
-            and request.disk_format is not DiskFormat.FAT12
+            and request.size_bytes > 32 * 1024 * 1024
         ):
             raise ValidationError(
-                "Microsoft MS-DOS 3.00 [Compaq OEM] (compaq3) requires FAT12 "
-                "(FAT16 was added in DOS 3.10)."
+                "Microsoft MS-DOS 3.00 [Compaq OEM] (compaq3) supports FAT12 "
+                "(<=16 MiB) and FAT16 (16-32 MiB) partitions. For >32 MiB "
+                "use compaq331 (FAT16B) or msdos5 / msdos622."
+            )
+        if request.boot_mode is BootMode.COMPAQ3 and request.disk_format not in (
+            DiskFormat.FAT12,
+            DiskFormat.FAT16,
+        ):
+            raise ValidationError(
+                "Microsoft MS-DOS 3.00 [Compaq OEM] (compaq3) supports FAT12 "
+                "or FAT16; FAT32 was introduced in MS-DOS 7.10 / Win95 OSR2."
             )
         legacy_fat16_modes = {
             BootMode.MSDOS331,
@@ -2268,6 +2276,13 @@ class DiskManager:
                 max_bytes = min(max_bytes, MSDOS331_MAX_BYTES)
             if request.boot_mode is BootMode.COMPAQ331:
                 max_bytes = min(max_bytes, COMPAQ331_MAX_BYTES)
+            # IBM PC-DOS 3.00 (1984) + MS-DOS 3.00 Compaq OEM (1985):
+            # FAT16 introduced here, capped at 32 MiB by the 1984
+            # partition-table addressing model.  Both modes share the
+            # Microsoft FORMAT.COM family that auto-picks FAT12 for
+            # <=16 MiB and FAT16 for 16-32 MiB.
+            if request.boot_mode in (BootMode.PCDOS3, BootMode.COMPAQ3):
+                max_bytes = min(max_bytes, 32 * 1024 * 1024)
         else:
             min_bytes = FAT32_MIN_BYTES
             max_bytes = FAT32_MAX_BYTES

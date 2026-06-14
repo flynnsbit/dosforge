@@ -390,14 +390,27 @@ _BOOT_MODE_MEDIA_RULES: dict[BootMode, _BootMediaRule] = {
     BootMode.PCDOS7: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16})),
     BootMode.PCDOS2000: _BootMediaRule(frozenset({DiskFormat.FAT12, DiskFormat.FAT16})),
     BootMode.COMPAQ2: _BootMediaRule(frozenset({DiskFormat.FAT12}), max_mb=16),
-    # IBM PC-DOS 3.00 (1984): FAT12 only (FAT16 was added in PC-DOS 3.10),
-    # max ~16 MiB partition.  Works on both MFM and IDE controllers but
-    # defaults to MFM for 1984-authentic hardware.
-    BootMode.PCDOS3: _BootMediaRule(frozenset({DiskFormat.FAT12}), max_mb=16),
-    # Microsoft MS-DOS 3.00 [Compaq OEM] (1985): same constraints as
-    # PCDOS3 -- FAT12 only, 16 MiB cap, defaults to MFM for
-    # 1985-authentic Compaq DeskPro / Portable Plus hardware.
-    BootMode.COMPAQ3: _BootMediaRule(frozenset({DiskFormat.FAT12}), max_mb=16),
+    # IBM PC-DOS 3.00 (Aug 1984): the DOS that *introduced* FAT16.  Its
+    # FORMAT.COM auto-picks FAT12 for partitions <=16 MiB and FAT16 for
+    # 16-32 MiB partitions (the 1984 partition-table addressing cap).
+    # Works on both MFM and IDE controllers but defaults to MFM for
+    # 1984-authentic hardware.  FAT12 is preferred (small drives match
+    # the era), but FAT16 + 32 MiB is supported for users who want the
+    # max-size 1984-era HDD layout.
+    BootMode.PCDOS3: _BootMediaRule(
+        frozenset({DiskFormat.FAT12, DiskFormat.FAT16}),
+        max_mb=32,
+        preferred_format=DiskFormat.FAT12,
+    ),
+    # Microsoft MS-DOS 3.00 [Compaq OEM] (1985): same Microsoft kernel
+    # family as PC-DOS 3.00 -- FORMAT.COM auto-picks FAT12 for
+    # <=16 MiB partitions and FAT16 for 16-32 MiB.  Defaults to MFM
+    # for 1985-authentic Compaq DeskPro / Portable Plus hardware.
+    BootMode.COMPAQ3: _BootMediaRule(
+        frozenset({DiskFormat.FAT12, DiskFormat.FAT16}),
+        max_mb=32,
+        preferred_format=DiskFormat.FAT12,
+    ),
     # Digital Research DR DOS 6.0 (1991): supports FAT12 and FAT16
     # (DR-DOS 6 carries an IBM-3.3-class BPB with hidden_sectors).
     # Max ~32 MiB FAT16 partition.  Works on both MFM and IDE

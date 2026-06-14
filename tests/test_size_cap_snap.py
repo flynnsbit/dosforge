@@ -63,7 +63,7 @@ def _make_request(
 
 
 class TestEffectiveSizeCapBytes:
-    def test_pcdos3_caps_at_16_mib(self) -> None:
+    def test_pcdos3_caps_at_16_mib_for_fat12(self) -> None:
         req = _make_request(
             boot_mode=BootMode.PCDOS3,
             disk_format=DiskFormat.FAT12,
@@ -71,7 +71,18 @@ class TestEffectiveSizeCapBytes:
         )
         assert _effective_size_cap_bytes(req) == 16 * 1024 * 1024
 
-    def test_compaq3_caps_at_16_mib(self) -> None:
+    def test_pcdos3_caps_at_32_mib_for_fat16(self) -> None:
+        """PC-DOS 3.00 (1984) introduced FAT16. FAT16 partitions up
+        to 32 MiB are supported by the same FORMAT.COM that picks
+        FAT12 for <=16 MiB."""
+        req = _make_request(
+            boot_mode=BootMode.PCDOS3,
+            disk_format=DiskFormat.FAT16,
+            size_bytes=32 * 1024 * 1024,
+        )
+        assert _effective_size_cap_bytes(req) == 32 * 1024 * 1024
+
+    def test_compaq3_caps_at_16_mib_for_fat12(self) -> None:
         """v0.9.55: COMPAQ3 (MS-DOS 3.0 Compaq OEM) had the same
         16M-rejected bug as PCDOS3 because _effective_size_cap_bytes
         was missing this branch."""
@@ -81,6 +92,17 @@ class TestEffectiveSizeCapBytes:
             size_bytes=16 * 1024 * 1024,
         )
         assert _effective_size_cap_bytes(req) == 16 * 1024 * 1024
+
+    def test_compaq3_caps_at_32_mib_for_fat16(self) -> None:
+        """v0.9.56: COMPAQ3 (MS-DOS 3.0 Compaq OEM, 1985) shares the
+        same Microsoft FORMAT.COM family as PC-DOS 3.00, so it also
+        supports FAT16 partitions up to 32 MiB."""
+        req = _make_request(
+            boot_mode=BootMode.COMPAQ3,
+            disk_format=DiskFormat.FAT16,
+            size_bytes=32 * 1024 * 1024,
+        )
+        assert _effective_size_cap_bytes(req) == 32 * 1024 * 1024
 
     def test_drdos6_caps_at_32_mib(self) -> None:
         req = _make_request(
