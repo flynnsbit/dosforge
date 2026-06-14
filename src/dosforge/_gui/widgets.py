@@ -254,6 +254,7 @@ class StatusBar(tk.Frame):
             self._log_holder.pack(fill="both", expand=False, padx=16, pady=(0, 6))
             self._toggle_btn.configure(text="Hide log")
             self._log_visible = True
+            self._adjust_window_for_log_change(growing=True)
 
     def copy_log_to_clipboard(self) -> None:
         """Copy the full log buffer to the OS clipboard.
@@ -283,8 +284,61 @@ class StatusBar(tk.Frame):
             self._log_holder.pack_forget()
             self._toggle_btn.configure(text="Show log")
             self._log_visible = False
+            self._adjust_window_for_log_change(growing=False)
         else:
             self.show_log()
+
+    def _adjust_window_for_log_change(self, *, growing: bool) -> None:
+        """Resize the top-level window to make room for / reclaim space
+        from the log panel.
+
+        Without this, expanding the log panel just packs it underneath
+        the content area but never grows the window -- the panel ends
+        up clipped or pushed off-screen and the user has to manually
+        drag the window taller before they can see what they just
+        revealed.  Likewise, collapsing the log leaves the window
+        oversized.
+
+        The growth amount is the panel's required height (Tk computes
+        this from ``Text(height=8)`` plus the scrollbar + padding) and
+        is capped to whatever vertical space is still available on the
+        display so we never push the window taller than the screen.
+        """
+        toplevel = self.winfo_toplevel()
+        # Force a layout pass so we can read accurate heights below.
+        toplevel.update_idletasks()
+        try:
+            log_h = self._log_holder.winfo_reqheight()
+        except Exception:
+            return
+        # The log_holder includes a small pady but that's already
+        # baked into reqheight; no extra padding adjustment needed.
+        if log_h <= 0:
+            return
+        try:
+            current_geom = toplevel.geometry()  # "WxH+X+Y"
+        except Exception:
+            return
+        if "+" not in current_geom or "x" not in current_geom:
+            return
+        size_part, _, rest = current_geom.partition("+")
+        try:
+            w_str, h_str = size_part.split("x")
+            cur_w = int(w_str)
+            cur_h = int(h_str)
+        except ValueError:
+            return
+        screen_h = toplevel.winfo_screenheight()
+        if growing:
+            target_h = cur_h + log_h
+            # Cap at 95% of screen so the window doesn't push off the
+            # bottom of the display (taskbar / dock visible).
+            target_h = min(target_h, int(screen_h * 0.95))
+        else:
+            target_h = max(cur_h - log_h, 1)
+        if target_h == cur_h:
+            return
+        toplevel.geometry(f"{cur_w}x{target_h}+{rest}")
 
     def refresh_theme(self) -> None:
         pal = self._theme.palette
