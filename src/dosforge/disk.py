@@ -629,6 +629,24 @@ def _effective_size_cap_bytes(request: "CreateRequest") -> int | None:
         # IBMDOSVersion.PCDOS3.max_size_bytes for users picking
         # the pcdos3 boot mode directly (vs. ibm8088 + DOS33).
         mode_cap = 16 * 1024 * 1024
+    elif request.boot_mode is BootMode.COMPAQ3:
+        # Microsoft MS-DOS 3.00 (Compaq OEM, 1985): same 16 MiB
+        # FAT12 partition cap as PCDOS3 -- both pre-date FAT16.
+        # formlogic._BOOT_MODE_MEDIA_RULES already pins max_mb=16
+        # for COMPAQ3; this entry mirrors that on the disk side so
+        # XT-IDE auto-geometry snaps DOWN under the cap instead of
+        # bumping UP to the next whitelist entry above 16 MiB.
+        mode_cap = 16 * 1024 * 1024
+    elif request.boot_mode is BootMode.DRDOS6:
+        # Digital Research DR DOS 6.0 (1991): IBM-3.3-class BPB
+        # with FAT12 / FAT16 support; 32 MiB partition cap.
+        # Mirrors formlogic max_mb=32.
+        mode_cap = 32 * 1024 * 1024
+    elif request.boot_mode is BootMode.DRDOS7:
+        # Caldera DR-DOS 7.03 (1999): FAT16B (BIGDOS) up to 2 GiB.
+        # Mirrors formlogic max_mb=2048; identical to the FAT16
+        # hard cap, included explicitly for symmetry / docs.
+        mode_cap = 2 * 1024 * 1024 * 1024
 
     if mode_cap is None:
         return fmt_cap

@@ -71,6 +71,33 @@ class TestEffectiveSizeCapBytes:
         )
         assert _effective_size_cap_bytes(req) == 16 * 1024 * 1024
 
+    def test_compaq3_caps_at_16_mib(self) -> None:
+        """v0.9.55: COMPAQ3 (MS-DOS 3.0 Compaq OEM) had the same
+        16M-rejected bug as PCDOS3 because _effective_size_cap_bytes
+        was missing this branch."""
+        req = _make_request(
+            boot_mode=BootMode.COMPAQ3,
+            disk_format=DiskFormat.FAT12,
+            size_bytes=16 * 1024 * 1024,
+        )
+        assert _effective_size_cap_bytes(req) == 16 * 1024 * 1024
+
+    def test_drdos6_caps_at_32_mib(self) -> None:
+        req = _make_request(
+            boot_mode=BootMode.DRDOS6,
+            disk_format=DiskFormat.FAT16,
+            size_bytes=32 * 1024 * 1024,
+        )
+        assert _effective_size_cap_bytes(req) == 32 * 1024 * 1024
+
+    def test_drdos7_caps_at_2_gib(self) -> None:
+        req = _make_request(
+            boot_mode=BootMode.DRDOS7,
+            disk_format=DiskFormat.FAT16,
+            size_bytes=512 * 1024 * 1024,
+        )
+        assert _effective_size_cap_bytes(req) == 2 * 1024 * 1024 * 1024
+
     def test_compaq331_caps_at_504_mib(self) -> None:
         req = _make_request(
             boot_mode=BootMode.COMPAQ331,
@@ -198,3 +225,66 @@ class TestXtideWhitelistInvariants:
         <= 11 MiB (rounded), matching MartyPC's at_formats[0]."""
         smallest = min(c * h * s * 512 for (c, h, s) in _MARTYPC_XTIDE_FORMATS)
         assert smallest <= 11 * 1024 * 1024
+
+
+class TestFormDiskCapParity:
+    """Catch drift between formlogic's advertised cap and the
+    disk-side enforcement.
+
+    Every BootMode that formlogic pins a ``max_mb`` for must also
+    have a matching branch in ``_effective_size_cap_bytes`` -- or
+    the form will show "max 16M" while the backend snaps past it
+    (the v0.9.55 COMPAQ3 regression that motivated this test).
+    """
+
+    def test_every_formlogic_max_mb_has_disk_side_mirror(self) -> None:
+        from dosforge.formlogic import _BOOT_MODE_MEDIA_RULES
+
+        # Every rule with an explicit max_mb that's tighter than
+        # the FAT format hard cap must mirror in _effective_size_cap_bytes.
+        # IBM8088 deliberately has max_mb=None on the rule (handled
+        # via _state_aware_max_mb's per-DOS-version branch); we test
+        # IBM8088 separately above.
+        format_caps_mb = {
+            DiskFormat.FAT12: 32,
+            DiskFormat.FAT16: 2048,
+            DiskFormat.FAT32: 2 * 1024 * 1024,
+        }
+        missing: list[str] = []
+        for boot_mode, rule in _BOOT_MODE_MEDIA_RULES.items():
+            if rule.max_mb is None:
+                continue
+            # Pick the FAT format that's most relevant for this rule.
+            preferred = rule.preferred_format or sorted(
+                rule.allowed_formats, key=lambda f: f.value
+            )[0]
+            fmt_cap = format_caps_mb.get(preferred, 2048)
+            if rule.max_mb >= fmt_cap:
+                # Rule cap is no tighter than format cap; the format
+                # cap path in _effective_size_cap_bytes covers it.
+                continue
+            # Build a probe request and assert the disk-side cap
+            # matches the form's max_mb (in bytes).
+            req = _make_request(
+                boot_mode=boot_mode,
+                disk_format=preferred,
+                size_bytes=rule.max_mb * 1024 * 1024,
+                disk_controller=DiskController.IDE,
+            )
+            try:
+                cap_bytes = _effective_size_cap_bytes(req)
+            except Exception as exc:
+                missing.append(f"{boot_mode.value} (raised {exc})")
+                continue
+            expected = rule.max_mb * 1024 * 1024
+            if cap_bytes != expected:
+                missing.append(
+                    f"{boot_mode.value}: formlogic max_mb={rule.max_mb}, "
+                    f"disk _effective_size_cap_bytes={cap_bytes // 1024 // 1024}"
+                )
+        if missing:
+            pytest.fail(
+                "_effective_size_cap_bytes drifted from formlogic's "
+                "_BOOT_MODE_MEDIA_RULES.  Add the missing branch(es) "
+                "in src/dosforge/disk.py:\n  " + "\n  ".join(missing)
+            )
