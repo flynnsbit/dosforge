@@ -2298,25 +2298,26 @@ class DiskManager:
                 f"starting at LBA {start_lba}."
             )
 
-        # MBR partition CHS encoding: AT BIOSes apply ECHS bit-shift
-        # translation when the drive's physical cylinder count exceeds
-        # 1024 (every drive >~504 MB at 16h/63s). The BIOS doubles heads
-        # and halves cylinders until cyl <= 1024, presenting a virtual
-        # geometry like 64h/63s instead of the footer's 16h/63s. The MBR
-        # boot code uses INT 13h AH=02 with the partition entry's CHS,
-        # which the BIOS resolves through THAT translated geometry —
-        # so the partition table CHS must be encoded with the translated
-        # heads/spt or the MBR loads the wrong sector and the boot
-        # silently fails (blinking cursor on 86Box).
+        # MBR partition CHS encoding: use the VHD footer's *actual*
+        # geometry (typically 16h/63s on dosforge-built VHDs).  The
+        # MBR boot loader does INT 13h AH=02 with CHS=(cyl, head, sec)
+        # from the partition entry, and modern AT-class BIOSes
+        # (86Box AUTO IDE, QEMU IDE, real Pentium-era hardware) just
+        # honor the disk's raw reported geometry — no automatic
+        # ECHS bit-shift translation.  Encoding CHS under
+        # ECHS-translated heads (doubling from 16 to 64 for >504 MiB
+        # disks) would emit (cyl=0, head=32, sec=33) for LBA 2048 on
+        # a 1 GiB VHD, which the BIOS rejects as "head 32 invalid"
+        # against a 16-head disk → MBR halts at blinking cursor.
+        # Under footer geometry the same LBA encodes as
+        # (cyl=2, head=0, sec=33), which the BIOS reads as LBA 2048
+        # correctly.
+        #
+        # XT-class layouts (compaq2, msdos33+MFM, ibm8088+dos33+MFM)
+        # take a separate code path in _rewrite_mbr_for_xt_class and
+        # don't reach here.
         partition_chs_heads = footer.heads
         partition_chs_spt = footer.sectors_per_track
-        if footer.heads > 0 and footer.cylinders > 1024:
-            heads = footer.heads
-            cyls = footer.cylinders
-            while cyls > 1024 and heads < 256:
-                heads *= 2
-                cyls = (cyls + 1) // 2
-            partition_chs_heads = min(heads, 255)
 
         # Partition type byte: legacy DOS gets 0x04 (FAT16 <32 MiB,
         # pre-FAT16B) or 0x01 (FAT12); pcdos71 / msdos71 get 0x0C
