@@ -3,7 +3,7 @@
 **Status:** Exploration / not scheduled
 **Author:** captured from the abandoned `feature/dosbox-x-swap` branch
 (commits `edb63e4`, `fd83bbf`, `3825840`), reconciled against `main` @ v0.9.57
-**Date:** 2026-06-19
+**Date:** 2026-06-19 (rev 2 — added §3 QEMU-usage map + §4 features analysis)
 
 ---
 
@@ -32,23 +32,109 @@ ships as a single, statically-linked **~24 MB** portable EXE.
 This is the single most important fact for evaluating the swap, and it
 changed since the original branch was cut:
 
-- **`main` already bundles `dosbox-x.exe`** and uses it for the
-  **headless boot-probe / verification** path (`src/dosforge/_boot_probe.py`,
-  the "Headless boot probe" step seen in grow/create logs). It imgmounts
-  a freshly-built VHD/IMG and confirms it boots.
-- `dosbox-x` is already in `_KNOWN_BUNDLED_TOOLS` and has bespoke
-  `tool_path` resolution in `src/dosforge/_platform/windows.py`
-  (it lives in `vendor/windows/bin/dosbox-x/` with its support files).
+- **`main` already bundles `dosbox-x.exe`** — it is in
+  `_KNOWN_BUNDLED_TOOLS` with bespoke `tool_path` resolution in
+  `src/dosforge/_platform/windows.py` (it lives in
+  `vendor/windows/bin/dosbox-x/` with its support files), and it is
+  pinned + SHA-verified in `vendor/windows/manifest.json`.
+- The codebase even contains a **DOSBox-X boot-probe harness**
+  (`src/dosforge/_boot_probe.py` `run_boot_probe`) that imgmounts a
+  built VHD/IMG and confirms it boots. **Caveat (verified this session):**
+  that harness is currently **only called by a test**
+  (`tests/test_dos_boot_smoke.py`) — it is *not* wired into the create or
+  grow runtime. The "Headless boot probe" step users see in grow logs is
+  the **QEMU**-based `_grow_impl._run_boot_probe`, not this DOSBox-X one
+  (see §3).
 
 **Consequence:** the swap would **not** add a new vendor dependency.
 DOSBox-X is already shipped, fetched, pinned, and SHA-verified. The swap
-is purely about *also* using it for install, which would let us **drop**
-`qemu-system-i386` + its DLL stack entirely. The branch's "add DOSBox-X"
-cost is already sunk on `main`; only the upside remains.
+is about *also* using it for install (and, optionally, wiring its probe
+harness into the runtime), which would let us **drop** `qemu-system-i386`
++ its DLL stack entirely. The branch's "add DOSBox-X" cost is already
+sunk on `main`; only the upside remains.
 
 ---
 
-## 3. What the abandoned branch actually built
+## 3. What uses `qemu-system-i386` today
+
+> Verified by call-site audit against `main` @ v0.9.57 (2026-06-19).
+
+First, a distinction that matters: dosforge bundles **two different QEMU
+binaries**, and only one is the swap target.
+
+| Binary | Size | Role | Swap target? |
+|---|---|---|---|
+| **`qemu-img`** | small | VHD allocation, footer CHS, `qemu-img info` | **No — stays.** Tiny, no DLL stack, used everywhere. |
+| **`qemu-system-i386`** | ~110 MB w/ DLLs | full PC system emulator | **Yes** — this is the bloat. |
+
+`qemu-system-i386` has exactly **three** call sites:
+
+| # | Use | Location | Runtime? | Touches authoritative disk bytes? |
+|---|---|---|---|---|
+| 1 | **Legacy DOS install** — boots a throwaway install diskette (`-boot a`, floppy + target VHD attached), runs the DOS's own `FORMAT C: /S` to write the boot sector + IO/MSDOS/COMMAND from authentic media. **16 boot modes** route here (`_LEGACY_DOS_INSTALL_DESCRIPTORS`). | `legacy_dos_install.py` → `LegacyDosQemuInstaller._run_qemu` | ✅ Yes | ✅ **Yes — authenticity-critical** |
+| 2 | **Grow boot-probe** — boots a grown VHD headless (`-boot c`), injects a `BOOTPRB.BAT` that echoes a marker to COM1, polls the serial log to confirm the disk still boots. | `_grow_impl.py` → `_run_boot_probe` | ✅ Yes | ❌ No — read-only verify |
+| 3 | **e2e boot-probe** — serial failure-marker matcher (`"Missing operating system"`, etc.). | `e2e_emulator.py` → `qemu_boot_probe` | ❌ **Test-only** (imported by `test_e2e_emulator.py`, `test_native_linux_*`) | ❌ No |
+
+Install harness specifics worth knowing (these are what any swap must
+preserve): the install runs `-cpu 486 -m 16`, uses
+`-machine pc,accel=whpx:tcg` on Windows (WHPX hardware accel, falling
+back to software TCG — without it, 16-bit installs that finish in ~30 s
+on Linux+KVM need 5–10 min of TCG and blow the timeout), polls a
+`VHDMK.OK` marker, and has a Windows-specific re-check because `mdir`
+can't open the VHD while QEMU holds an exclusive write handle.
+
+**The size-win constraint:** `qemu-system-i386` can only be *removed from
+the bundle* if **all three** uses migrate to DOSBox-X. Use #3 is
+test-only (easy). Use #2 is low-risk (read-only) and a DOSBox-X probe
+harness already exists. **Use #1 (install) is the blocker** — it writes
+the authoritative disk and is the thing the authenticity concern is
+about. Until #1 migrates, the 110 MB stays in the bundle regardless of
+how many features get added.
+
+---
+
+## 4. Features / capabilities the switch could unlock
+
+Beyond bundle size, DOSBox-X exposes capabilities QEMU-headless does not.
+Each is tagged with **which `qemu-system-i386` use it would replace or
+extend**, its **authenticity risk**, and **whether it is gated on the
+risky install swap (§3 use #1)**.
+
+| # | Capability | Replaces / extends | Authenticity risk | Gated on install swap? |
+|---|---|---|---|---|
+| 1 | **Interactive "Test drive this disk"** — DOSBox-X can launch a *visible* windowed session, so the GUI/TUI could add a "boot my freshly-created disk and poke at it" button. QEMU-headless in-bundle can't easily offer this on Windows. | New feature (none today) | None (read-only run) | **No** |
+| 2 | **Single-emulator consolidation** — today dosforge ships *two* emulators (QEMU for install + grow probe; DOSBox-X bundled for the unused probe). Migrating probe + install to DOSBox-X means one config format, one dependency, one behavior to reason about. | #1, #2, #3 | Low for probe; high for install | Partially |
+| 3 | **Deterministic scripted input** (`AUTOTYPE` / config-driven keystrokes) — could replace the brittle serial-console + marker-poll install harness with scripted input, potentially eliminating the Windows WHPX/TCG timeout fragility the current code works around. | #1 (install) | High (install path) | **Yes** |
+| 4 | **Richer verification environment** — Sound Blaster, CD-ROM (`IMGMOUNT` ISO), Glide/SVGA, selectable CPU class + cycles. Moves dosforge from "make a DOS disk" toward "make + actually run/test it in a period-accurate DOS environment" (game/app smoke testing). | Extends #2 (probe) / new | None (read-only run) | **No** |
+| 5 | **Cross-platform behavioral consistency** — DOSBox-X behaves identically on Windows/Linux/macOS. QEMU's accel differs per OS (WHPX vs KVM vs TCG) and has already caused Windows-specific timeout fragility. A DOSBox-X probe/install would remove that per-OS variance. | #1, #2 | Low for probe; high for install | Partially |
+| 6 | **Built-in image tooling** (`IMGMAKE`, mount/convert, FAT ops) — minor; could offload some `mtools`/`qemu-img` edge cases. | Adjacent | Low–medium | No |
+
+### The strategic point: features decouple from the risky install swap
+
+The capabilities split cleanly into two buckets:
+
+- **Safe, do-anytime (no authoritative-byte risk, but NO size win):**
+  the interactive **Test drive** (#1), wiring the existing DOSBox-X
+  **probe** into create/grow runtime (#2), and the **richer verification
+  environment** (#4). None of these touch the install path, so they can
+  ship without re-validating authenticity. They do **not** remove
+  `qemu-system-i386` (install still needs it), so they yield **no bundle
+  shrink** on their own.
+- **Risky, gated (the ONLY path to the 110 MB win):** migrating the
+  **install** (§3 use #1) to DOSBox-X. This is the sole change that lets
+  the bundle drop `qemu-system-i386`, and it is exactly the change that
+  requires full authenticity validation across all 16 install modes
+  (boot in 86Box AUTO IDE, byte-compare BPB/MBR vs the QEMU reference).
+
+So the answer to *"besides size, what do I gain?"* is: a real
+**interactive test-drive / richer verification** product surface — but
+those gains are independent of the swap and don't shrink the bundle. The
+size win and the install-authenticity risk are inseparable from each
+other and separate from the feature wins.
+
+---
+
+## 5. What the abandoned branch actually built
 
 The `feature/dosbox-x-swap` branch (3 commits, ~1000 LOC) contained:
 
@@ -80,7 +166,7 @@ modes entirely; adding DOSBox-X gave them back at a +24 MB cost.
 
 ---
 
-## 4. Benefits
+## 6. Benefits
 
 1. **~110 MB of Windows DLL bloat becomes droppable.** `qemu-system-i386`
    is the *only* consumer of the GTK/SDL/codec/Spice/virgl/USB/NSS DLL
@@ -102,7 +188,7 @@ modes entirely; adding DOSBox-X gave them back at a +24 MB cost.
 
 ---
 
-## 5. Drawbacks & risks
+## 7. Drawbacks & risks
 
 1. **Authenticity / behavioral fidelity is unproven.** This is the big
    one. QEMU emulates a real PC closely; DOSBox-X is a DOS-focused
@@ -141,19 +227,28 @@ modes entirely; adding DOSBox-X gave them back at a +24 MB cost.
 
 ---
 
-## 6. Recommendation
+## 8. Recommendation
 
-Treat this as **two independent workstreams**, sequenced by risk:
+Treat this as **three independent workstreams**, sequenced by risk:
 
-### 6a. Low-risk, do-anytime: `_internal/` bloat prune
+### 8a. Low-risk, do-anytime: `_internal/` bloat prune
 Re-implement `windows/spec_helpers.py`'s three filters
 (`strip_bloat` / `strip_hidden_imports` / `post_build_cleanup`) plus the
 CI regression guard, **without** touching the emulator. Pure size win,
 no authenticity risk. ~3 MB + cleaner bundles. Ship as a normal patch.
 
-### 6b. High-risk, gated on validation: the emulator swap
+### 8b. Low-risk, optional: DOSBox-X feature surface (no size win)
+The capabilities in §4 buckets "safe, do-anytime" — interactive
+**Test drive** (§4 #1), wiring the existing DOSBox-X **probe** into
+create/grow runtime (§4 #2), and the **richer verification environment**
+(§4 #4). None touch the authoritative install bytes, so they need no
+authenticity re-validation. They are pure product-surface gains and do
+**not** shrink the bundle (install still needs `qemu-system-i386`).
+
+### 8c. High-risk, gated on validation: the emulator swap
 Only worth pursuing if the **~110 MB** Windows win is judged worth the
-authenticity-validation cost. Required before it can ship:
+authenticity-validation cost. This is the **only** workstream that
+removes `qemu-system-i386` from the bundle. Required before it can ship:
 
 1. **Prove fidelity on all 16 current QEMU-install modes** (not just the
    original 3): install via DOSBox-X, then boot the result in **86Box
@@ -172,13 +267,15 @@ which is dosforge's whole reason to exist.
 
 ---
 
-## 7. Pointers (current `main`)
+## 9. Pointers (current `main`)
 
 - Install dispatch: `src/dosforge/disk.py` (`LegacyDosQemuInstaller`, ~line 3159)
 - Install profiles/quirks: `src/dosforge/legacy_dos_install.py`
 - Per-OS emulator + required tools: `src/dosforge/_platform/{windows,linux}.py`
   (`_LEGACY_DOS_QEMU_BOOT_MODES`, `_KNOWN_BUNDLED_TOOLS`, `tool_path`)
-- Already-bundled DOSBox-X (boot probe): `src/dosforge/_boot_probe.py`
+- Runtime grow boot-probe (**QEMU**): `src/dosforge/_grow_impl.py` `_run_boot_probe`
+- Bundled DOSBox-X probe harness (**test-only** today): `src/dosforge/_boot_probe.py` `run_boot_probe`
+- e2e boot-probe (test-only): `src/dosforge/e2e_emulator.py` `qemu_boot_probe`
 - Vendor manifest / fetch: `vendor/windows/manifest.json`,
   `scripts`/`fetch-windows-vendor.py`
 - PyInstaller specs: `windows/dosforge{,-lite,-cli}.spec`
