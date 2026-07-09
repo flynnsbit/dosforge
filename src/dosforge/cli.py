@@ -427,8 +427,11 @@ def build_parser(*, include_tui_gui: bool = True) -> argparse.ArgumentParser:
     grow_cmd.add_argument(
         "--boot-mode",
         help=(
-            "Boot mode of the existing VHD. Must be one of: compaq331, "
-            "msdos622, msdos71, freedos. Ignored when --manifest is given."
+            "Boot mode of the existing VHD (compaq331, msdos622, msdos71, "
+            "freedos). Optional: when omitted, grow auto-detects FreeDOS / "
+            "MS-DOS 6.22 / 7.10 from root system files. IBMBIO-based disks "
+            "(Compaq 3.31, PC-DOS, DR-DOS) require an explicit value. "
+            "Ignored when --manifest is given."
         ),
     )
     grow_cmd.add_argument(
@@ -665,14 +668,7 @@ def _inspect_command(args) -> int:
 def _grow_command(args) -> int:
     """Dispatch ``dosforge grow``: build a :class:`GrowManifest`
     from either ``--manifest`` or the per-flag form and invoke the
-    grow pipeline.
-
-    PREVIEW: the in-place expansion implementation is not yet
-    landed. This command validates inputs and surfaces the public
-    contract so downstream tools (notably ``exodosconverter``) can
-    integrate against a stable API. Manifests that pass validation
-    raise :class:`NotImplementedError` from
-    :func:`dosforge.grow.grow_vhd`.
+    grow pipeline (extract → rebuild → reinject → crash-safe replace).
     """
 
     from .grow import (
@@ -725,15 +721,7 @@ def _grow_command(args) -> int:
             keep_backup=args.keep_backup,
         )
 
-    try:
-        grow_vhd(manifest)
-    except NotImplementedError as exc:
-        # Convert the contract-frozen stub error into a friendly CLI
-        # preview message so downstream automation (exodosconverter)
-        # doesn't see a raw Python traceback. Exit non-zero so any
-        # wrapper script still notices the operation didn't complete.
-        print(f"dosforge grow (PREVIEW): {exc}", file=sys.stderr)
-        return 2
+    grow_vhd(manifest)
     print(f"Grew {manifest.target_vhd} to {manifest.new_size_bytes} bytes.")
     return 0
 

@@ -274,8 +274,13 @@ def _detect_boot_mode_from_root(
 
     Inspects ``mdir`` output for signature system files and, for
     MS-DOS variants, peeks at MSDOS.SYS to discriminate 7.x text
-    config from 6.22 binary header.  Returns one of the four
-    growable boot modes (FREEDOS, MSDOS71, MSDOS622, COMPAQ331).
+    config from 6.22 binary header.  Returns one of the growable
+    modes that can be identified unambiguously (FREEDOS, MSDOS71,
+    MSDOS622).
+
+    ``IBMBIO.COM`` / ``IBMDOS.COM`` are shared by Compaq 3.31, PC-DOS,
+    DR-DOS, and others — auto-detect refuses rather than guessing
+    ``COMPAQ331``.  Pass ``--boot-mode`` explicitly for those disks.
 
     Falls back to FREEDOS only when nothing identifiable is found,
     which is the safest choice for fresh dosforge-built VHDs.
@@ -295,7 +300,14 @@ def _detect_boot_mode_from_root(
     if "KERNEL.SYS" in names:
         return BootMode.FREEDOS
     if "IBMBIO.COM" in names or "IBMDOS.COM" in names:
-        return BootMode.COMPAQ331
+        raise ValidationError(
+            "Auto-detect found IBMBIO.COM/IBMDOS.COM on the VHD root. "
+            "Those system-file names are shared by Compaq DOS 3.31, "
+            "PC-DOS, DR-DOS, and other families, so grow refuses to "
+            "guess. Pass --boot-mode explicitly (e.g. "
+            "--boot-mode compaq331). Supported grow modes: compaq331, "
+            "msdos622, msdos71, freedos."
+        )
     if "IO.SYS" in names or "MSDOS.SYS" in names:
         # MS-DOS 7.x ships MSDOS.SYS as an ASCII text config file
         # beginning with "[Paths]".  6.22 ships it as a binary
@@ -321,6 +333,24 @@ def _detect_boot_mode_from_root(
     return BootMode.FREEDOS
 
 
+def _extract_dir_has_content(extract_dir: Path) -> bool:
+    """True when ``extract_dir`` contains at least one regular file."""
+    try:
+        return any(entry.is_file() for entry in extract_dir.rglob("*"))
+    except OSError:
+        return False
+
+
+def _mtools_stderr(result) -> str:
+    err = (getattr(result, "stderr", None) or "").strip()
+    out = (getattr(result, "stdout", None) or "").strip()
+    if err:
+        return err
+    if out:
+        return out
+    return f"(exit {getattr(result, 'returncode', '?')})"
+
+
 def _mtools_extract_partition_root(
     target_vhd: Path,
     snapshot: _VhdSnapshot,
@@ -333,27 +363,34 @@ def _mtools_extract_partition_root(
     whole tree (including hidden + system files) lands on the host
     with mtimes preserved.  We use the wildcard form ``::/*`` for
     portability across mtools versions.
+
+    Raises :class:`ValidationError` when extraction produces no
+    content (a failed mcopy used to be treated as success and led to
+    empty grows).
     """
 
     extract_dir.mkdir(parents=True, exist_ok=True)
     partition_image = f"{target_vhd}@@{snapshot.partition_offset_bytes}"
     # mcopy -s = recursive; -m = preserve mtime; -n = overwrite without
-    # prompting; -Q = quit on first error; pass ::/* and let the shell
-    # glob expand on the mtools side.
+    # prompting.  Nonzero exits are common for volume-label "files";
+    # we only fail when the extract tree is empty after both attempts.
     result = runner.run(
         ["mcopy", "-s", "-m", "-n", "-i", partition_image, "::", str(extract_dir)],
         check=False,
     )
-    if result.returncode != 0 and not any(extract_dir.iterdir()):
-        # Some mtools versions need ::/* explicitly; retry.
-        runner.run(
+    if result.returncode != 0 and not _extract_dir_has_content(extract_dir):
+        # Some mtools versions need ::/ explicitly; retry.
+        result = runner.run(
             ["mcopy", "-s", "-m", "-n", "-i", partition_image, "::/", str(extract_dir)],
             check=False,
         )
-    # Even if mcopy returned nonzero (which it sometimes does for
-    # FAT volume label "files" or zero-byte attribute oddities) the
-    # extraction generally succeeds.  Caller validates by walking
-    # extract_dir.
+    if not _extract_dir_has_content(extract_dir):
+        detail = _mtools_stderr(result)
+        raise ValidationError(
+            "Failed to extract files from the source VHD via mtools. "
+            "The partition root is empty after mcopy — grow cannot "
+            f"continue without the existing contents.\n{detail}"
+        )
 
 
 def _create_fresh_vhd(
@@ -456,7 +493,14 @@ def _mtools_inject_extracted_tree(
             cmd = ["mcopy", "-o", "-m", "-i", partition_image]
             cmd.extend(str(f) for f in batch)
             cmd.append("::/")
-            runner.run(cmd, check=False)
+            result = runner.run(cmd, check=False)
+            if result.returncode != 0:
+                raise ValidationError(
+                    "Failed to re-inject root files into the grown VHD "
+                    f"via mtools (batch starting at {batch[0].name}). "
+                    "The original VHD has NOT been modified.\n"
+                    f"{_mtools_stderr(result)}"
+                )
 
     # Recursive subdirectory copy: one mcopy -s per top-level dir.
     for idx, sub in enumerate(root_dirs, start=1):
@@ -464,10 +508,16 @@ def _mtools_inject_extracted_tree(
             f"Step 5/8: Re-injecting subdirectory {idx}/{len(root_dirs)}: "
             f"\\{sub.name}\\..."
         )
-        runner.run(
+        result = runner.run(
             ["mcopy", "-s", "-o", "-m", "-i", partition_image, str(sub), "::"],
             check=False,
         )
+        if result.returncode != 0:
+            raise ValidationError(
+                f"Failed to re-inject subdirectory \\{sub.name}\\ into "
+                "the grown VHD via mtools. The original VHD has NOT "
+                f"been modified.\n{_mtools_stderr(result)}"
+            )
 
 
 def _mtools_stage_directory(
@@ -483,6 +533,10 @@ def _mtools_stage_directory(
     ``C:\\GAMES`` or ``\\GAMES``) and is normalized to an mtools
     ``::/PATH`` form here. Creates the destination directory tree
     via ``mmd`` and copies every file recursively via ``mcopy -o``.
+
+    ``mmd`` failures for already-existing directories are ignored;
+    ``mcopy`` failures abort the grow so staging does not silently
+    drop files.
     """
 
     partition_image = f"{new_vhd}@@{new_snapshot.partition_offset_bytes}"
@@ -494,6 +548,7 @@ def _mtools_stage_directory(
         dest_prefix = "::"
     else:
         dest_prefix = "::/" + dos.replace("\\", "/")
+        # mmd returns nonzero when the directory already exists.
         runner.run(["mmd", "-i", partition_image, dest_prefix], check=False)
 
     for entry in sorted(src.rglob("*"), key=lambda p: (p.is_file(), str(p))):
@@ -502,10 +557,92 @@ def _mtools_stage_directory(
         if entry.is_dir():
             runner.run(["mmd", "-i", partition_image, dest], check=False)
         elif entry.is_file():
-            runner.run(
+            result = runner.run(
                 ["mcopy", "-o", "-m", "-i", partition_image, str(entry), dest],
                 check=False,
             )
+            if result.returncode != 0:
+                raise ValidationError(
+                    f"Failed to stage {entry.name!r} to {dest_dos_path!r} "
+                    "on the grown VHD via mtools. The original VHD has "
+                    f"NOT been modified.\n{_mtools_stderr(result)}"
+                )
+
+
+def _atomic_replace_vhd(
+    new_vhd: Path,
+    target: Path,
+    *,
+    keep_backup: bool,
+) -> None:
+    """Replace ``target`` with ``new_vhd`` without destroying the original first.
+
+    The previous implementation unlinked/renamed ``target`` *before*
+    copying the new image into place.  A failed ``copy2`` (disk full,
+    process kill, I/O error) then left the user with no live path —
+    and with ``keep_backup=False``, no original either.
+
+    Safe sequence:
+
+    1. Copy the grown image to ``<target>.new`` on the *same*
+       filesystem as ``target`` (so the final rename is atomic).
+    2. ``os.fsync`` the new file best-effort so media has the bytes.
+    3. If ``keep_backup``: move ``target`` → ``target.bak``, then
+       rename ``.new`` → ``target``.  On rename failure, restore
+       ``.bak`` → ``target``.
+    4. If not ``keep_backup``: ``os.replace(.new, target)`` — the
+       original is replaced only when the new file is ready.
+    """
+
+    if not new_vhd.is_file():
+        raise ValidationError(
+            f"Grown VHD temp file is missing: {new_vhd}"
+        )
+    target = target.resolve()
+    dest_tmp = target.with_name(target.name + ".new")
+    backup = target.with_suffix(target.suffix + ".bak")
+
+    if dest_tmp.exists():
+        dest_tmp.unlink()
+    try:
+        shutil.copy2(new_vhd, dest_tmp)
+        try:
+            with dest_tmp.open("rb") as fh:
+                os.fsync(fh.fileno())
+        except OSError:
+            pass
+
+        if keep_backup:
+            if backup.exists():
+                backup.unlink()
+            # Move original aside only after the new image is fully
+            # written next to it.
+            target.rename(backup)
+            try:
+                os.replace(dest_tmp, target)
+            except OSError:
+                # Put the original back if we cannot install the new file.
+                try:
+                    if not target.exists() and backup.exists():
+                        backup.rename(target)
+                except OSError:
+                    pass
+                raise
+        else:
+            os.replace(dest_tmp, target)
+    except OSError as exc:
+        # Leave a partial .new behind only if replace failed mid-way;
+        # clean up when we still own dest_tmp.
+        try:
+            if dest_tmp.exists():
+                dest_tmp.unlink()
+        except OSError:
+            pass
+        raise ValidationError(
+            f"Failed to install grown VHD at {target}: {exc}. "
+            "The original VHD should still be intact "
+            f"({'at ' + str(backup) if keep_backup and backup.exists() else 'at the target path'})."
+        ) from exc
 
 
 def _mtools_read_file_bytes(
@@ -763,8 +900,10 @@ def perform_grow(
        look for the marker in the serial log.  Restore AUTOEXEC.
        Abort the grow on probe failure so the user keeps their
        original VHD intact.
-    8. Atomic swap: rename ``target.vhd`` -> ``target.vhd.bak``
-       (when ``keep_backup``), move the new VHD into place.
+    8. Crash-safe replace: copy the new VHD beside the target, then
+       rename into place (and optionally move the original to
+       ``.bak``). The original is never unlinked before the new
+       image is fully written.
 
     ``progress_callback`` is called with short human-readable stage
     labels at the start of each step.  Used by the TUI to keep the
@@ -886,17 +1025,13 @@ def perform_grow(
         else:
             _report("Step 7/8: Boot probe disabled -- skipping QEMU verify.")
 
-        # Step 8: atomic swap
+        # Step 8: crash-safe replace (copy beside target, then rename).
         _report("Step 8/8: Atomic swap (moving grown VHD into place)...")
-        target = manifest.target_vhd
-        backup = target.with_suffix(target.suffix + ".bak")
-        if backup.exists():
-            backup.unlink()
-        if manifest.keep_backup:
-            target.rename(backup)
-        else:
-            target.unlink()
-        shutil.copy2(new_vhd_temp, target)
+        _atomic_replace_vhd(
+            new_vhd_temp,
+            manifest.target_vhd,
+            keep_backup=manifest.keep_backup,
+        )
         _report("Grow complete.")
     finally:
         shutil.rmtree(work_root, ignore_errors=True)
@@ -904,4 +1039,6 @@ def perform_grow(
 
 __all__ = [
     "perform_grow",
+    "_atomic_replace_vhd",
+    "_detect_boot_mode_from_root",
 ]

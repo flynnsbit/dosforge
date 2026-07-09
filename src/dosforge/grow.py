@@ -1,22 +1,19 @@
-"""Stub for the ``dosforge grow`` operation.
+"""``dosforge grow`` — enlarge a fixed VHD and optionally stage content.
 
-Grow an existing FAT16 / FAT32 VHD to a new size and append staging
-content (e.g. eXoDOS games) without reformatting it from scratch.
-The user's existing files, attributes, volume label, MBR / VBR boot
-code, and CONFIG.SYS / AUTOEXEC.BAT all survive intact.
+Grows an existing FAT16 / FAT32 VHD to a new size and can append
+staging content (e.g. eXoDOS games). Implementation is extract →
+rebuild via ``create_and_prepare`` → reinject (see
+:mod:`dosforge._grow_impl`); user files and CONFIG/AUTOEXEC survive.
+Custom hand-patched MBR/VBR is replaced with dosforge's standard
+bootstrap for the chosen mode.
 
-This module currently provides:
+Public surface:
 
 * :class:`GrowManifest` — the JSON-friendly request contract.
 * :func:`load_manifest_from_json` — parse + validate a manifest file.
 * :func:`validate_grow_request` — surface-level invariants
   (supported boot mode, growth direction, source existence).
-* :func:`grow_vhd` — entrypoint that raises
-  :class:`NotImplementedError` until the actual implementation lands.
-
-The intent is to freeze the public contract first so downstream tools
-(notably ``exodosconverter``) can integrate against a stable API while
-the in-place grow pipeline is being built.
+* :func:`grow_vhd` — full pipeline entrypoint.
 
 Supported boot modes (deliberately narrow — covers FAT16 BIGDOS plus
 FAT32 LBA, the two formats worth growing):
@@ -93,11 +90,11 @@ class GrowManifest:
 
     boot_mode: BootMode | None = None
     """Boot mode the VHD was originally built with.  When ``None``
-    (the default), :func:`grow_vhd` auto-detects the family from the
-    source VHD's root system files (KERNEL.SYS → FreeDOS, IBMBIO.COM
-    → Compaq DOS 3.31, MSDOS.SYS as text → MS-DOS 7.10, else
-    MS-DOS 6.22).  Set explicitly only when you need to override
-    detection (e.g. you're rebuilding a corrupted VHD).  Must be in
+    (the default), :func:`grow_vhd` auto-detects from root system
+    files: KERNEL.SYS → FreeDOS; MSDOS.SYS text ``[Paths]`` →
+    MS-DOS 7.10; IO.SYS/MSDOS.SYS binary → MS-DOS 6.22.
+    IBMBIO.COM/IBMDOS.COM are ambiguous (Compaq 3.31 / PC-DOS /
+    DR-DOS / …) and require an explicit ``--boot-mode``.  Must be in
     :data:`GROWABLE_BOOT_MODES` when set."""
 
     staging_sources: tuple[StagingSource, ...] = ()
@@ -357,9 +354,10 @@ def grow_vhd(
        into the temp VHD, boots in QEMU, looks for the marker, then
        restores AUTOEXEC.  Probe failure aborts the grow with the
        original VHD intact.
-    8. Atomic swap: rename the original target to ``<target>.bak``
-       (when ``manifest.keep_backup`` is True), then move the new
-       VHD into place.
+    8. Crash-safe replace: fully write the new image beside the
+       target, then rename into place (optionally moving the
+       original to ``<target>.bak``). The original is never removed
+       before the new image is complete.
 
     v1 limitations (tracked for v2):
 
