@@ -472,6 +472,18 @@ def ensure_startup_sudo_auth(runner: CommandRunner | None = None) -> None:
     if not get_backend().requires_sudo_for_disk_ops:
         return
 
+    command_runner = runner or CommandRunner()
+
+    # Fast path: non-interactive sudo already works (NOPASSWD, or a
+    # still-valid timestamp). Headless callers (ExoDOSConverter, CI)
+    # have no TTY for ``sudo -v``; many hosts also reject ``sudo -n -v``
+    # while still allowing ``sudo -n true``. Probe the real runtime
+    # path first.
+    probe = command_runner.run(["true"], sudo=True, check=False)
+    if probe.returncode == 0:
+        return
+
+    # Interactive path: refresh the sudo timestamp when a TTY is available.
     try:
         result = subprocess.run(
             ["sudo", "--preserve-env=HOME,PATH", "-v"],
@@ -485,7 +497,6 @@ def ensure_startup_sudo_auth(runner: CommandRunner | None = None) -> None:
             "Verify your sudo password/PAM setup, then retry."
         )
 
-    command_runner = runner or CommandRunner()
     probe = command_runner.run(["true"], sudo=True, check=False)
     if probe.returncode == 0:
         return
