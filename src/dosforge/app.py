@@ -1226,6 +1226,14 @@ class DosForgeApp(App[None]):
             self._sync_create_form_visibility()
             return
         if event.select.id == "ibm-dos-version":
+            # CRITICAL: snap dependent fields FIRST (boot_assets,
+            # disk_controller, disk_format, size_text) so the
+            # form reflects the new DOS pick before any later
+            # default-size or visibility pass reads stale values.
+            # Without this, _resolve_legacy_dos_assets_dir silently
+            # falls back to ./dosassets/msdos33/ for every IBM 8088
+            # build regardless of the picked DOS version.
+            self._apply_ibm_version_snap()
             media_type = MediaType(cast(str, self.query_one("#media-type", Select).value))
             if media_type is MediaType.VHD:
                 self._apply_ibm_default_size(force=False)
@@ -2784,6 +2792,33 @@ class DosForgeApp(App[None]):
         snapped = fl.coerce_on_bios_drive_change(state)
         if snapped.disk_format != state.disk_format:
             self.query_one("#create-format", Select).value = snapped.disk_format
+        self._clear_status()
+
+    def _apply_ibm_version_snap(self) -> None:
+        """Re-snap dependent fields when the IBM 8088 DOS Version changes.
+
+        Mirrors :func:`formlogic.coerce_on_ibm_version_change` so the
+        TUI matches the GUI (which routes through ``self._coerce`` in
+        ``create_view.py``).  Without this, the boot-assets Input
+        keeps its previous value (e.g. ``msdos33``) when the user
+        switches the DOS Version picker to PC-DOS 3 / MS-DOS 5 /
+        PC-DOS 5, and ``_resolve_legacy_dos_assets_dir`` silently
+        falls back to the wrong asset directory -- the install runs
+        with MS-DOS 3.3 P/P media regardless of which DOS was picked,
+        producing IO.SYS / MSDOS.SYS instead of IBMBIO / IBMDOS
+        (PCDOS3 verify fails) or never matching MSDOS5's longer
+        FORMAT prompt sequence (SYS step times out at 300s).
+        """
+        state = self._current_form_state()
+        snapped = fl.coerce_on_ibm_version_change(state)
+        if snapped.boot_assets != state.boot_assets:
+            self.query_one("#boot-assets", Input).value = snapped.boot_assets
+        if snapped.disk_controller != state.disk_controller:
+            self.query_one("#disk-controller", Select).value = snapped.disk_controller
+        if snapped.disk_format != state.disk_format:
+            self.query_one("#create-format", Select).value = snapped.disk_format
+        if snapped.size_text != state.size_text:
+            self.query_one("#create-size", Input).value = snapped.size_text
         self._clear_status()
 
     def _apply_format_snap(self) -> None:

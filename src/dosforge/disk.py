@@ -3499,16 +3499,37 @@ class DiskManager:
         # layouts are still tried as fallbacks so users don't have
         # to reorganize their dosassets/ folder.
         version_subdirs: tuple[str, ...] = ()
+        # Per-DOS-version SIBLING aliases under dosassets/: when the
+        # requested asset dir doesn't exist, try these dosassets/<alias>/
+        # candidates (e.g. MS-DOS 3.31 install media is more commonly
+        # archived than 3.3 itself, so msdos331 satisfies a DOS 3.3
+        # pick).  Note: these are sibling directories under dosassets/,
+        # NOT nested children of the requested dir -- distinct from
+        # ``version_subdirs`` above.
+        version_sibling_aliases: tuple[str, ...] = ()
         if request.boot_mode is BootMode.IBM8088:
             ver = request.ibm_dos_version
             legacy_aliases = {
                 IBMDOSVersion.MSDOS33: ("dos33",),
                 IBMDOSVersion.MSDOS5: ("dos50", "dos5"),
             }
+            sibling_aliases = {
+                IBMDOSVersion.MSDOS33: ("msdos331",),
+            }
             version_subdirs = (ver.asset_dir_name,) + legacy_aliases.get(ver, ())
+            version_sibling_aliases = sibling_aliases.get(ver, ())
         if request.boot_assets_path is not None:
             # Bare names (e.g. "msdos33") map to ./dosassets/msdos33/.
             resolved = resolve_dos_asset_dir(request.boot_assets_path)
+            if resolved is None and version_sibling_aliases:
+                # Requested dosassets/<name>/ doesn't exist; fall back
+                # to per-version sibling aliases (e.g. msdos33 -> msdos331)
+                # before degrading to an unresolved literal path.
+                for alias in version_sibling_aliases:
+                    alias_resolved = resolve_dos_asset_dir(alias)
+                    if alias_resolved is not None:
+                        resolved = alias_resolved
+                        break
             root = resolved if resolved is not None else request.boot_assets_path.expanduser().resolve()
             for subdir in version_subdirs:
                 versioned = (root / subdir).resolve()
